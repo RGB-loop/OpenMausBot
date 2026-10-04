@@ -21,13 +21,15 @@ translations remain allowed because the runtime has an English fallback.
 
 ## Mobile apps
 
-The mobile string catalogs ship every new key translated, not only in
-English: a missing key shows up in English on a phone set to another
-language. `ios/App/Localizable.xcstrings` carries pt-BR, zh-Hans and zh-Hant
-for every key, and `scripts/ios-strings.test.mjs` fails, naming the keys,
-when one lacks a translated value or a translation's format arguments differ
-from the English. Android's `values-b+zh+Hans` and `values-b+zh+Hant` match
-`values/strings.xml` key for key, checked by `ChineseLocalizationTest`.
+The iOS app catalog, `ios/App/Localizable.xcstrings`, ships every key
+translated, not only in English: a missing key shows up in English on a phone
+set to another language. It carries every language the in-app picker offers
+(`ios/App/AppLanguage.swift`: pt-BR, zh-Hans and zh-Hant) for every key, and
+`scripts/ios-strings.test.mjs` fails, naming the keys, when one lacks a
+translated value or a translation's format arguments differ from the English.
+The widget catalog, `ios/Widgets/Localizable.xcstrings`, is English-only for
+now and is not checked. Android's `values-b+zh+Hans` and `values-b+zh+Hant`
+match `values/strings.xml` key for key, checked by `ChineseLocalizationTest`.
 
 ## Optional model-assisted draft
 

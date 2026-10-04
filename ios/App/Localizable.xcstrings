@@ -166,7 +166,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "幕僚长"
+            "value": "总协调机器人"
           }
         },
         "zh-Hant": {
@@ -210,13 +210,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "已收起"
+            "value": "已折叠"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "已收起"
+            "value": "已收合"
           }
         }
       }
@@ -4076,7 +4076,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "跳至最新"
+            "value": "跳到最新"
           }
         },
         "zh-Hant": {
@@ -4098,7 +4098,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "跳至最新消息"
+            "value": "跳到最新消息"
           }
         },
         "zh-Hant": {
@@ -10066,13 +10066,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此手机配对时仅获得聊天权限。请以「完整访问」重新配对（openmausbot pair，不加 --client），即可查看并控制本地 VM。"
+            "value": "此手机配对时仅获得聊天权限。请以「完全访问」重新配对（openmausbot pair，不加 --client），即可查看并控制本地虚拟机。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "此手機配對時僅取得聊天權限。請以「完整存取」重新配對（openmausbot pair，不加 --client），即可檢視並控制本機 VM。"
+            "value": "此手機配對時僅取得聊天權限。請以「完整存取權」重新配對（openmausbot pair，不加 --client），即可檢視並控制本機 VM。"
           }
         }
       }
@@ -10094,7 +10094,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "請在電腦上開啟 OpenMausBot →「設定」→「遠端存取」，為此手機開啟「允許檢視電腦」。"
+            "value": "請在電腦上開啟 OpenMausBot →「設定」→「遠端存取」，為此手機開啟「允許存取電腦畫面」。"
           }
         }
       }
@@ -10110,7 +10110,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法显示本地 VM"
+            "value": "无法显示本地虚拟机"
           }
         },
         "zh-Hant": {
@@ -10160,7 +10160,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "接管控制"
+            "value": "接手控制"
           }
         }
       }
@@ -10242,7 +10242,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "本地 VM"
+            "value": "本地虚拟机"
           }
         },
         "zh-Hant": {
@@ -10330,7 +10330,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在连接本地 VM…"
+            "value": "正在连接本地虚拟机…"
           }
         },
         "zh-Hant": {
@@ -10594,7 +10594,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ 的本地 VM"
+            "value": "%@ 的本地虚拟机"
           }
         },
         "zh-Hant": {
@@ -10622,7 +10622,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "控制權可能已在電腦上被收回，或連線已中斷。請交還控制，然後重新接管控制。"
+            "value": "控制權可能已在電腦上被收回，或連線已中斷。請交還控制，然後重新接手控制。"
           }
         }
       }

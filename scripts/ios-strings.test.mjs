@@ -8,7 +8,13 @@ import { describe, expect, it } from "vitest";
 // Chinese or Brazilian users half in English. Keys marked
 // shouldTranslate:false (language names, the app name) are exempt.
 const CATALOG = new URL("../ios/App/Localizable.xcstrings", import.meta.url);
-const LANGUAGES = ["pt-BR", "zh-Hans", "zh-Hant"];
+// The shipped languages are the in-app picker's: every `case x = "…"` in
+// AppLanguage except English, the source. A language added there is checked
+// here without this file changing.
+const APP_LANGUAGE = new URL("../ios/App/AppLanguage.swift", import.meta.url);
+const LANGUAGES = [...readFileSync(APP_LANGUAGE, "utf8").matchAll(/^\s*case\s+\w+\s*=\s*"([^"]+)"/gm)]
+  .map((match) => match[1])
+  .filter((language) => language !== "en");
 
 // printf arguments as Foundation reads them: an optional position (%1$@),
 // flags, width, precision and length (%lld), then the conversion. %% is a
@@ -44,7 +50,7 @@ function units(localization, path = []) {
 }
 
 /** Problems with the catalog, one line per key and language. */
-function catalogProblems(catalog) {
+function catalogProblems(catalog, languages = LANGUAGES) {
   const problems = [];
   for (const [key, entry] of Object.entries(catalog.strings ?? {})) {
     if (entry.shouldTranslate === false) continue;
@@ -53,7 +59,7 @@ function catalogProblems(catalog) {
     // key itself is the English text.
     const english = new Map(units(localizations.en).map(({ path, unit }) => [path.join("/"), unit.value]));
     const source = (path) => english.get(path.join("/")) ?? english.get("plural.other") ?? key;
-    for (const language of LANGUAGES) {
+    for (const language of languages) {
       const found = units(localizations[language]);
       if (found.length === 0) {
         problems.push(`${JSON.stringify(key)}: no ${language} translation`);
@@ -79,7 +85,11 @@ function catalogProblems(catalog) {
 }
 
 describe("iOS string catalog", () => {
-  it("translates every key into pt-BR, zh-Hans and zh-Hant with the English format arguments", () => {
+  it("checks the languages the app offers", () => {
+    expect(LANGUAGES).toEqual(expect.arrayContaining(["pt-BR", "zh-Hans", "zh-Hant"]));
+  });
+
+  it("translates every key into each shipped language with the English format arguments", () => {
     const catalog = JSON.parse(readFileSync(CATALOG, "utf8"));
     expect(catalogProblems(catalog)).toEqual([]);
   });
@@ -112,7 +122,7 @@ describe("iOS string catalog", () => {
         },
       },
     };
-    expect(catalogProblems(catalog)).toEqual([
+    expect(catalogProblems(catalog, ["pt-BR", "zh-Hans", "zh-Hant"])).toEqual([
       `"Live with %@": zh-Hant is not translated (state needs_review)`,
       `"%1$@ is on a call with %2$@.": zh-Hant has format arguments [] but English has [1:@,2:@]`,
       `"%lld minutes": pt-BR plural.other has format arguments [1:d] but English has [1:lld]`,
