@@ -17,6 +17,7 @@
 // CI holds the rule: scripts/check-ios-view-shims.sh fails on an `#available`
 // inside any `extension View`.
 import AVFoundation
+import CompanionCore
 import SwiftUI
 
 /// `onChange(of:_:)` with the iOS 17 two-value closure, back-ported.
@@ -252,13 +253,20 @@ private struct ScrollClipDisabled: ViewModifier {
 /// Hardware-keyboard Return handling, which is `onKeyPress` on iOS 17. There
 /// is no pre-17 equivalent for a SwiftUI text field, so on 16 a hardware
 /// Return just inserts a newline like the software one.
+///
+/// A press this does not send is `.ignored`, which hands it back to the text
+/// view: a line break for Shift-Return, the candidate for an input method
+/// that is mid-word.
 private struct OnHardwareReturn: ViewModifier {
     let action: () -> Void
 
     func body(content: Content) -> some View {
         if #available(iOS 17.0, *) {
             content.onKeyPress(.return, phases: .down) { press in
-                if press.modifiers.contains(.shift) { return .ignored }
+                guard ComposerReturn.sends(
+                    shift: press.modifiers.contains(.shift),
+                    composing: FocusedTextInput.isComposing
+                ) else { return .ignored }
                 action()
                 return .handled
             }
