@@ -573,6 +573,16 @@ fun RosterScreen(navigator: CompanionNavigator) {
                 navigator.open(chat)
             },
             onDismiss = { showingUpdates = false },
+            // The routines list from Updates as well as Settings (MOCA-259),
+            // pushed on the roster so a receipt's chat lands above it.
+            onOpenRoutines = if (connection != null) {
+                {
+                    showingUpdates = false
+                    navigator.push(Destination.Routines)
+                }
+            } else {
+                null
+            },
         )
     }
 

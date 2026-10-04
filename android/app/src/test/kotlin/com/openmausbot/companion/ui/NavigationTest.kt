@@ -169,6 +169,24 @@ class NavigationTest {
     }
 
     @Test
+    fun `routines opened from Updates sit on the roster, under a receipt's task`() {
+        // MOCA-259: the Updates sheet pushes the list straight onto Home, as
+        // iOS appends it to Home's path; Back walks task → list → roster.
+        val navigator = CompanionNavigator()
+        navigator.push(Destination.Routines)
+        navigator.push(botChat)
+        assertEquals(listOf(Destination.Roster, Destination.Routines, botChat), navigator.stack)
+        navigator.pop()
+        assertEquals(Destination.Routines, navigator.current)
+        navigator.pop()
+        assertEquals(Destination.Roster, navigator.current)
+        assertEquals(
+            listOf(Destination.Roster, Destination.Routines),
+            CompanionNavigator.decode(CompanionNavigator.encode(listOf(Destination.Roster, Destination.Routines))),
+        )
+    }
+
+    @Test
     fun `an overview round-trips through encode and decode`() {
         val destination = Destination.Overview("bot-1")
         assertEquals(

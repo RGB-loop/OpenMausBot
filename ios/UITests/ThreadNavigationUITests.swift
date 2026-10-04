@@ -262,6 +262,38 @@ final class ThreadNavigationUITests: XCTestCase {
         assertThread("Triage iCloud", in: app)
     }
 
+    /// Routines are reachable from Updates, not only Settings (MOCA-259):
+    /// the last row closes the sheet and pushes the full list on Home.
+    @MainActor
+    func testUpdatesEndWithRoutinesRowThatOpensTheList() {
+        let app = launchPreview()
+        app.buttons["updates-button"].tap()
+        XCTAssertTrue(app.buttons["update-preview-gmail"].waitForExistence(timeout: 5))
+        let routines = app.buttons["updates-routines"]
+        XCTAssertTrue(routines.waitForExistence(timeout: 5))
+        XCTAssertTrue(routines.label.contains("Routines"))
+        XCTAssertTrue(routines.label.contains("Recent runs, schedules and edits"))
+        // The row sits under every update, below the sheet's medium detent.
+        for _ in 0..<3 where !routines.isHittable { app.swipeUp() }
+        let lastUpdate = ["gmail", "icloud", "weekend"]
+            .map { app.buttons["update-preview-\($0)"].frame.maxY }
+            .max() ?? 0
+        XCTAssertGreaterThanOrEqual(routines.frame.minY, lastUpdate)
+        recordScreenshot("Routines row at the end of Updates", in: app)
+
+        routines.tap()
+        XCTAssertTrue(app.navigationBars["Threads & Routines"].waitForExistence(timeout: 5))
+        // The preview has no computer to load from: the list's own empty state.
+        XCTAssertTrue(app.staticTexts["No routines"].waitForExistence(timeout: 5))
+        assertMissing(routines)
+        assertMissing(app.buttons["update-preview-gmail"])
+        recordScreenshot("Routines list opened from Updates", in: app)
+
+        app.navigationBars["Threads & Routines"].buttons["Back"].tap()
+        XCTAssertTrue(app.buttons["threads-toggle.preview-pepper"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars["Threads & Routines"].exists)
+    }
+
     @MainActor
     func testBulkDeletionKeepsCurrentAndWorkingThread() {
         let app = launchPreview(extraArguments: ["-threads-preview-deletion"])

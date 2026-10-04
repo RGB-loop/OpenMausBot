@@ -29,7 +29,7 @@ sealed interface Destination {
     data object Roster : Destination
     data object Settings : Destination
 
-    /** Settings → Workspace → Tasks & Routines. */
+    /** Settings → Workspace → Tasks & Routines, or Home → Updates → Routines (MOCA-259). */
     data object Routines : Destination
 
     /** Home → the routine calendar (MOCA-191). */

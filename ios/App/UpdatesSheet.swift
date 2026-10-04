@@ -8,6 +8,8 @@ import CompanionCore
 
 struct UpdatesSheet: View {
     let open: (Chat) -> Void
+    /// The full routines list, pushed on Home once the sheet is gone.
+    let openRoutines: () -> Void
     @EnvironmentObject private var session: Session
     @Environment(\.dismiss) private var dismiss
     @AppStorage(PrefKey.activityDetail) private var activityDetail = ActivityDetail.phoneDefault.rawValue
@@ -42,6 +44,15 @@ struct UpdatesSheet: View {
                     section("Needs you", tint: nil, kind: .needsYou)
                     section("Working", tint: nil, kind: .working)
                     section("To review", tint: nil, kind: .toReview)
+                }
+
+                // Last, and there when all is quiet too: a routine's runs are
+                // what you come here to check (MOCA-259). Routines live on the
+                // paired computer, so without one the row is absent — the same
+                // rule as Settings.
+                if session.connection != nil {
+                    RoutinesRow(open: openRoutines)
+                        .padding(.top, 14)
                 }
             }
             .padding(.bottom, 24)
@@ -162,6 +173,42 @@ private struct UpdateRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("update-\(update.chat.threadId)")
+    }
+}
+
+/// Not an update: the way into every routine's recent runs, schedule and
+/// edits, drawn like one with Settings' icon for the list in place of a face.
+private struct RoutinesRow: View {
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 12) {
+                SettingsIcon(symbol: "calendar.badge.clock", color: .orange, size: 40)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Routines")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.primary)
+                    Text("Recent runs, schedules and edits")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.secondary.opacity(0.5))
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("updates-routines")
     }
 }
 

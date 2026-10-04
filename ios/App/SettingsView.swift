@@ -249,16 +249,19 @@ private struct ComputerSettingsRow: View {
     }
 }
 
-private struct SettingsIcon: View {
+/// A white symbol on a coloured tile. The Updates sheet's Routines row draws
+/// the same one at avatar size, so `size` scales the glyph and corner with it.
+struct SettingsIcon: View {
     let symbol: String
     let color: Color
+    var size: CGFloat = 28
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 15, weight: .semibold))
+            .font(.system(size: size * 15 / 28, weight: .semibold))
             .foregroundStyle(.white)
-            .frame(width: 28, height: 28)
-            .background(color, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .frame(width: size, height: size)
+            .background(color, in: RoundedRectangle(cornerRadius: size / 4, style: .continuous))
             .accessibilityHidden(true)
     }
 }

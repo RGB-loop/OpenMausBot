@@ -25,9 +25,11 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasNoClickAction
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasStateDescription
 import androidx.compose.ui.test.hasTestTag
@@ -39,6 +41,7 @@ import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -549,6 +552,58 @@ class RosterScreenTest {
         val layout = textLayout(compose.onNodeWithTag("bot-name.${RosterFixture.TWO_WORDS}", useUnmergedTree = true))
         assertWrapsBetweenWords(layout)
         assertEquals(listOf("Bo", "Christoffersen"), lines(layout))
+    }
+
+    /** MOCA-259: routines from Updates, not only Settings. */
+    @Test
+    fun `Updates ends with Routines, which closes the sheet and pushes the list over the roster`() {
+        val navigator = mount()
+        openUpdates()
+        val routines = revealInUpdates()
+            .assertIsDisplayed()
+            .assert(hasText("Routines"))
+            .assert(hasText("Recent runs, schedules and edits"))
+            .assert(hasClickAction())
+        // Below every update the sheet lists.
+        val top = routines.getBoundsInRoot().top
+        val above = updatesList().onChildren().fetchSemanticsNodes()
+            .filter { it.config.getOrNull(SemanticsProperties.TestTag) != "updates-routines" }
+        assertTrue(above.isNotEmpty())
+        assertTrue(above.all { with(compose.density) { it.boundsInRoot.bottom.toDp() } <= top })
+
+        routines.performClick()
+        compose.waitForIdle()
+        assertEquals(listOf(Destination.Roster, Destination.Routines), navigator.stack)
+        compose.onNodeWithTag("updates-routines").assertDoesNotExist()
+    }
+
+    @Test
+    fun `with nothing to report Updates still offers Routines`() {
+        mount(fleet = Fleet(listOf(bot(id = "quiet-bot")), emptyList()))
+        openUpdates()
+        updatesList().assert(hasAnyDescendant(hasText("All quiet")))
+        updatesList().assert(hasAnyDescendant(hasText("Nothing needs you")))
+        revealInUpdates().assertIsDisplayed()
+    }
+
+    private fun openUpdates() {
+        compose.onNode(
+            SemanticsMatcher("opens Updates") {
+                it.config.getOrNull(SemanticsActions.OnClick)?.label == "Open updates"
+            },
+        ).performClick()
+        compose.waitForIdle()
+    }
+
+    /** The sheet's own list: the one scrollable that is not the roster. */
+    private fun updatesList(): SemanticsNodeInteraction =
+        compose.onNode(hasScrollToNodeAction() and !hasTestTag("roster-list"))
+
+    /** The sheet's list scrolled to its Routines row, which comes last. */
+    private fun revealInUpdates(): SemanticsNodeInteraction {
+        updatesList().performScrollToNode(hasTestTag("updates-routines"))
+        compose.waitForIdle()
+        return compose.onNodeWithTag("updates-routines")
     }
 
     private fun list(): SemanticsNodeInteraction = compose.onNodeWithTag("roster-list")

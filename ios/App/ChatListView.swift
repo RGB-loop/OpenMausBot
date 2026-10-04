@@ -33,6 +33,13 @@ struct ChatListView: View {
     @State private var managingThreads: Chat?
     @FocusState private var searchFocused: Bool
 
+    /// Home's screens that are not a chat, pushed on the same path as one so
+    /// a chat opened from them lands above and Back returns to them.
+    private enum Route: Hashable {
+        /// Threads & Routines, from the Updates sheet (MOCA-259).
+        case routines
+    }
+
     /// Space between the header's glass buttons and whatever the list
     /// starts with, so a first section title is never tucked under them.
     private static let listTopInset: CGFloat = 12
@@ -130,6 +137,11 @@ struct ChatListView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Chat.self) { ChatView(chat: $0) }
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .routines: TasksRoutinesView()
+                }
+            }
             .onValueChange(of: session.notificationChat) { chat in
                 guard let chat else { return }
                 path.append(chat)
@@ -171,10 +183,16 @@ struct ChatListView: View {
                     .environmentObject(session)
             }
             .sheet(isPresented: $showingUpdates) {
-                UpdatesSheet { chat in
-                    showingUpdates = false
-                    path.append(chat)
-                }
+                UpdatesSheet(
+                    open: { chat in
+                        showingUpdates = false
+                        path.append(chat)
+                    },
+                    openRoutines: {
+                        showingUpdates = false
+                        path.append(Route.routines)
+                    }
+                )
             }
             .fullScreenCover(isPresented: $showingWalkie) {
                 WalkieView { chat in

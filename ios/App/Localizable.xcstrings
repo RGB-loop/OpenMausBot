@@ -11364,6 +11364,50 @@
           }
         }
       }
+    },
+    "Threads & Routines": {
+      "localizations": {
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Threads e rotinas"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对话与例行工作"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "對話與例行工作"
+          }
+        }
+      }
+    },
+    "Recent runs, schedules and edits": {
+      "localizations": {
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Execuções recentes, agendamentos e edições"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "近期运行、调度与编辑"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "近期執行、排程與編輯"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

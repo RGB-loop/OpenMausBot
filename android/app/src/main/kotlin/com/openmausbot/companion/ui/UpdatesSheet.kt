@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -42,6 +43,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -174,10 +177,19 @@ internal fun MascotStack(colors: List<String>, size: Dp = 28.dp, overlap: Dp = 1
     }
 }
 
-/** What the pill opens: the active chats, grouped by what they need. */
+/**
+ * What the pill opens: the active chats, grouped by what they need.
+ *
+ * [onOpenRoutines] is the full routines list; null leaves its row out, the way
+ * Settings leaves out its own link with no computer to schedule against.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun UpdatesSheet(onOpen: (Chat) -> Unit, onDismiss: () -> Unit) {
+internal fun UpdatesSheet(
+    onOpen: (Chat) -> Unit,
+    onDismiss: () -> Unit,
+    onOpenRoutines: (() -> Unit)? = null,
+) {
     val environment = LocalCompanion.current
     val session = environment.session
     val state by session.state.collectAsState()
@@ -246,7 +258,67 @@ internal fun UpdatesSheet(onOpen: (Chat) -> Unit, onDismiss: () -> Unit) {
                     )
                 }
             }
+
+            // Last, and there when all is quiet too: a routine's runs are what
+            // you come here to check (MOCA-259).
+            onOpenRoutines?.let { openRoutines ->
+                item(key = "routines") {
+                    RoutinesRow(onOpen = openRoutines, modifier = Modifier.padding(top = 14.dp))
+                }
+            }
         }
+    }
+}
+
+/**
+ * Not an update: the way into every routine's recent runs, schedule and edits,
+ * drawn like one with Settings' icon for the list in place of a face.
+ */
+@Composable
+private fun RoutinesRow(onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("updates-routines")
+            .clickable(role = Role.Button, onClick = onOpen)
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), RoundedCornerShape(10.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_schedule),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(stringResource(R.string.mobile_routines_a445e5ad), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = stringResource(R.string.mobile_recent_runs_schedules_and_edits_5b1bd099),
+                fontSize = 14.sp,
+                color = secondaryTint,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = secondaryTint.copy(alpha = 0.5f),
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
