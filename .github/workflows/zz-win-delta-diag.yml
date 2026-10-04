@@ -4,11 +4,11 @@ on:
     branches: [test/delta-context-windows-deterministic]
 jobs:
   diag:
-    name: delta-context on windows (attempt ${{ matrix.attempt }})
+    name: stop-return-turn on windows (attempt ${{ matrix.attempt }})
     strategy:
       fail-fast: false
       matrix:
-        attempt: [1, 2, 3]
+        attempt: [1, 2, 3, 4]
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -21,5 +21,21 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Prepare Electron test runtime
         run: node --input-type=commonjs -e "require('electron')"
-      - name: Run delta-context with diagnostics
-        run: pnpm exec vitest run server/zz-windiag.e2e.test.ts --reporter=default
+      - name: Loop the stopped-return-turn test under load
+        shell: bash
+        run: |
+          set +e
+          # background load: the whole file once, like a busy shard
+          pnpm exec vitest run server/zz-windiag.e2e.test.ts --reporter=dot > load.log 2>&1 &
+          fails=0
+          for i in 1 2 3 4 5 6 7 8; do
+            echo "=== iteration $i"
+            pnpm exec vitest run server/zz-windiag.e2e.test.ts -t "person stops the return turn" --reporter=default 2>&1 | tee "iter-$i.log" | grep -E "WINDIAG|✓|×|Tests " 
+            grep -q "WINDIAG failure" "iter-$i.log" && fails=$((fails+1))
+          done
+          wait
+          echo "=== background load result"; tail -5 load.log; grep -c "WINDIAG failure" load.log
+          echo "=== iterations failed: $fails"
+          for i in 1 2 3 4 5 6 7 8; do if grep -q "WINDIAG failure" "iter-$i.log"; then echo "##### dump iteration $i"; sed -n '/WINDIAG failure/,/WINDIAG end/p' "iter-$i.log"; fi; done
+          grep -q "WINDIAG failure" load.log && { echo "##### dumps from background load"; sed -n '/WINDIAG failure/,/WINDIAG end/p' load.log; }
+          exit $fails
