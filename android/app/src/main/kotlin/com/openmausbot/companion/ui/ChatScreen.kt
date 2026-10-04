@@ -1750,7 +1750,8 @@ private fun Composer(
     // at the end, where those words were written; the string overload would
     // leave it wherever it was, in the middle of the new name.
     var field by remember { mutableStateOf(TextFieldValue(draft, TextRange(draft.length))) }
-    val fieldValue = if (field.text == draft) field else TextFieldValue(draft, TextRange(draft.length))
+    val composedField = field
+    val fieldValue = if (composedField.text == draft) composedField else TextFieldValue(draft, TextRange(draft.length))
     val inFlight = preparing || sending
     // Held as the state rather than unwrapped with `by`: read inside the layer
     // block, the turn is a new frame, not a new composition of the composer.
@@ -1952,12 +1953,13 @@ private fun Composer(
                             color = secondaryTint,
                         )
                     }
+                    val edit: (TextFieldValue) -> Unit = { next ->
+                        field = next
+                        if (next.text != draft) onDraftChange(next.text)
+                    }
                     BasicTextField(
                         value = fieldValue,
-                        onValueChange = { next ->
-                            field = next
-                            if (next.text != draft) onDraftChange(next.text)
-                        },
+                        onValueChange = edit,
                         // Partials rebuild from a frozen base; prevent competing
                         // edits without dimming the text.
                         readOnly = dictationLocked,
@@ -1976,15 +1978,23 @@ private fun Composer(
                             .fillMaxWidth()
                             .onFocusChanged { fieldFocused = it.isFocused }
                             .onPreviewKeyEvent { event ->
-                                val sends = ComposerReturn.sends(
-                                    isReturnKey = event.key == Key.Enter || event.key == Key.NumPadEnter,
-                                    keyDown = event.type == KeyEventType.KeyDown,
-                                    shift = event.isShiftPressed,
-                                    fromSoftwareKeyboard =
-                                        event.nativeKeyEvent.deviceId == KeyCharacterMap.VIRTUAL_KEYBOARD,
-                                )
-                                if (sends) onSend()
-                                sends
+                                val isReturnKey = event.key == Key.Enter || event.key == Key.NumPadEnter
+                                val keyDown = event.type == KeyEventType.KeyDown
+                                val fromSoftwareKeyboard =
+                                    event.nativeKeyEvent.deviceId == KeyCharacterMap.VIRTUAL_KEYBOARD
+                                if (ComposerReturn.sends(isReturnKey, keyDown, event.isShiftPressed, fromSoftwareKeyboard)) {
+                                    onSend()
+                                    true
+                                } else if (ComposerReturn.breaksLine(isReturnKey, keyDown, event.isShiftPressed, fromSoftwareKeyboard)) {
+                                    // `field` when it moved after this composition:
+                                    // a key typed earlier in the same frame is in it
+                                    // and not yet in `fieldValue`.
+                                    val current = if (field != composedField) field else fieldValue
+                                    if (!dictationLocked) edit(ComposerReturn.breakLine(current))
+                                    true
+                                } else {
+                                    false
+                                }
                             },
                     )
                 }
