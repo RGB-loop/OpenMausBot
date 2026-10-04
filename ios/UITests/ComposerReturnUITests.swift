@@ -45,6 +45,7 @@ final class ComposerReturnUITests: XCTestCase {
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         input.tap()
         input.typeText("one")
+        let softwareKeyboardShown = app.keyboards.firstMatch.exists
         input.typeKey(.return, modifierFlags: .shift)
         input.typeText("two")
         let afterShiftReturn = input.value as? String
@@ -54,12 +55,15 @@ final class ComposerReturnUITests: XCTestCase {
         input.typeKey(.return, modifierFlags: [])
         let returnSent = sendFailed.waitForExistence(timeout: 5)
 
-        // A headless simulator with no hardware keyboard attached drops the
-        // Return that `typeKey` synthesizes before any text view sees it: a
-        // bare SwiftUI TextEditor stays on one line too, while letters and
-        // Space arrive (iOS 26.5, Oct 2026). Neither press doing anything at
-        // all is that, and says nothing about the composer.
-        if afterShiftReturn == "onetwo", !shiftReturnSent, !returnSent {
+        // A headless simulator with no hardware keyboard attached shows the
+        // software keyboard and drops the Return that `typeKey` synthesizes
+        // before SwiftUI sees it: an `onKeyPress` on the composer gets the
+        // letters and Space but never Return, and a bare TextEditor stays on
+        // one line too (iOS 26.5, Oct 2026). Only there does neither press
+        // doing anything say nothing about the composer. With a hardware
+        // keyboard connected the software one is hidden, so the same result
+        // fails.
+        if softwareKeyboardShown, afterShiftReturn == "onetwo", !shiftReturnSent, !returnSent {
             throw XCTSkip("This simulator delivered no hardware Return to the app; run with a hardware keyboard connected.")
         }
         XCTAssertEqual(afterShiftReturn, "one\ntwo", "Shift-Return breaks the line")

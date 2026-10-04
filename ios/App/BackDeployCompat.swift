@@ -255,17 +255,19 @@ private struct ScrollClipDisabled: ViewModifier {
 /// Return just inserts a newline like the software one.
 ///
 /// A press this does not send is `.ignored`, which hands it back to the text
-/// view: a line break for Shift-Return, the candidate for an input method
-/// that is mid-word.
+/// view: a line break for Shift-Return, the candidate for a Chinese or
+/// Japanese input method that is mid-word.
 private struct OnHardwareReturn: ViewModifier {
     let action: () -> Void
 
     func body(content: Content) -> some View {
         if #available(iOS 17.0, *) {
             content.onKeyPress(.return, phases: .down) { press in
+                let input = FocusedTextInput.current
                 guard ComposerReturn.sends(
                     shift: press.modifiers.contains(.shift),
-                    composing: FocusedTextInput.isComposing
+                    markedText: input?.markedTextRange != nil,
+                    inputLanguage: input?.textInputMode?.primaryLanguage
                 ) else { return .ignored }
                 action()
                 return .handled

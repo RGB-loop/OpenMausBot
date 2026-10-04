@@ -5,17 +5,32 @@ import XCTest
 
 final class ComposerReturnTests: XCTestCase {
     func testABareReturnSends() {
-        XCTAssertTrue(ComposerReturn.sends(shift: false, composing: false))
+        XCTAssertTrue(ComposerReturn.sends(shift: false, markedText: false, inputLanguage: "en-US"))
+        XCTAssertTrue(ComposerReturn.sends(shift: false, markedText: false, inputLanguage: nil))
     }
 
     func testShiftReturnBreaksTheLine() {
-        XCTAssertFalse(ComposerReturn.sends(shift: true, composing: false))
+        XCTAssertFalse(ComposerReturn.sends(shift: true, markedText: false, inputLanguage: "en-US"))
+        XCTAssertFalse(ComposerReturn.sends(shift: true, markedText: true, inputLanguage: "en-US"))
     }
 
     /// Pinyin, Zhuyin or Kana mid-word: Return commits the candidate, and the
     /// next Return sends what was committed.
-    func testReturnWhileAnInputMethodComposesCommitsInsteadOfSending() {
-        XCTAssertFalse(ComposerReturn.sends(shift: false, composing: true))
-        XCTAssertFalse(ComposerReturn.sends(shift: true, composing: true))
+    func testReturnWhileChineseOrJapaneseComposesCommitsInsteadOfSending() {
+        for language in ["zh-Hans", "zh-Hant", "zh_Hant_HK", "yue-Hant", "ja-JP", "ja"] {
+            XCTAssertFalse(ComposerReturn.sends(shift: false, markedText: true, inputLanguage: language), language)
+            XCTAssertFalse(ComposerReturn.sends(shift: true, markedText: true, inputLanguage: language), language)
+            XCTAssertTrue(ComposerReturn.sends(shift: false, markedText: false, inputLanguage: language), language)
+        }
+    }
+
+    /// An English inline prediction is marked text, as is the Korean syllable
+    /// being typed; neither input method spends Return on it, so it sends.
+    func testMarkedTextFromOtherInputModesStillSends() {
+        for language in ["en-US", "ko-KR", "vi-VN", "jam", "emoji", "dictation"] {
+            XCTAssertTrue(ComposerReturn.sends(shift: false, markedText: true, inputLanguage: language), language)
+        }
+        XCTAssertTrue(ComposerReturn.sends(shift: false, markedText: true, inputLanguage: nil))
+        XCTAssertTrue(ComposerReturn.sends(shift: false, markedText: true, inputLanguage: ""))
     }
 }

@@ -1,17 +1,18 @@
-// The text input that has the keyboard, for the one question SwiftUI's
-// `KeyPress` does not answer: is an input method composing in it?
+// The text input that has the keyboard, for what SwiftUI's `KeyPress` does
+// not answer: is an input method composing in it, and which one?
 //
 // Pinyin, Zhuyin, Kana and the other input methods hold what is typed as
 // marked text — underlined, over a candidate bar — until a key commits it.
-// The field's UIKit text view knows, through `UITextInput.markedTextRange`.
-// It is found the documented way, not by walking SwiftUI's private views: an
-// action sent to a nil target goes to the first responder.
+// The field's UIKit text view knows, through `UITextInput.markedTextRange`,
+// and its `textInputMode` names the input method. It is found the documented
+// way, not by walking SwiftUI's private views: an action sent to a nil target
+// goes to the first responder.
 import UIKit
 
 enum FocusedTextInput {
-    /// False when nothing has the keyboard, or what has it is not text.
-    @MainActor static var isComposing: Bool {
-        (firstResponder as? UITextInput)?.markedTextRange != nil
+    /// Nil when nothing has the keyboard, or what has it is not text.
+    @MainActor static var current: (UIResponder & UITextInput)? {
+        firstResponder as? UIResponder & UITextInput
     }
 
     @MainActor fileprivate static var reported: UIResponder?

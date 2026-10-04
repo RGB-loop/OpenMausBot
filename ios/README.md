@@ -259,10 +259,14 @@ companion.
   stamp on every message. The palette in `MausAvatar.swift` is copied verbatim
   from `src/lib/mascot.ts`: a bot the user knows as "the orange one" should be
   the same orange on both screens.
-- **Return sends, Shift+Return breaks the line**, via `.onKeyPress`. Returning
-  `.ignored` for the shifted case hands the keypress back to the text field,
+- **A hardware Return sends, Shift+Return breaks the line**, via `.onKeyPress`
+  (iOS 17+). Returning `.ignored` hands the keypress back to the text field,
   which is the only thing that can insert the newline once Return is claimed.
-  Software keyboards have no Shift+Return, so there `.onSubmit` sends.
+  The same goes for a Return while a Chinese or Japanese input method is
+  composing (`markedTextRange` set): the input method commits the candidate.
+  `ComposerReturn.sends` holds the rule and `FocusedTextInput` reads the text
+  view. The software keyboard's Return inserts a newline, like Messages, and
+  the arrow button is the only send.
 - **Composer dictation is the mic.** Tap to talk, tap to stop, then edit or
   send. Recognition stays on-device when the phone supports it, and the mic
   remains visible so another spoken sentence can be appended. Search covers
