@@ -303,7 +303,9 @@ struct ChatListView: View {
 
     @ViewBuilder
     private func rosterSections(waiting: Set<String>) -> some View {
-        let allSummaries = session.state.chatSummaries(activity: activity)
+        // Only comfortable rows show a preview line (search, which matches
+        // on it, reads `chats` instead).
+        let allSummaries = session.state.chatSummaries(activity: activity, previews: density == .comfortable)
         let attention = self.attention
         if !attention.isEmpty {
             sectionLabel(Text("Needs attention"))
@@ -441,12 +443,14 @@ struct ChatListView: View {
     /// In the order the tiles showed them, each stamped with its thread's
     /// last message the way `chatSummaries` stamps a row.
     private func compactRoomRows(_ rooms: [Room], waiting: Set<String>) -> some View {
-        ForEach(rooms) { room in
+        let today = RosterDay.today
+        return ForEach(rooms) { room in
             NavigationLink(value: Chat.room(room)) {
                 CompactRoomRow(
                     room: room,
                     members: members(of: room),
                     lastActivity: session.state.lastVisibleMessage(forThread: room.threadId)?.at ?? 0,
+                    today: today,
                     waiting: waiting.contains(room.id)
                 )
             }
@@ -500,6 +504,7 @@ struct ChatListView: View {
     /// can include groups, which get their own one-line row.
     private func compactRows(_ rows: [ChatSummary], waiting: Set<String>) -> some View {
         let queued = session.state.queuedThreadIds
+        let today = RosterDay.today
         return ForEach(rows) { summary in
             switch summary.chat {
             case let .bot(bot):
@@ -507,6 +512,7 @@ struct ChatListView: View {
                     bot: bot,
                     face: MausState.forChat(summary.chat, in: session.state),
                     lastActivity: summary.lastActivity,
+                    today: today,
                     hasPendingCard: waiting.contains(bot.id),
                     queuedThreadIds: queued,
                     query: query,
@@ -536,7 +542,7 @@ struct ChatListView: View {
                 } label: {
                     CompactRoomRow(
                         room: room, members: members(of: room),
-                        lastActivity: summary.lastActivity, waiting: waiting.contains(room.id)
+                        lastActivity: summary.lastActivity, today: today, waiting: waiting.contains(room.id)
                     )
                 }
                 .buttonStyle(.plain)

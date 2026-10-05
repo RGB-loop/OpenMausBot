@@ -19,11 +19,25 @@ import CompanionCore
 @MainActor
 final class LiveActivityCoordinator {
     private var cancellable: AnyCancellable?
+    /// One authorization reader for the coordinator's life. Making a new one
+    /// for every 400 ms sync cost about 2.6 ms of main thread each time,
+    /// the largest piece of the app's own work left under a busy fleet.
+    private let authorization = ActivityAuthorizationInfo()
+    /// Live Activities allowed in Settings: read once, then kept current by
+    /// the reader's own update sequence, so a change there still applies.
+    private var activitiesEnabled = false
+    private var enablementTask: Task<Void, Never>?
     private var lastSent: [String: BotActivityAttributes.ContentState] = [:]
     /// When each bot's current kind began, so an update does not reset the clock.
     private var since: [String: (kind: String, at: Date)] = [:]
 
     func attach(to session: Session) {
+        activitiesEnabled = authorization.areActivitiesEnabled
+        enablementTask = Task { [weak self, authorization] in
+            for await enabled in authorization.activityEnablementUpdates {
+                self?.activitiesEnabled = enabled
+            }
+        }
         // Answer from the island: the intent runs in this process.
         AnswerApprovalIntent.handler = { [weak self, weak session] threadId, requestId, choice, isPermission in
             await self?.answer(session: session, threadId: threadId, requestId: requestId, choice: choice, isPermission: isPermission)
@@ -47,7 +61,7 @@ final class LiveActivityCoordinator {
     }
 
     private func sync(_ state: CompanionState) {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        guard activitiesEnabled else { return }
         let wanted = state.liveActivityUpdates(detail: .stored)
         var wantedIds = Set<String>()
 

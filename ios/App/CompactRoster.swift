@@ -49,6 +49,10 @@ struct CompactBotEntry: View, Equatable {
     let face: MausState
     /// When the bot's current thread last moved, from the roster summary.
     let lastActivity: Double
+    /// The day the list drew on (`RosterDay.today`). The stamps say "9:15 AM",
+    /// "Yesterday" or a weekday against the clock, so a new day must redraw
+    /// a row whose bot has not moved.
+    let today: Date
     /// An unanswered approval or question sits in one of its threads.
     let hasPendingCard: Bool
     /// Threads holding a held send: `CompanionState.queuedThreadIds`.
@@ -81,7 +85,7 @@ struct CompactBotEntry: View, Equatable {
     /// the list's own state, which a skipped row still reaches.
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.bot == rhs.bot && lhs.face == rhs.face && lhs.lastActivity == rhs.lastActivity
-            && lhs.hasPendingCard == rhs.hasPendingCard && lhs.queuedThreadIds == rhs.queuedThreadIds
+            && lhs.today == rhs.today && lhs.hasPendingCard == rhs.hasPendingCard && lhs.queuedThreadIds == rhs.queuedThreadIds
             && lhs.query == rhs.query && lhs.expanded == rhs.expanded
             && lhs.collapsedFolders == rhs.collapsedFolders && lhs.creating == rhs.creating
             && lhs.session === rhs.session
@@ -331,7 +335,7 @@ struct CompactBotEntry: View, Equatable {
         ForEach(tasks, id: \.threadId) { task in
             if let projected = bot.projected(forThread: task.threadId) {
                 NavigationLink(value: Chat.bot(projected)) {
-                    CompactThreadLine(task: task, queued: queuedThreadIds.contains(task.threadId))
+                    CompactThreadLine(task: task, queued: queuedThreadIds.contains(task.threadId), today: today)
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
@@ -385,6 +389,8 @@ struct CompactThreadLine: View {
     let task: BotTask
     /// A held send, from the client's queue state (never in `activity`).
     var queued = false
+    /// The day its stamp was worded on; see `CompactBotEntry.today`.
+    let today: Date
 
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -503,6 +509,8 @@ struct CompactRoomRow: View {
     /// than by observing the session from every row.
     let members: [Bot]
     let lastActivity: Double
+    /// The day its stamp was worded on; see `CompactBotEntry.today`.
+    let today: Date
     /// An unanswered approval or question sits in the group's thread.
     var waiting = false
 
@@ -684,4 +692,11 @@ struct ChiefBadge: View {
             .accessibilityLabel("Chief of Staff")
             .accessibilityIdentifier("chief-badge")
     }
+}
+
+/// The day a roster render words its stamps on. The compact rows no longer
+/// redraw on every publish, so the list hands them this instead: a row whose
+/// bot has not moved still redraws once the day turns over.
+enum RosterDay {
+    static var today: Date { Calendar.current.startOfDay(for: Date()) }
 }
