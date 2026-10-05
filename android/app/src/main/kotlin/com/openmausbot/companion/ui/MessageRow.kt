@@ -1625,30 +1625,29 @@ fun StreamingBubble(text: String?, reasoning: String?) {
 }
 
 /**
- * The beat between "go" and the first token — the port of the `else if
- * current.busy` branch of `ChatView.swift` and of `TypingIndicatorView`.
+ * The bot is typing — the port of the `else if showsTyping` branch of
+ * `ChatView.swift` and of `TypingIndicatorView`: three dots hopping in turn, the
+ * way Messages shows someone typing.
  *
- * The reason this exists is the sentence in the semantics block, not the dots.
- * Busy already reaches a sighted reader twice over — the mascot wears a working
- * face and the composer offers an interrupt — and reached a TalkBack reader
- * through neither. The row is a polite live region, so it is spoken when it
- * appears, and it carries a name of its own, so it can also be found by swiping
- * to the end of the transcript.
+ * The semantics block matters as much as the dots. Busy already reaches a
+ * sighted reader twice over — the mascot wears a working face and the composer
+ * offers an interrupt — and reached a TalkBack reader through neither. The row
+ * is a polite live region, so it is spoken when it appears, and it carries a name
+ * of its own ("Pepper is typing"), so it can also be found by swiping to the end
+ * of the transcript.
  *
- * Drawn in the same bubble as the reply that will replace it, and in the bot's
- * own colour, so the handover is the text arriving rather than the shape
- * changing. Everything Apple about the original — the capsule, the secondary
- * fill, the `TimelineView`, the scale wave — is left where it was; see
- * [WorkingDots].
+ * Drawn in the same bubble, padding and tail as the reply that will replace it,
+ * one line of text high, so the handover is the text arriving rather than the
+ * shape changing. The dots are the bubble's quiet foreground, as on iOS.
  */
 @Composable
-fun WorkingBubble(name: String, color: String) {
+fun WorkingBubble(name: String) {
     val clock = remember { MausFrameClock() }
     // Android says "reduce motion" through the animator duration scale, and this
     // reads it the way MausAvatar does — through a snapshotFlow, so turning the
     // setting off while a turn is running stops the dots on the next frame
-    // rather than at the end of the turn. At zero they hold their rest alpha:
-    // still three dots, just still ones.
+    // rather than at the end of the turn. At zero they sit still on the line, a
+    // little fainter: still three dots, just still ones.
     var moving by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         val durationScale = coroutineContext[MotionDurationScale]
@@ -1660,8 +1659,8 @@ fun WorkingBubble(name: String, color: String) {
             }
     }
 
-    val dots = Color(MausPalette.argb(color))
-    val label = LiveTail.workingLabel(name)
+    val dots = secondaryTint
+    val label = stringResource(R.string.mobile_chat_typing, name)
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
         Box(
             modifier = Modifier
@@ -1673,18 +1672,24 @@ fun WorkingBubble(name: String, color: String) {
                     liveRegion = LiveRegionMode.Polite
                 },
         ) {
-            Canvas(modifier = Modifier.size(WORKING_DOTS_WIDTH, WORKING_DOT)) {
+            Canvas(modifier = Modifier.size(WORKING_DOTS_WIDTH, WORKING_DOTS_HEIGHT)) {
                 // Read in the draw phase: a tick repaints the dots without
                 // recomposing the bubble, let alone the transcript around it.
                 val elapsed = clock.nanos.longValue
                 val live = moving
-                val radius = size.height * 0.5f
-                val step = size.height + WORKING_DOT_GAP.toPx()
+                val radius = WORKING_DOT.toPx() * 0.5f
+                val step = WORKING_DOT.toPx() + WORKING_DOT_GAP.toPx()
+                // Resting on a line just below the middle, so the hop rises
+                // into the bubble's centre rather than out of it.
+                val rest = (size.height + WORKING_DOT_BOUNCE.toPx()) * 0.5f
                 for (index in 0 until WorkingDots.COUNT) {
                     drawCircle(
                         color = dots,
                         radius = radius,
-                        center = Offset(radius + index * step, radius),
+                        center = Offset(
+                            radius + index * step,
+                            rest - WorkingDots.lift(index, elapsed, live) * WORKING_DOT_BOUNCE.toPx(),
+                        ),
                         alpha = WorkingDots.alpha(index, elapsed, live),
                     )
                 }
@@ -1694,7 +1699,10 @@ fun WorkingBubble(name: String, color: String) {
     }
 }
 
-private val WORKING_DOT = 7.dp
+private val WORKING_DOT = 8.dp
 private val WORKING_DOT_GAP = 5.dp
+private val WORKING_DOT_BOUNCE = 3.dp
 private val WORKING_DOTS_WIDTH =
     WORKING_DOT * WorkingDots.COUNT + WORKING_DOT_GAP * (WorkingDots.COUNT - 1)
+/** A line of body text tall, so the bubble matches a one-line reply. */
+private val WORKING_DOTS_HEIGHT = 22.dp

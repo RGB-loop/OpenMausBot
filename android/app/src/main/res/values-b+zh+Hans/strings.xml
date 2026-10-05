@@ -686,6 +686,7 @@
     <string name="mobile_chat_send_failed">无法发送此消息，请重试。</string>
     <string name="mobile_chat_opening_file">正在打开 %1$s…</string>
     <string name="mobile_chat_thread_update_failed">无法更新此对话，请重试。</string>
+    <string name="mobile_chat_typing">%1$s 正在输入</string>
     <string name="mobile_chat_attachment_unsupported">%1$s 不是受支持的附件格式。请尝试图片、PDF、文本、Word、Excel 或 PowerPoint 文件。</string>
     <string name="mobile_cloud_desktop_open_failed">无法打开云端桌面。</string>
     <string name="mobile_connected_apps_no_browser">此手机没有可用于打开授权页面的浏览器。</string>
