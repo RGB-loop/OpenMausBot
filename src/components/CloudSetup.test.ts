@@ -16,6 +16,7 @@ vi.mock("@/state/store", () => ({ useStore: () => ({ state: f.state, dispatch: f
 vi.mock("@/lib/drafts", () => ({ appendComposerDraft: vi.fn(), getDraft: vi.fn(() => "") }));
 import { CloudSetup } from "./CloudSetup";
 import { CLOUD_SETUP_HIDDEN, CLOUD_SETUP_MOVE_SKIPPED } from "@/lib/cloud-setup";
+import en from "@/locales/en.json";
 import { appendComposerDraft, getDraft } from "@/lib/drafts";
 import { api } from "@/state/store";
 
@@ -105,7 +106,7 @@ it("off a Cloud home, and to a Cloud guest, there is no checklist: the plain Cop
     vi.mocked(bridge.state).mockResolvedValue(overview({ suggest: true, destination: server }));
     await mount();
     const { html } = render();
-    expect(html).not.toContain("Set up your Cloud");
+    expect(html).not.toContain("Set up My Cloud");
     expect(html).toContain("Bring your bots and chats from this Mac");
     expect(html).toContain("bots.example.test is empty. Copy 4 bots and 37 chats here (about 1.5 GB).");
   }
@@ -115,9 +116,9 @@ it("off a Cloud home, and to a Cloud guest, there is no checklist: the plain Cop
 it("on a new Cloud lists the four steps, sign-in first and required, each from the Cloud's own state", async () => {
   await mount();
   const { html } = render();
-  expect(html).toContain("Set up your Cloud");
+  expect(html).toContain("Set up My Cloud");
   expect(html).toContain("0 of 4 done");
-  for (const title of ["Sign in to Claude or ChatGPT", "Bring your bots from your computer", "Try something that runs while you&#x27;re away", "Optional: Let your Cloud use this Mac"]) expect(html).toContain(title);
+  for (const title of ["Sign in to Claude or ChatGPT", "Bring your bots from this computer", "Try something that runs while you&#x27;re away", "Optional: Let My Cloud use this Mac"]) expect(html).toContain(title);
   expect(html).toContain("Required.");
   expect(statuses()).toEqual({ engine: "todo", move: "todo", try: "todo", lend: "todo" });
   expect(bridge.state).toHaveBeenCalledOnce();
@@ -147,9 +148,9 @@ it("try something is done by the server's record of a finished turn, and Try it 
   await mount();
   // Signed in, the next step open is bringing bots; trying something is a click away.
   expect(button("Try it")).toBeUndefined();
-  expect(button("Move to Cloud")).toBeTruthy();
+  expect(button("Copy to My Cloud")).toBeTruthy();
   expand("Try something that runs while you're away");
-  expect(button("Move to Cloud")).toBeUndefined();
+  expect(button("Copy to My Cloud")).toBeUndefined();
   button("Try it")!.props.onClick!();
   expect(dispatched).toEqual([{ type: "select", id: "b1" }]);
   expect(appendComposerDraft).toHaveBeenCalledExactlyOnceWith("bot:b1:t1", "Every morning at 8, check the top stories on Hacker News and send me a short summary.");
@@ -190,9 +191,9 @@ it("bringing bots opens the copy in place; Copy starts it, and Not now is kept a
   await mount();
   expect(render().html).not.toContain("Copy 4 bots and 37 chats");
   // One step is open at a time: here, signing in.
-  expect(button("Move to Cloud")).toBeUndefined();
-  expand("Bring your bots from your computer");
-  button("Move to Cloud")!.props.onClick!();
+  expect(button("Copy to My Cloud")).toBeUndefined();
+  expand("Bring your bots from this computer");
+  button("Copy to My Cloud")!.props.onClick!();
   let { html } = render();
   expect(html).toContain("My Cloud is empty. Copy 4 bots and 37 chats here (about 1.5 GB).");
   expect(html).toContain("API keys and sign-ins stay on this computer");
@@ -206,8 +207,8 @@ it("bringing bots opens the copy in place; Copy starts it, and Not now is kept a
   // Another Cloud, where the person says Not now instead.
   f.values = []; f.effects = [];
   await mount();
-  expand("Bring your bots from your computer");
-  button("Move to Cloud")!.props.onClick!();
+  expand("Bring your bots from this computer");
+  button("Copy to My Cloud")!.props.onClick!();
   button("Not now")!.props.onClick!(); await flush();
   expect(bridge.dismiss).toHaveBeenCalledOnce();
   expect(api).toHaveBeenCalledWith("/api/config", { method: "PUT", body: JSON.stringify({ onboarding: { hintsSeen: [CLOUD_SETUP_MOVE_SKIPPED] } }) });
@@ -218,7 +219,7 @@ it("bringing bots opens the copy in place; Copy starts it, and Not now is kept a
 
 it("lending opens the lending switch on this Mac and is done when the Cloud lists a lent computer", async () => {
   await mount();
-  expand("Optional: Let your Cloud use this Mac");
+  expand("Optional: Let My Cloud use this Mac");
   button("Choose what to lend")!.props.onClick!(); await flush();
   expect(open).toHaveBeenCalledExactlyOnceWith();
   expect(statuses().lend).toBe("todo");
@@ -230,7 +231,7 @@ it("lending opens the lending switch on this Mac and is done when the Cloud list
   open.mockRejectedValueOnce(new Error("only available"));
   lent = []; f.values = [];
   await mount();
-  expand("Optional: Let your Cloud use this Mac");
+  expand("Optional: Let My Cloud use this Mac");
   button("Choose what to lend")!.props.onClick!(); await flush();
   expect(render().html).toContain("Could not open Settings on this Mac. Try again.");
 });
@@ -251,4 +252,96 @@ it("offers bringing bots and lending only in the desktop app, and lending only o
   expect(Object.keys(statuses())).toEqual(["engine", "try"]);
   expect(render().html).toContain("0 of 2 done");
   expect(api).not.toHaveBeenCalledWith("/api/shared-computers");
+});
+
+// ── Give a bot a cloud computer (J10) ────────────────────────────────────────
+const EXAMPLE = "Open a web browser on your cloud computer, go to wikipedia.org and tell me about today's featured article in two sentences.";
+const firstTurnAt = "2026-09-30T08:00:00.000Z";
+/** A Cloud that offers cloud computers (the plan's included Boat account), in a browser: no copy, no lending. */
+function offeredInBrowser(onboarding: Record<string, unknown> = {}) {
+  vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+  f.state.instances = [ready];
+  f.state.config = { cloudHome: true, box: { configured: true, included: true }, onboarding: { ...EMPTY_ONBOARDING, ...onboarding } };
+}
+const writes = () => vi.mocked(api).mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method !== undefined);
+
+it("says what My Cloud is for, under its title", async () => {
+  await mount();
+  const { html } = render();
+  expect(html).toContain("Set up My Cloud");
+  expect(html).toContain("Your bots live here and keep working when your computer is off. When a task needs a desktop, a bot can use a cloud computer that you can watch.");
+});
+
+it("J10: a subscriber whose first turn finished without a cloud computer, who hid the old checklist, sees it again, open at Give a bot a cloud computer", async () => {
+  offeredInBrowser({ firstTurnAt, hintsSeen: ["cloud-setup-hidden"] });
+  await mount();
+  const { html } = render();
+  expect(html).toContain("data-cloud-setup");
+  expect(statuses()).toEqual({ engine: "done", computer: "todo", try: "done" });
+  expect(html).toContain("2 of 3 done");
+  expect(html).toContain("A cloud computer is a desktop in the cloud. Maus uses it like a person would, for apps and sites that need a real screen, and you can watch or take over. It&#x27;s included in your plan.");
+  // The open step is the computer step: its one action is on screen.
+  expect(button("Give Maus a cloud computer")).toBeTruthy();
+});
+
+it("J10: Give Maus a cloud computer sets its Works on to Cloud computer and opens its Computer panel, and starts nothing", async () => {
+  offeredInBrowser({ firstTurnAt });
+  await mount();
+  vi.mocked(api).mockClear();
+  button("Give Maus a cloud computer")!.props.onClick!(); await flush();
+  expect(dispatched).toEqual([
+    { type: "select", id: "b1" },
+    { type: "updateBot", botId: "b1", patch: { computer: "cloud" } },
+    { type: "toggleComputer", open: true },
+  ]);
+  // No provision, wake or message: the computer starts when a task needs it.
+  expect(writes()).toEqual([]);
+  expect(vi.mocked(api).mock.calls.map(([path]) => String(path)).filter((path) => /computer|boat|box|messages/.test(path))).toEqual([]);
+  // Choosing it is not the step: only a finished turn with one ticks it.
+  expect(statuses().computer).toBe("todo");
+});
+
+it("J10: once a bot works on its cloud computer, Try it drafts the example in its chat and does not send it", async () => {
+  offeredInBrowser({ firstTurnAt });
+  f.state.bots = [{ id: "b0", threadId: "t0", name: "Scout" }, { id: "b1", threadId: "t1", name: "Maus", computer: "cloud" }];
+  f.state.selectedId = "b0";
+  await mount();
+  const { html } = render();
+  expect(html).toContain("Maus now works on its cloud computer. Ask it something, for example:");
+  expect(html).toContain(EXAMPLE.replace("'", "&#x27;"));
+  expect(button("Give Scout a cloud computer")).toBeUndefined();
+  vi.mocked(api).mockClear();
+  button("Try it")!.props.onClick!(); await flush();
+  expect(dispatched).toEqual([{ type: "select", id: "b1" }]);
+  expect(appendComposerDraft).toHaveBeenCalledExactlyOnceWith("bot:b1:t1", EXAMPLE);
+  // Drafted, never sent: no request at all.
+  expect(api).not.toHaveBeenCalled();
+  vi.mocked(getDraft).mockReturnValueOnce(EXAMPLE);
+  button("Try it")!.props.onClick!();
+  expect(appendComposerDraft).toHaveBeenCalledOnce();
+  // The example names no browser a cloud computer may not have.
+  expect(en["cloudSetup.computer.example"]).not.toMatch(/Chrome|Firefox|Safari|Edge/);
+});
+
+it("J10: the step is done when the server records a turn that finished with a cloud computer, and then setup is complete", async () => {
+  offeredInBrowser({ firstTurnAt, firstCloudComputerAt: "2026-10-05T09:00:00.000Z" });
+  await mount();
+  expect(render().html).toBe("");
+});
+
+it("leaves the step out where this Cloud offers no cloud computers", async () => {
+  offeredInBrowser();
+  f.state.config.box = { configured: false };
+  await mount();
+  expect(Object.keys(statuses())).toEqual(["engine", "try"]);
+  expect(render().html).not.toContain("Give a bot a cloud computer");
+  expect(button("Give Maus a cloud computer")).toBeUndefined();
+});
+
+it("Hide setup is kept under its new id", async () => {
+  offeredInBrowser({ firstTurnAt });
+  await mount();
+  button("Hide setup")!.props.onClick!(); await flush();
+  expect(CLOUD_SETUP_HIDDEN).toBe("cloud-setup-2-hidden");
+  expect(api).toHaveBeenCalledWith("/api/config", { method: "PUT", body: JSON.stringify({ onboarding: { hintsSeen: [CLOUD_SETUP_HIDDEN] } }) });
 });

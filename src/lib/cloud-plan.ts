@@ -1,9 +1,10 @@
-// What the app says about the person's OMB Cloud plan, in one place: Settings
-// → OMB Cloud, the Pro card in Settings and the Pro introduction all read it,
-// so no two of them can disagree. The rule the owner set: after buying,
-// nothing unexpected or contradictory, never an offer to buy to someone who
-// pays (or may pay: an unknown state is not "free"), and every state has one
-// message and one next step.
+// What the app says about the person's OpenMausBot Cloud plan, in one place:
+// Settings → OpenMausBot Cloud (its one next action, cloudPlanAction), the
+// Pro card in Settings, the Pro introduction and This computer's My Cloud card
+// (cloudNoticeKind) all read it, so no two of them can disagree. The rule the
+// owner set: after buying, nothing unexpected or contradictory, never an
+// offer to buy to someone who pays (or may pay: an unknown state is not
+// "free"), and every state has one message and one next step.
 import type { CloudAccountState } from "../../electron/cloud-account.mjs";
 import { t } from "@/lib/i18n";
 
@@ -18,6 +19,9 @@ export type CloudPlanView =
   /** Not known yet: no snapshot, or a saved sign-in still being read. */
   | { kind: "unknown" }
   | { kind: "signed-out" }
+  /** This computer's saved sign-in could not be read, so it was removed. The
+   * person may well pay: signing in again is the step, never an offer. */
+  | { kind: "removed" }
   | { kind: "connecting" }
   /** Verified: signed in, no plan, no Cloud, no payment being linked. */
   | { kind: "free" }
@@ -35,7 +39,7 @@ export type CloudPlanView =
 export function cloudPlanView(account: CloudAccountState | null | undefined): CloudPlanView {
   if (!account || (account.status === "signed-out" && account.message === "restoring")) return { kind: "unknown" };
   const last = account.lastPlan ? cloudPlanLabel(account.lastPlan.tier) : null;
-  if (account.status === "signed-out") return { kind: "signed-out" };
+  if (account.status === "signed-out") return account.message === "restore-removed" ? { kind: "removed" } : { kind: "signed-out" };
   if (account.status === "connecting") return { kind: "connecting" };
   if (account.status === "reauth-required") return { kind: "reauth", label: last, reason: account.message === "expired" ? "expired" : "access-ended" };
   if (account.status !== "connected") return { kind: "unverified", label: last };
@@ -67,4 +71,41 @@ export function cloudPlanLine(view: CloudPlanView): string | null {
     case "free": return t("cloudAccount.free");
     default: return null;
   }
+}
+
+/** The one next action Settings → OpenMausBot Cloud offers in each state, or
+ * null where there is nothing to press (still loading, or a saved sign-in the
+ * app reads again by itself). No Refresh: the app checks with OpenMausBot
+ * Cloud by itself, every minute. Sign out (and Cancel, while signing in) stay
+ * as quiet links: ways out, not next steps. */
+export type CloudPlanAction = "sign-in" | "sign-in-again" | "reopen" | "choose-plan" | "manage" | "update-payment" | "plan-page" | "sign-out";
+export function cloudPlanAction(view: CloudPlanView, account: CloudAccountState | null | undefined): CloudPlanAction | null {
+  if (!account) return null;
+  // Clearing the saved sign-in failed: signing out again is the retry its message names.
+  if (account.message === "signout-storage-failed") return "sign-out";
+  // A saved sign-in that may only be locked (a keychain) is read again by itself.
+  if (account.message === "restore-failed") return null;
+  switch (view.kind) {
+    case "signed-out": case "removed": return "sign-in";
+    case "connecting": return "reopen";
+    case "reauth": return "sign-in-again";
+    case "free": return "choose-plan";
+    case "paid": return "manage";
+    case "unverified": return view.label ? "manage" : "plan-page";
+    case "attention": return account.machine?.status === "payment-problem" ? "update-payment" : "plan-page";
+    case "purchase": return "plan-page";
+    default: return null;
+  }
+}
+
+/** The one card This computer's window shows about My Cloud, bottom left, or
+ * null: a paid plan whose My Cloud is ready says the always-on bots are
+ * there; a sign-in that ended, or one this computer could not read and
+ * removed, asks to sign in again. An offer to buy is the Pro introduction's,
+ * shown only where buyOfferAllowed; My Cloud still being set up is shown in
+ * Settings. */
+export function cloudNoticeKind(view: CloudPlanView, account: CloudAccountState | null | undefined): "my-cloud" | "sign-in-again" | null {
+  if (view.kind === "paid" && account?.machine?.status === "ready") return "my-cloud";
+  if (view.kind === "removed" || view.kind === "reauth") return "sign-in-again";
+  return null;
 }

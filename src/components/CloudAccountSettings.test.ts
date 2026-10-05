@@ -13,7 +13,7 @@ vi.mock("./DesktopCapabilities", () => ({ useDesktopCapabilities: () => ({ capab
 import { CloudAccountSettings, CloudPlanOnCloud, cloudLinkAction, cloudPlanLabel } from "./CloudAccountSettings";
 type Node = ReactElement<{ children?: ReactNode; onClick?: () => void }>;
 function nodes(value: ReactNode): Node[] { if (!isValidElement(value)) return []; const node = value as Node; return [node, ...Children.toArray(node.props.children).flatMap(nodes)]; }
-function render(props?: { linkRequest?: number; cloudHome?: boolean; onConnectPhone?: () => void }) { f.index = 0; f.effects = []; let tree: ReactNode; function Capture() { tree = CloudAccountSettings(props); return tree; }
+function render(props?: { linkRequest?: number; cloudHome?: boolean; planPage?: string; onConnectPhone?: () => void }) { f.index = 0; f.effects = []; let tree: ReactNode; function Capture() { tree = CloudAccountSettings(props); return tree; }
   const html = renderToStaticMarkup(createElement(Capture)); return { html, nodes: nodes(tree) }; }
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 const click = (label: string) => { const button = render().nodes.find(node => node.type === "button" && node.props.children === label); expect(button).toBeTruthy(); button!.props.onClick!(); };
@@ -410,4 +410,64 @@ it("once the Cloud is ready, offers Copy this computer here for the Cloud itself
   await flush();
   expect(move.state.mock.calls).toContainEqual(["cloud"]);
   expect(render().html).toContain("Copy this computer&#x27;s bots and chats");
+});
+
+// Settings → OpenMausBot Cloud: one message and one next action for every
+// state, from cloudPlanView (lib/cloud-plan cloudPlanAction). Signing out stays
+// as a quiet link, a way out rather than a next step; Refresh is gone (the app
+// checks by itself every minute).
+const primary = () => {
+  const card = render().nodes.find(node => (node.props as Record<string, unknown>)["data-cloud-account"] !== undefined);
+  expect(card).toBeTruthy();
+  return nodes(card!).filter(node => node.type === "button" && String((node.props as { className?: string }).className ?? "").split(" ").includes("ui-button"))
+    .map(node => Children.toArray(node.props.children).filter(child => typeof child === "string").join(""));
+};
+it("shows one next action in every state, and no Refresh", async () => {
+  const machine = { status: "ready" as const, origin };
+  for (const [state, action] of [
+    [{ status: "signed-out" }, "Sign in to OMB Cloud"],
+    [{ status: "signed-out", message: "restore-removed" }, "Sign in to OMB Cloud"],
+    [{ status: "connecting", enrollment: { userCode: "ABCDE-FGHJK", expiresAt: Date.UTC(2026, 9, 2, 12, 15) } }, "Open the sign-in page again"],
+    [free, "Choose a Cloud plan in your browser"],
+    [{ ...pro, machine }, "Manage Cloud subscription"],
+    [{ ...pro, machine, checking: true }, "Manage Cloud subscription"],
+    [{ ...free, machine: { status: "payment-problem", origin } }, "Update payment in your browser"],
+    [{ ...free, machine: { status: "stopped", origin } }, "Open your Cloud dashboard"],
+    [{ ...free, purchase: { state: "confirming", tier: "personal" } }, "Open your Cloud dashboard"],
+    [{ status: "unavailable", message: "unreachable", lastPlan: { tier: "personal", active: true } }, "Manage Cloud subscription"],
+    [{ status: "reauth-required", message: "expired", lastPlan: { tier: "max", active: true } }, "Sign in again"],
+    [{ status: "unavailable", message: "signout-storage-failed" }, "Sign out of OMB Cloud"],
+  ] as Array<[CloudAccountState, string]>) {
+    f.values = []; await ready(state);
+    expect(primary(), JSON.stringify(state)).toEqual([action]);
+    expect(button("Refresh"), JSON.stringify(state)).toBeUndefined();
+  }
+  // A saved sign-in that may only be locked is read again by itself: nothing to press.
+  f.values = []; await ready({ status: "unavailable", message: "restore-failed" });
+  expect(primary()).toEqual([]);
+  expect(button("Sign out of OMB Cloud")).toBeUndefined();
+});
+it("keeps Sign out and Cancel as quiet links beside the one action", async () => {
+  await ready({ ...pro, machine: { status: "ready", origin } });
+  const signOut = button("Sign out of OMB Cloud")!;
+  expect(String((signOut.props as { className?: string }).className)).not.toContain("ui-button");
+  push({ status: "connecting" });
+  const cancel = button("Cancel sign-in")!;
+  expect(String((cancel.props as { className?: string }).className)).not.toContain("ui-button");
+  cancel.props.onClick!(); await flush();
+  expect(bridge.cancel).toHaveBeenCalledExactlyOnceWith();
+});
+it("in a browser on My Cloud, shows one link to the Plan page, and nothing that needs the app", () => {
+  vi.stubGlobal("window", {});
+  const planPage = "https://cloud.openmausbot.com/cloud";
+  const { html, nodes: tree } = render({ cloudHome: true, planPage });
+  expect(html).toContain("Your plan, payments and use are on the Plan page.");
+  const links = tree.filter(node => node.type === "a");
+  expect(links).toHaveLength(1);
+  expect(links[0]!.props).toMatchObject({ href: planPage, target: "_blank", rel: "noreferrer" });
+  expect(Children.toArray(links[0]!.props.children).join("")).toBe("Open the Plan page");
+  expect(tree.filter(node => node.type === "button")).toEqual([]);
+  expect(html).not.toContain("local desktop app");
+  // Any other server in a browser has no plan of this person's.
+  expect(render({ cloudHome: false, planPage }).html).not.toContain("Plan page");
 });

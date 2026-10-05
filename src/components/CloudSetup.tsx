@@ -1,11 +1,15 @@
-// The setup checklist on an OMB Cloud home (docs/cloud-pro.md, "Setup
-// checklist"): one quiet card from the Cloud's first open until an engine is
-// signed in and a bot has finished a turn there, or until the person hides
-// it. Each step's state is read from the Cloud or this app (lib/cloud-setup),
-// never ticked by hand, and each action opens what already exists: the engine
-// sign-in, Copy this computer here, the chat's composer, the lending switch. No
-// dialogs. Desktop and self-hosted installs never see it; they keep the welcome
-// flow, and an empty one gets the same Copy this computer here card.
+// "Set up My Cloud", the setup checklist on an OpenMausBot Cloud home
+// (docs/cloud-pro.md, "Setup checklist"): one quiet card from the Cloud's
+// first open until an engine is signed in, a bot has finished a turn there
+// and, where the plan's cloud computers are on, one has finished a turn on its
+// cloud computer, or until the person hides it. A line under the title says
+// what My Cloud is for. Each step's state is read from the Cloud or this app
+// (lib/cloud-setup), never ticked by hand, and each action opens what already
+// exists: the engine sign-in, Copy this computer here, a bot's Works on and
+// Computer panel, the chat's composer, the lending switch. No dialogs, and no
+// action starts a computer or sends a message. Desktop and self-hosted
+// installs never see it; they keep the welcome flow, and an empty one gets
+// the same Copy this computer here card.
 import { useEffect, useState } from "react";
 import { CheckCircle2, Circle, Cloud } from "lucide-react";
 import { cloudMoveOffer, CloudMoveSuggestion, moveNextSteps, useCloudMove } from "@/components/CloudMove";
@@ -16,10 +20,10 @@ import { appendComposerDraft, getDraft } from "@/lib/drafts";
 import { t } from "@/lib/i18n";
 import { hintSeenPatch, type WelcomeViewer } from "@/lib/onboarding";
 import type { LocaleKey } from "@/locales";
-import { api, useStore } from "@/state/store";
+import { api, useStore, type Bot } from "@/state/store";
 
 const TITLE: Record<CloudSetupStep, LocaleKey> = {
-  engine: "cloudSetup.engine.title", move: "cloudSetup.move.title", try: "cloudSetup.try.title", lend: "cloudSetup.lend.title",
+  engine: "cloudSetup.engine.title", move: "cloudSetup.move.title", computer: "cloudSetup.computer.title", try: "cloudSetup.try.title", lend: "cloudSetup.lend.title",
 };
 
 /** Whether the Cloud lists a computer lent to it (GET /api/shared-computers,
@@ -59,6 +63,8 @@ export function CloudSetup({ viewer }: { viewer: WelcomeViewer | null }) {
   const facts = {
     viewer, connected: state.connected, enginesKnown: state.instances.length > 0,
     engineReady: state.instances.some(engineReady), onboarding,
+    // The plan's included cloud computers; a Cloud without them has no computer step.
+    cloudComputers: state.config?.box?.included === true,
   };
   const stage = hidden ? "hidden" : cloudSetupStage(facts);
   const shown = stage === "shown";
@@ -90,21 +96,34 @@ export function CloudSetup({ viewer }: { viewer: WelcomeViewer | null }) {
     if (moveBridge && moveItem?.status === "todo") void moveBridge.dismiss().catch(() => {});
     remember(CLOUD_SETUP_HIDDEN);
   };
-  const tryIt = () => {
-    const bot = state.bots.find((candidate) => candidate.id === state.selectedId && !candidate.hidden) ?? state.bots.find((candidate) => !candidate.hidden);
+  const visible = state.bots.filter((candidate) => !candidate.hidden);
+  const selectedBot = visible.find((candidate) => candidate.id === state.selectedId) ?? visible[0];
+  // The bot already given a cloud computer, else the one this step would give one to.
+  const cloudBot = visible.find((candidate) => candidate.computer === "cloud");
+  // Puts the example in the bot's composer and selects its chat. Never sends:
+  // the person reads it and presses Send.
+  const draft = (bot: Bot | undefined, example: string) => {
     if (!bot) return;
     dispatch({ type: "select", id: bot.id });
-    const draftId = `bot:${bot.id}:${bot.threadId}`, example = t("cloudSetup.try.example");
+    const draftId = `bot:${bot.id}:${bot.threadId}`;
     if (!draftHas(draftId, example)) appendComposerDraft(draftId, example);
   };
-  const hint = (key: LocaleKey) => <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{t(key)}</p>;
-  const action = (label: LocaleKey, onClick: () => void) => <button type="button" className="ui-button mt-2" onClick={onClick}>{t(label)}</button>;
+  // Works on: Cloud computer, then its Computer panel. Nothing is created or
+  // woken here; the computer starts when a task needs it.
+  const giveComputer = (bot: Bot) => {
+    dispatch({ type: "select", id: bot.id });
+    dispatch({ type: "updateBot", botId: bot.id, patch: { computer: "cloud" } });
+    dispatch({ type: "toggleComputer", open: true });
+  };
+  const hint = (text: string) => <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{text}</p>;
+  const example = (text: string) => <p className="mt-1.5 rounded-lg bg-inset px-2.5 py-2 text-[12.5px] leading-relaxed text-ink">{text}</p>;
+  const action = (label: string, onClick: () => void) => <button type="button" className="ui-button mt-2" onClick={onClick}>{label}</button>;
 
   const details = (id: CloudSetupStep) => {
     if (id === "engine") return <>
-      {hint("cloudSetup.engine.hint")}
+      {hint(t("cloudSetup.engine.hint"))}
       {/* In the chat view the sign-in is already what the window shows. */}
-      {state.activeView !== "chat" && action("cloudSetup.engine.action", () => dispatch({ type: "showChat" }))}
+      {state.activeView !== "chat" && action(t("cloudSetup.engine.action"), () => dispatch({ type: "showChat" }))}
     </>;
     if (id === "move") {
       if (!moveBridge) return null;
@@ -112,16 +131,29 @@ export function CloudSetup({ viewer }: { viewer: WelcomeViewer | null }) {
       if (moveOpen || (moveItem?.status === "todo" && move.state.phase !== "idle")) {
         return cloudMoveOffer(move, { notNow: () => { setMoveSkipped(true); remember(CLOUD_SETUP_MOVE_SKIPPED); } });
       }
-      return <>{hint("cloudSetup.move.hint")}{action("cloudSetup.move.action", () => setMoveOpen(true))}</>;
+      return <>{hint(t("cloudSetup.move.hint"))}{action(t("cloudSetup.move.action"), () => setMoveOpen(true))}</>;
+    }
+    if (id === "computer") {
+      // Given: something to ask it. Not yet: the one button that gives it.
+      if (cloudBot) return <>
+        {hint(t("cloudSetup.computer.tryHint", { name: cloudBot.name }))}
+        {example(t("cloudSetup.computer.example"))}
+        {facts.engineReady && action(t("cloudSetup.try.action"), () => draft(cloudBot, t("cloudSetup.computer.example")))}
+      </>;
+      if (!selectedBot) return null;
+      return <>
+        {hint(t("cloudSetup.computer.hint", { name: selectedBot.name }))}
+        {action(t("cloudSetup.computer.action", { name: selectedBot.name }), () => giveComputer(selectedBot))}
+      </>;
     }
     if (id === "try") return <>
-      {hint("cloudSetup.try.hint")}
-      <p className="mt-1.5 rounded-lg bg-inset px-2.5 py-2 text-[12.5px] leading-relaxed text-ink">{t("cloudSetup.try.example")}</p>
-      {facts.engineReady && action("cloudSetup.try.action", tryIt)}
+      {hint(t("cloudSetup.try.hint"))}
+      {example(t("cloudSetup.try.example"))}
+      {facts.engineReady && action(t("cloudSetup.try.action"), () => draft(selectedBot, t("cloudSetup.try.example")))}
     </>;
     return <>
-      {hint("cloudSetup.lend.hint")}
-      {action("cloudSetup.lend.action", () => { setLendFailed(false); void lendBridge?.open().catch(() => setLendFailed(true)); })}
+      {hint(t("cloudSetup.lend.hint"))}
+      {action(t("cloudSetup.lend.action"), () => { setLendFailed(false); void lendBridge?.open().catch(() => setLendFailed(true)); })}
       {lendFailed && <p role="alert" className="mt-1.5 text-[12px] text-danger">{t("cloudSetup.lend.failed")}</p>}
     </>;
   };
@@ -154,6 +186,7 @@ export function CloudSetup({ viewer }: { viewer: WelcomeViewer | null }) {
       <h2 id="cloud-setup-title" className="min-w-0 flex-1 text-[13.5px] font-semibold">{t("cloudSetup.title")}</h2>
       <span className="shrink-0 text-[12px] text-ink-secondary">{t("cloudSetup.progress", { done: items.filter((item) => item.status !== "todo").length, total: items.length })}</span>
     </div>
+    <p className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">{t("cloudSetup.purpose")}</p>
     <ol className="mt-3 flex flex-col gap-3">{items.map(row)}</ol>
     <button type="button" className="mt-2 py-1 text-[12px] text-ink-secondary hover:text-ink" onClick={hide}>{t("cloudSetup.hide")}</button>
   </aside>;

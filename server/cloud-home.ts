@@ -24,7 +24,6 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
-import type { Surface } from "../shared/wire.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { hostedWorkspaceConfigured } from "./enterprise.ts";
 import { formatPairingCode, type SessionRegistry } from "./sessions.ts";
@@ -112,14 +111,12 @@ export function withoutIgnoredCloudKeys(env: NodeJS.ProcessEnv): NodeJS.ProcessE
 // lists exactly what the server accepts.
 export { cloudHomeOffersPlace } from "../shared/cloud-home.ts";
 
-/** Why a Cloud home refuses a place it never offers (no "this computer" of
- * the person's, no Local VM), in the words the person reads; undefined for a
- * place it offers. A turn's error shows 160 characters, so each fits. */
-export function cloudHomePlaceRefusal(place: Surface): string | undefined {
-  if (place === "local") return "This computer isn't a place on your OMB Cloud: its bots run in the cloud. Set Works on to Auto, Cloud or Browser, or lend your Mac under Settings → OMB Cloud.";
-  if (place === "vm") return "Bots on your OMB Cloud can't use a Local VM: the cloud machine has no container runtime. Set Works on to Auto, Cloud or Browser.";
-  return undefined;
-}
+/** The last guard at claim time (index.ts computerPlaceRefusal): a Cloud
+ * home never uses a place it does not offer. No bot or conversation there
+ * keeps one (Store.settleUnofferedPlaces moves them to Auto at startup, which
+ * is also when a copy from a desktop is installed), so a person does not meet
+ * this; a bot that asks select_computer for one does. */
+export const CLOUD_HOME_UNOFFERED_PLACE = "My Cloud has no This computer or Local VM. Its bots use the built-in browser and cloud computers.";
 
 /** What a turn is told when Cloud is chosen but no Boat account is set up (no
  * key of the person's and no included Boat). A Cloud home has no Local VM to
@@ -128,16 +125,31 @@ export function boatNotConfiguredMessage(cloudHome: boolean): string {
   return `Cloud Boat is not configured — add a Boat API key or choose ${cloudHome ? "Browser" : "Local VM"}`;
 }
 
-/** The Cloud's setup checklist (docs/cloud-pro.md) has a "try something"
- * step that is done once a bot's turn finishes on the machine itself. The
- * server records when, once, in this Cloud's own onboarding record: that
- * section never travels with Move to Cloud (workspace-backup-policy.ts), so a
- * moved-in history of turns does not count. Null when there is nothing to
- * record: not a Cloud home, already recorded, a failed or stopped turn, or a
- * thread that is no bot's conversation or room. */
-export function firstCloudTurnPatch(turn: { cloudHome: boolean; recorded: string | undefined; ok: boolean; known: boolean; now?: Date }): { onboarding: { firstTurnAt: string } } | null {
-  if (!turn.cloudHome || turn.recorded || !turn.ok || !turn.known) return null;
-  return { onboarding: { firstTurnAt: (turn.now ?? new Date()).toISOString() } };
+/** The Cloud's setup checklist (docs/cloud-pro.md) ticks two steps from turns
+ * that finish on the machine itself: "try something" once any bot's turn
+ * finishes there (`firstTurnAt`), and "Give a bot a cloud computer" once one
+ * finishes with a cloud computer mounted (`firstCloudComputerAt`). The server
+ * records each, once, in this Cloud's own onboarding record: that section
+ * never travels with Copy this computer here (workspace-backup-policy.ts), so
+ * a copied-in history of turns does not count. Null when there is nothing new
+ * to record: not a Cloud home, a failed or stopped turn, a thread that is no
+ * bot's conversation or room, or both already recorded. */
+export function firstCloudTurnPatch(turn: {
+  cloudHome: boolean;
+  recorded: { firstTurnAt?: string; firstCloudComputerAt?: string } | undefined;
+  ok: boolean;
+  known: boolean;
+  /** The turn held a cloud computer (its own, or its team's). */
+  cloudComputer: boolean;
+  now?: Date;
+}): { onboarding: { firstTurnAt?: string; firstCloudComputerAt?: string } } | null {
+  if (!turn.cloudHome || !turn.ok || !turn.known) return null;
+  const at = (turn.now ?? new Date()).toISOString();
+  const onboarding = {
+    ...(turn.recorded?.firstTurnAt ? {} : { firstTurnAt: at }),
+    ...(turn.cloudComputer && !turn.recorded?.firstCloudComputerAt ? { firstCloudComputerAt: at } : {}),
+  };
+  return Object.keys(onboarding).length ? { onboarding } : null;
 }
 
 /** The Admin's side of the signature (openmaus-cloud cloudPairingSignature). */

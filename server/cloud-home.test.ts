@@ -5,7 +5,7 @@ import type { IncomingMessage } from "node:http";
 import { afterEach, expect, it } from "vitest";
 import {
   CLOUD_BROWSER_SIGN_IN_MAX_TTL_S, CLOUD_HOME_MARKER, CLOUD_IGNORED_KEYS, CLOUD_PAIRING_MAX_TTL_S, CLOUD_PAIRING_NONCE_MS, CLOUD_PAIRING_SKEW_S, cloudHomeConfiguration, cloudHomeConfigured,
-  boatNotConfiguredMessage, cloudHomeHost, cloudHomeOffersPlace, cloudHomePlaceRefusal, cloudPairingSignature, createCloudPairing, firstCloudTurnPatch, prepareCloudHomeVolume,
+  boatNotConfiguredMessage, CLOUD_HOME_UNOFFERED_PLACE, cloudHomeHost, cloudHomeOffersPlace, cloudPairingSignature, createCloudPairing, firstCloudTurnPatch, prepareCloudHomeVolume,
   withoutIgnoredCloudKeys,
 } from "./cloud-home.ts";
 import { cloudHomeChildEnvironments, codeTrustProblem, passwdIds, spawnWithSecrets } from "./cloud-home-start.ts";
@@ -100,19 +100,13 @@ it("never echoes a secret or token in its refusal", () => {
 
 it("offers the built-in browser and cloud computers, never this computer or a Local VM", () => {
   expect((["cloud", "vm", "local", "browser"] as const).filter(cloudHomeOffersPlace)).toEqual(["cloud", "browser"]);
-  expect(cloudHomePlaceRefusal("cloud")).toBeUndefined();
-  expect(cloudHomePlaceRefusal("browser")).toBeUndefined();
 });
 
-it("refuses the places it never offers with what is true there, not a setup step", () => {
-  const local = cloudHomePlaceRefusal("local")!, vm = cloudHomePlaceRefusal("vm")!;
-  expect(local).toBe("This computer isn't a place on your OMB Cloud: its bots run in the cloud. Set Works on to Auto, Cloud or Browser, or lend your Mac under Settings → OMB Cloud.");
-  expect(vm).toBe("Bots on your OMB Cloud can't use a Local VM: the cloud machine has no container runtime. Set Works on to Auto, Cloud or Browser.");
-  for (const text of [local, vm]) {
-    expect(text).not.toMatch(/configure|Computer panel|install|set (?:it|one) up/i);
-    // A failed turn shows the first 160 characters of its error.
-    expect(text.length).toBeLessThanOrEqual(160);
-  }
+it("guards the places it never offers with what is true there, not a setting to change", () => {
+  // No bot or conversation keeps either on a Cloud home (they follow Auto from
+  // startup), so this is the last guard: a bot asking for one reads it.
+  expect(CLOUD_HOME_UNOFFERED_PLACE).toBe("My Cloud has no This computer or Local VM. Its bots use the built-in browser and cloud computers.");
+  expect(CLOUD_HOME_UNOFFERED_PLACE).not.toMatch(/Works on|OMB|configure|Computer panel|install|set (?:it|one) up/i);
 });
 
 it("suggests the browser, not a Local VM, when Cloud has no Boat account on a Cloud home", () => {
@@ -383,12 +377,12 @@ it("the Cloud launcher starts the server again only when it asks to after a rest
 
 it("records the first finished bot turn once, on a Cloud home only, and a moved workspace never brings its own", () => {
   const now = new Date("2026-09-30T08:00:00.000Z");
-  const turn = { cloudHome: true, recorded: undefined, ok: true, known: true, now };
+  const turn = { cloudHome: true, recorded: undefined, ok: true, known: true, cloudComputer: false, now };
   expect(firstCloudTurnPatch(turn)).toEqual({ onboarding: { firstTurnAt: "2026-09-30T08:00:00.000Z" } });
   // Anywhere else, once recorded, a failed or stopped turn, or a thread that is
   // no bot's conversation or room: nothing to write.
   expect(firstCloudTurnPatch({ ...turn, cloudHome: false })).toBeNull();
-  expect(firstCloudTurnPatch({ ...turn, recorded: "2026-09-29T08:00:00.000Z" })).toBeNull();
+  expect(firstCloudTurnPatch({ ...turn, recorded: { firstTurnAt: "2026-09-29T08:00:00.000Z" } })).toBeNull();
   expect(firstCloudTurnPatch({ ...turn, ok: false })).toBeNull();
   expect(firstCloudTurnPatch({ ...turn, known: false })).toBeNull();
   // Move to Cloud restores a Mac's settings onto the Cloud; the onboarding
@@ -398,6 +392,20 @@ it("records the first finished bot turn once, on a Cloud home only, and a moved 
   expect(restoredWorkspaceConfig(portableWorkspaceConfig(mac), { onboarding: { hintsSeen: ["cloud-setup-hidden"] } }).onboarding)
     .toEqual({ hintsSeen: ["cloud-setup-hidden"] });
   expect(restoredWorkspaceConfig(portableWorkspaceConfig(mac), {}).onboarding).toBeUndefined();
+});
+
+it("records the first turn that finished with a cloud computer mounted, once, for Give a bot a cloud computer", () => {
+  const now = new Date("2026-10-05T09:00:00.000Z"), at = "2026-10-05T09:00:00.000Z";
+  const turn = { cloudHome: true, recorded: { firstTurnAt: "2026-09-30T08:00:00.000Z" }, ok: true, known: true, cloudComputer: true, now };
+  // A subscriber whose first turns finished without one gets the step ticked now.
+  expect(firstCloudTurnPatch(turn)).toEqual({ onboarding: { firstCloudComputerAt: at } });
+  // The very first turn, on a cloud computer, ticks both steps at once.
+  expect(firstCloudTurnPatch({ ...turn, recorded: undefined })).toEqual({ onboarding: { firstTurnAt: at, firstCloudComputerAt: at } });
+  // A plain chat, a failed or stopped turn, anywhere else, or once recorded: nothing new.
+  expect(firstCloudTurnPatch({ ...turn, cloudComputer: false })).toBeNull();
+  expect(firstCloudTurnPatch({ ...turn, ok: false })).toBeNull();
+  expect(firstCloudTurnPatch({ ...turn, cloudHome: false })).toBeNull();
+  expect(firstCloudTurnPatch({ ...turn, recorded: { ...turn.recorded, firstCloudComputerAt: "2026-10-04T09:00:00.000Z" } })).toBeNull();
 });
 
 // The launcher only runs on Linux (the image); Windows passes descriptors differently.

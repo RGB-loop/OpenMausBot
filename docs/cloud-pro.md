@@ -188,44 +188,90 @@ problem**, **Could not be set up yet**. Only Ready can be connected to.
 Signed out of Cloud, the app makes no Cloud request and nothing on this page
 runs.
 
+The account card above it has one message and one next action for each state,
+from `cloudPlanView` (`src/lib/cloud-plan.ts` `cloudPlanAction`): Sign in, Open
+the sign-in page again, Sign in again, Choose a plan, Manage, Update payment or
+the Cloud dashboard, and Sign out only where clearing the saved sign-in failed.
+A saved sign-in that may only be locked has none: the app reads it again by
+itself. There is no Refresh; the app checks every minute. Sign out (and Cancel
+while signing in) stay as quiet links.
+
+### This computer and My Cloud
+
+On This computer's own window (`src/components/CloudNotice.tsx`, the slot at
+the bottom left where the offer to buy sits for someone who may buy), one card
+says where the always-on bots are, chosen by `cloudNoticeKind`:
+
+- A paid plan whose My Cloud is ready: **Your always-on bots are on My Cloud**,
+  "Bots on this computer stop when it sleeps or the app is closed. Bots on My
+  Cloud keep working, and can use cloud computers.", and **Open My Cloud**
+  (the same connection as **Connect to my Cloud**). If it does not open: "My
+  Cloud didn't open. Try again in a minute." Its close button, **Not now**, is
+  kept in this computer's onboarding record.
+- A sign-in that ended, or a saved sign-in this computer could not read and
+  removed (`restore-removed`): **Sign in again to reach My Cloud**, "Your plan
+  and your bots there are not affected.", and **Sign in again**. A removed
+  sign-in is never offered a plan (`cloudPlanView` kind `removed`). **Not now**
+  hides it until the app opens again.
+
+Every other state shows nothing here. A server open in the window, My Cloud
+included, and a browser never show it: only This computer's page has the Cloud
+account bridge.
+
 ### Setup checklist
 
-On a Cloud home a small card, **Set up your Cloud**, sits at the bottom left
+On a Cloud home a small card, **Set up My Cloud**, sits at the bottom left
 until its steps are done or the person hides it (`src/components/CloudSetup.tsx`,
-`src/lib/cloud-setup.ts`). Only the owner's own devices (an admin session on a
-Cloud home) see it; desktop and self-hosted installs never do and keep their
-welcome flow. Each step's state comes from the Cloud or the app, never from a
-box the person ticks:
+`src/lib/cloud-setup.ts`). Under the title one line says what it is for: "Your
+bots live here and keep working when your computer is off. When a task needs a
+desktop, a bot can use a cloud computer that you can watch." Only the owner's
+own devices (an admin session on a Cloud home) see it; desktop and self-hosted
+installs never do and keep their welcome flow. Each step's state comes from the
+Cloud or the app, never from a box the person ticks:
 
 1. **Sign in to Claude or ChatGPT**, the one required step: done when any
    engine on the Cloud can run. From another view, its **Sign in** returns to
    the engine sign-in above.
-2. **Bring your bots from your computer**: only in the desktop app, while the
+2. **Bring your bots from this computer**: only in the desktop app, while the
    Copy this computer here card would be offered (an empty Cloud, a computer
-   with work to bring; docs/copy-workspace.md). **Move to Cloud** opens that
+   with work to bring; docs/copy-workspace.md). **Copy to My Cloud** opens that
    offer in place (the size, what stays, **Copy** and **Not now**). Done after
    a copy; skipped after **Not now**,
    which the Cloud keeps (`cloud-setup-move-skipped` in its onboarding record)
    and which also hides the one-time card.
-3. **Try something that runs while you're away**: one example, a daily
+3. **Give a bot a cloud computer**: only where the plan's cloud computers are
+   on for this Cloud (`config.box.included`). **Give {bot} a cloud computer**
+   (the selected bot) sets that bot's Works on to Cloud computer and opens its
+   Computer panel. It starts nothing: no computer is created or woken, and no
+   message is sent. Once a bot works on its cloud computer, the step shows an
+   example ("Open a web browser on your cloud computer, go to wikipedia.org…";
+   no particular browser is named) and **Try it** puts it in that bot's
+   composer, unsent. Done when a turn first finishes with a cloud computer
+   mounted (the bot's own or its team's): the server records
+   `onboarding.firstCloudComputerAt` once, by the same rule as `firstTurnAt`
+   below.
+4. **Try something that runs while you're away**: one example, a daily
    routine. **Try it** puts it in the chat's composer, unsent. Done when a bot's
    turn first finishes on the Cloud: the server records `onboarding.firstTurnAt`
    once, on a Cloud home only, for a turn that finished (not a failed or
    stopped one) in a bot's conversation or a room. The onboarding record never
    travels with a copy, so copied-in chats do not count.
-4. **Optional: Let your Cloud use this Mac**: only in the desktop app on
+5. **Optional: Let My Cloud use this Mac**: only in the desktop app on
    macOS. **Choose what to lend** opens Settings → OMB Cloud on this Mac,
    leaving the Cloud's page as the menu-bar item's **Lending settings…** does
    (`cloudLending.open()`: no arguments, answered only for the verified Cloud
    page or the app's own window). Done when `GET /api/shared-computers` lists
    a computer.
 
-**Hide setup** is the only dismiss. The Cloud keeps it (`cloud-setup-hidden`
+**Hide setup** is the only dismiss. The Cloud keeps it (`cloud-setup-2-hidden`
 in its onboarding record), so it holds on every device and after browser
-storage is cleared, and it is the move's **Not now** too. The card also goes
-away by itself once steps 1 and 3 are done. Nothing asks for confirmation.
-After the card, the one-time Copy this computer here card behaves as on any
-other server.
+storage is cleared, and it is the move's **Not now** too. The id is new with
+step 3: a checklist hidden before (`cloud-setup-hidden`) comes back once, open
+at that step. The card also goes away by itself once steps 1 and 4 are done
+and, where step 3 is listed, step 3 too, so a subscriber whose first turns
+finished without a cloud computer sees the card again, open at step 3. Nothing
+asks for confirmation. After the card, the one-time Copy this computer here
+card behaves as on any other server.
 
 While a window shows a Cloud home, the sidebar's server switcher reads **My
 Cloud · always on**; in a browser, a plain label says the same.
@@ -242,9 +288,13 @@ Cloud use this Mac**, below), through the shared-computer tools.
   bot's Works on setting or Settings → Computers (the config answers
   `"cloudHome": true`), nor in `select_computer`, which also drops `vm_exec`.
   Auto never lands on either.
-- A bot still set to either (an older or imported setting) has each task
-  refused with a sentence saying so, suggesting Auto, Cloud or Browser and,
-  for This computer, lending the Mac.
+- A bot set to either, and a conversation pinned to either, works on Auto
+  from the Cloud's next start (`Store.settleUnofferedPlaces`). That start is
+  when a copy from a desktop is installed, so copied bots arrive on Auto, and
+  bots already on a Cloud from before are fixed the first time it runs. Nothing
+  is refused for it later; the claim-time guard that remains
+  (`CLOUD_HOME_UNOFFERED_PLACE`) is what a bot reads if it asks
+  `select_computer` for either.
 - Every turn's system prompt says the bot runs in the cloud. Asked about the
   person's own computer, a bot with the shared-computer tools checks for a lent
   Mac and, finding none, says so and how to lend one; a bot without them says
@@ -925,9 +975,11 @@ descriptor's `capabilities.cloudHome`).
 
 On the person's own Cloud, open in the app's window, **Settings → OMB Cloud**
 shows the plan read only (`cloud-plan:*`: its name and whether it is active,
-**Manage in your browser** and **Switch to this computer**). It is listed only
-on an OMB Cloud home (`config.cloudHome`), never on another server open in the
-window. Main answers it for the Cloud this account verified, or last verified
+**Manage in your browser** and **Switch to this computer**). In a browser on
+that Cloud the same section is one line, "Your plan, payments and use are on
+the Plan page.", and one link, **Open the Plan page** (`config.cloudPlanPage`,
+the Admin's `/cloud`). It is listed only on an OMB Cloud home
+(`config.cloudHome`), never on another server open in the window or a browser. Main answers it for the Cloud this account verified, or last verified
 while a check is failing or the sign-in has ended, so that page says
 "checking" or "sign in again on your computer" rather than an error; where the
 app cannot vouch for the Cloud it only says the plan is managed in the app on

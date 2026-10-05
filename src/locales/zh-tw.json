@@ -194,7 +194,7 @@
   "cloudAccount.onCloud": "這是 OMB Cloud 為你電腦上的應用程式確認的方案。",
   "cloudAccount.onCloudNone": "你的方案在你電腦上的 OpenMausBot 應用程式中管理。",
   "cloudAccount.onCloudSignIn": "這台電腦需要重新登入 OMB Cloud。請切換到這台電腦，然後在「設定 → OMB Cloud」中選擇「重新登入」。你的方案不受影響。",
-  "cloudAccount.purchaseHelp": "請使用該帳戶在瀏覽器中完成付款。購買後，點「重新整理」會向 OMB Cloud 檢查啟用狀態；僅從結帳頁面返回不會啟用方案。",
+  "cloudAccount.purchaseHelp": "請使用該帳戶在瀏覽器中完成付款。本應用程式會在一分鐘內自動向 OpenMausBot Cloud 確認；僅從結帳頁面返回不會啟用方案。",
   "cloudAccount.signOut": "登出 OMB Cloud",
   "cloudAccount.signoutTitle": "要在這台電腦上登出嗎？",
   "cloudAccount.signoutHelp": "這只會移除這台電腦的個人 Cloud 存取權。不會取消訂閱、中斷你的組織，也不會變更本機對話和模型帳號。",

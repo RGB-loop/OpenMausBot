@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { CLOUD_IGNORED_KEYS, cloudHomePlaceRefusal, cloudPairingSignature } from "./cloud-home.ts";
+import { CLOUD_HOME_UNOFFERED_PLACE, CLOUD_IGNORED_KEYS, cloudPairingSignature } from "./cloud-home.ts";
 import { cloudHomePrompt } from "./system-prompt.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
@@ -95,8 +95,16 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
   // The web UI's pages (a stand-in for the built app).
   mkdirSync(join(home, "web"));
   writeFileSync(join(home, "web", "index.html"), "<!doctype html><title>OpenMausBot</title>");
-  const port = await freePortBlock([0, 1]);
+  port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
+  await start();
+}, 30_000);
+
+let port = 0;
+/** Start the Cloud home on this disposable home, as its machine does after
+ * every update or restart, and pair one of the owner's devices with it. */
+async function start() {
+  const dataDir = join(home, ".openmausbot");
   const offlinePrelude = `data:text/javascript,${encodeURIComponent('globalThis.fetch = async () => new Response("offline fixture", { status: 503 });')}`;
   child = spawn(process.execPath, ["--import", offlinePrelude, join(SERVER_DIR, "index.ts")], {
     cwd: join(SERVER_DIR, ".."),
@@ -114,6 +122,8 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
   });
   child.stdout?.on("data", (chunk) => { log += chunk; });
   child.stderr?.on("data", (chunk) => { log += chunk; });
+  // A bare local request until a device is paired again.
+  ownerToken = "";
   const deadline = Date.now() + 20_000;
   for (;;) {
     if (child.exitCode !== null) throw new Error(`the Cloud home exited:\n${log}`);
@@ -122,7 +132,7 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   ownerToken = await ownerPairing();
-}, 30_000);
+}
 
 /** One of the owner's devices, paired the way the Admin pairs the app. */
 async function ownerPairing(): Promise<string> {
@@ -344,6 +354,8 @@ it("records when a bot's turn first finished here, once, in the Cloud's own sett
   await expect.poll(first, { timeout: 15_000 }).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   const recorded = await first();
   expect(JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8")).onboarding.firstTurnAt).toBe(recorded);
+  // A plain chat held no cloud computer: Give a bot a cloud computer stays to do.
+  expect((await api("GET", "/api/config")).body.onboarding).not.toHaveProperty("firstCloudComputerAt");
   // A later turn leaves it as it was.
   const created = await api("POST", "/api/bots", { body: {
     name: "Second fixture", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
@@ -365,6 +377,8 @@ it("offers its bots the browser and cloud computers only, and tells them they ca
   // a Cloud home, so it lists no this computer and no Local VM either.
   const status = await api("GET", "/api/config");
   expect(status.body).toMatchObject({ cloudHome: true, features: { browser: true } });
+  // Settings in a browser here links to the Plan page on this Cloud's Admin.
+  expect(status.body.cloudPlanPage).toBe("https://cloud.example.test/cloud");
   writeFileSync(join(home, "hang"), "");
   const created = await api("POST", "/api/bots", { body: {
     name: "Desk fixture", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
@@ -397,7 +411,7 @@ it("offers its bots the browser and cloud computers only, and tells them they ca
     for (const surface of ["local", "vm"] as const) {
       const refused = await select(surface);
       expect(refused.status).toBe(409);
-      expect(((await refused.json()) as { error: string }).error).toBe(cloudHomePlaceRefusal(surface));
+      expect(((await refused.json()) as { error: string }).error).toBe(CLOUD_HOME_UNOFFERED_PLACE);
     }
   } finally {
     rmSync(join(home, "hang"), { force: true });
@@ -405,19 +419,39 @@ it("offers its bots the browser and cloud computers only, and tells them they ca
   }
 });
 
-it("refuses a bot still set to this computer or a Local VM, saying what is true on a Cloud home", async () => {
+// J8. Copy this computer here installs a desktop's bots when the Cloud next
+// starts (before anything loads), and a Cloud may hold bots from before this
+// rule. Either way a bot set to This computer or a Local VM, or a chat pinned
+// to one, works on Auto from that start: answered, with no refusal to read.
+it("J8: a bot copied in set to This computer or a Local VM works on Auto after the Cloud starts, with no refusal", async () => {
+  const copied: Record<string, string> = {};
   for (const computer of ["local", "vm"] as const) {
     const created = await api("POST", "/api/bots", { body: {
-      name: `Earlier ${computer} fixture`, modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
+      name: `Copied ${computer} fixture`, modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
     } });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
-    const botId = created.body.bot.id;
-    expect((await api("PATCH", `/api/bots/${botId}`, { body: { computer } })).status).toBe(200);
-    expect((await api("POST", `/api/bots/${botId}/messages`, { body: { text: "list the files on my desktop" } })).status).toBe(202);
-    const failure = async () => {
-      const { bots } = (await api("GET", "/api/bots?messages=10")).body as { bots: Array<{ id: string; messages: Array<{ kind: string; tool?: { name: string; ok: boolean } }> }> };
-      return bots.find((bot) => bot.id === botId)?.messages.find((message) => message.kind === "activity" && message.tool?.ok === false)?.tool?.name;
-    };
-    await expect.poll(failure, { timeout: 15_000 }).toBe(`error: ${cloudHomePlaceRefusal(computer)}`);
+    copied[computer] = created.body.bot.id;
+    expect((await api("PATCH", `/api/bots/${created.body.bot.id}`, { body: { computer } })).status).toBe(200);
   }
-});
+  const pinned = (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string }) => bot.id === copied.local);
+  expect((await api("PATCH", `/api/bots/${copied.local}/tasks/${pinned.threadId}`, { body: { surface: "vm" } })).status).toBe(200);
+
+  await waitForExit(child, { signal: "SIGTERM" });
+  await start();
+
+  const bots = (await api("GET", "/api/bots?messages=0")).body.bots as Array<{ id: string; threadId: string; computer?: string; tasks?: Array<{ threadId: string; surface?: string }> }>;
+  for (const botId of Object.values(copied)) expect(bots.find((bot) => bot.id === botId)).not.toHaveProperty("computer");
+  const local = bots.find((bot) => bot.id === copied.local)!;
+  expect(local.tasks?.find((task) => task.threadId === pinned.threadId)).not.toHaveProperty("surface");
+
+  expect((await api("POST", `/api/bots/${copied.local}/messages`, { body: { text: "list the files on my desktop" } })).status).toBe(202);
+  const settled = async () => {
+    const { bots } = (await api("GET", "/api/bots?messages=10")).body as { bots: Array<{ id: string; busy?: boolean; messages: Array<{ role: string; kind: string; text?: string; tool?: { name: string; ok: boolean } }> }> };
+    const bot = bots.find((entry) => entry.id === copied.local);
+    return bot && !bot.busy && bot.messages.some((message) => message.role === "bot" && message.kind === "text") ? bot.messages : null;
+  };
+  await expect.poll(settled, { timeout: 15_000 }).not.toBeNull();
+  const messages = (await settled())!;
+  expect(messages.filter((message) => message.tool?.ok === false)).toEqual([]);
+  expect(JSON.stringify(messages)).not.toMatch(/isn't a place|can't use a Local VM|Works on|has no This computer/);
+}, 60_000);

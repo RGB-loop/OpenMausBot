@@ -309,7 +309,7 @@ import { ManagedDesktopProviders } from "./managed-desktop.ts";
 import { computerKindForResource, ManagedDesktopPolicy, type ComputerKind } from "./managed-policy.ts";
 import { hostedModelPolicy, HOSTED_MODEL_POLICY_HEADER, HOSTED_PROVIDER_SETTINGS_ERROR } from "./hosted-models.ts";
 import {
-  boatNotConfiguredMessage, CLOUD_HOME_SECRET_KEYS, CLOUD_IGNORED_KEYS, CLOUD_PAIRING_PATH, cloudHomeConfiguration, cloudHomeOffersPlace, cloudHomePlaceRefusal,
+  boatNotConfiguredMessage, CLOUD_HOME_SECRET_KEYS, CLOUD_HOME_UNOFFERED_PLACE, CLOUD_IGNORED_KEYS, CLOUD_PAIRING_PATH, cloudHomeConfiguration, cloudHomeOffersPlace,
   createCloudPairing, firstCloudTurnPatch, readSignedBody,
 } from "./cloud-home.ts";
 import { CLOUD_PERSONAL_REFUSAL, settleCloudOwnership, type CloudOwnership } from "./cloud-owner.ts";
@@ -2052,10 +2052,13 @@ const managedPolicy = new ManagedDesktopPolicy({ onChange: () => {
 } });
 /** A computer kind this server will not use, refused before anything is
  * prepared: a Cloud home never offers this computer or a Local VM
- * (cloud-home.ts), and an enrolled organisation may disallow any kind. */
+ * (shared/cloud-home.ts; no bot or conversation there keeps either, see
+ * store.settleUnofferedPlaces at startup), and an enrolled organisation may
+ * disallow any kind. */
 function computerPlaceRefusal(kind: ComputerKind): { message: string; code: "cloud_home" | "managed_policy" } | undefined {
-  const cloudHome = CLOUD_HOME ? cloudHomePlaceRefusal(kind === "thisComputer" ? "local" : kind === "localVm" ? "vm" : "cloud") : undefined;
-  if (cloudHome) return { message: cloudHome, code: "cloud_home" };
+  if (CLOUD_HOME && !cloudHomeOffersPlace(kind === "thisComputer" ? "local" : kind === "localVm" ? "vm" : "cloud")) {
+    return { message: CLOUD_HOME_UNOFFERED_PLACE, code: "cloud_home" };
+  }
   const managed = managedPolicy.computerRefusal(kind);
   return managed ? { message: managed, code: "managed_policy" } : undefined;
 }
@@ -3541,6 +3544,14 @@ let followupsReady = false;
 const sendSequencer = new SendSequencer();
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
+// A Cloud home offers no This computer and no Local VM. Bots copied from a
+// desktop (installed at this startup, before anything loaded) or already here
+// with either as their Works on work on Auto from now on, and conversations
+// pinned to either follow their bot: fixed once here, never refused later.
+if (CLOUD_HOME) {
+  const settled = store.settleUnofferedPlaces(cloudHomeOffersPlace);
+  if (settled) console.log(`cloud home: ${settled} bot or conversation place(s) this machine does not offer now follow Auto`);
+}
 hostedModels?.reconcile(store);
 // Skills library boot sweep (features.skillsLibrary): migrate per-bot
 // copies into the shared library and apply assignments. Flag-off boots
@@ -3780,7 +3791,6 @@ async function botOverview(bot: BotRecord): Promise<BotOverview> {
     })),
     engine,
     browserEnabled: builtInBrowserEnabled(cfg),
-    cloudHome: Boolean(CLOUD_HOME),
     connectedApps,
     sectionPeers,
     timeZone,
@@ -6041,14 +6051,19 @@ const memoryUpkeep = createMemoryUpkeep({
   log: (line) => console.log(line),
 });
 
-// OMB Cloud home: the first bot turn that finishes here ticks the setup
-// checklist's "try something" step (firstCloudTurnPatch). The server writes
-// it, not an admin, so it is kept out of any admin's recorded changes.
+// OpenMausBot Cloud home: the first bot turn that finishes here ticks the
+// setup checklist's "try something" step, and the first that finishes with a
+// cloud computer ticks "Give a bot a cloud computer" (firstCloudTurnPatch).
+// The turn's computer is still bound here: this subscriber runs before the
+// turn's settle releases it (subscribers fire in registration order). The
+// server writes the record, not an admin, so it is kept out of any admin's
+// recorded changes.
 bus.subscribe((event: RuntimeEvent) => {
   if (!CLOUD_HOME || event.type !== "turn.completed" || shouldIgnoreProviderEvent(event)) return;
   const patch = firstCloudTurnPatch({
-    cloudHome: true, recorded: cfg.onboarding?.firstTurnAt, ok: event.ok,
+    cloudHome: true, recorded: cfg.onboarding, ok: event.ok,
     known: Boolean(store.botByThread(event.threadId) ?? store.groupByThread(event.threadId)),
+    cloudComputer: turnComputerResources.get(event.threadId)?.resource.startsWith("computer:box:") === true,
   });
   if (!patch) return;
   try {
@@ -14935,8 +14950,9 @@ function configStatus() {
     // the enrolled organisation's read-only desktop policy; null when not enrolled
     managedPolicy: managedPolicy.summary(),
     // an OMB Cloud home (cloud-home.ts): the app offers no this computer and
-    // no Local VM here
-    ...(CLOUD_HOME ? { cloudHome: true } : {}),
+    // no Local VM here. The Plan page (plan, payments and use) is on its
+    // Admin, which a browser on the Cloud cannot otherwise know.
+    ...(CLOUD_HOME ? { cloudHome: true, cloudPlanPage: `${CLOUD_HOME.adminOrigin}/cloud` } : {}),
     // not a secret — the settings picker shows it; "" = follow the system
     language: cfg.language ?? "",
     rooms: { turnTimeoutMinutes: roomTurnTimeoutMinutes(cfg) },
@@ -14978,6 +14994,7 @@ function configStatus() {
       reelSeen: cfg.onboarding?.reelSeen === true,
       hintsSeen: cfg.onboarding?.hintsSeen ?? [],
       ...(cfg.onboarding?.firstTurnAt ? { firstTurnAt: cfg.onboarding.firstTurnAt } : {}),
+      ...(cfg.onboarding?.firstCloudComputerAt ? { firstCloudComputerAt: cfg.onboarding.firstCloudComputerAt } : {}),
     },
     // Which browser this server can give bots: the desktop app's surface,
     // the agent-browser engine, or nothing yet (with the reason).
@@ -16082,7 +16099,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (method === "POST" && requested !== "auto" && !parseSurface(requested)) {
           return json(res, 400, { error: "surface must be auto, cloud, vm, local, or browser" });
         }
-        const unoffered = CLOUD_HOME && method === "POST" && requested !== "auto" ? cloudHomePlaceRefusal(parseSurface(requested)!) : undefined;
+        const unoffered = CLOUD_HOME && method === "POST" && requested !== "auto" && !cloudHomeOffersPlace(parseSurface(requested)!) ? CLOUD_HOME_UNOFFERED_PLACE : undefined;
         const options = await selectableComputers(bot);
         const current = source ? source.mounted ?? "off" : await computerPreviewSurface(bot, bot.threadId);
         requireActiveInternalCapability();

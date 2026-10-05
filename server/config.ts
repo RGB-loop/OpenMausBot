@@ -335,10 +335,12 @@ const onboardingConfigSchema = z.object({
   version: z.number().int().min(0).max(1000).optional(),
   reelSeen: z.boolean().optional(),
   hintsSeen: z.array(z.string().trim().min(1).max(60)).max(100).optional(),
-  /** OMB Cloud home only: when a bot's turn first finished on this machine
+  /** OpenMausBot Cloud home only: when a bot's turn first finished on this
+   * machine, and when one first finished with a cloud computer mounted
    * (cloud-home.ts firstCloudTurnPatch). Written by the server, read by the
    * Cloud's setup checklist. */
   firstTurnAt: z.string().trim().max(40).optional(),
+  firstCloudComputerAt: z.string().trim().max(40).optional(),
 }).strict();
 const instanceConfigSchema = z.object({
   driver: z.string().min(1),
@@ -633,7 +635,7 @@ export interface AppConfig {
   /** Opt-in product experiments. Every flag defaults to disabled. */
   features?: { skillAuthoring?: boolean; showToolCalls?: boolean; browser?: boolean; sharedComputers?: boolean; claudeUserMcp?: boolean; llmThreadTitles?: boolean; autoRecall?: boolean; routinesInConversation?: boolean; skillsLibrary?: boolean };
   /** First-run progress; see onboardingConfigSchema. */
-  onboarding?: { completedAt?: string; version?: number; reelSeen?: boolean; hintsSeen?: string[]; firstTurnAt?: string };
+  onboarding?: { completedAt?: string; version?: number; reelSeen?: boolean; hintsSeen?: string[]; firstTurnAt?: string; firstCloudComputerAt?: string };
   /** Named browser sessions any bot can be pointed at. */
   browserProfiles?: BrowserProfile[];
   /** CDP target of a Chrome the operator already has running (a bare port,

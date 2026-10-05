@@ -778,6 +778,15 @@ function DiagnosticsRow() {
   );
 }
 
+/** Settings → OpenMausBot Cloud: this computer's own window (the account), the
+ * person's own Cloud in this app's window (its plan, read only), or that Cloud
+ * in a browser (one link to the Plan page). */
+function cloudAccountShown(config: ConfigStatus | null | undefined): boolean {
+  if (window.ogb?.cloudAccount) return true;
+  if (config?.cloudHome !== true) return false;
+  return window.ogb ? Boolean(window.ogb.cloudPlan) : Boolean(config.cloudPlanPage);
+}
+
 export function SettingsModal() {
   const { state, dispatch } = useStore();
   const advanced = useAdvancedMode();
@@ -796,9 +805,10 @@ export function SettingsModal() {
   const baseSections = SECTIONS.filter((entry) => !remoteActive || entry.id === "companion" || entry.id === "appearance" || entry.id === "desktopWorkspaces")
     .filter((entry) => entry.id !== "desktopWorkspaces" || Boolean(window.ogb?.environments))
     .filter((entry) => entry.id !== "organization" || Boolean(window.ogb?.organization))
-    // On the person's own Cloud in this app's window, the plan shows read only (cloudPlan);
-    // never on any other server open here (a VPS, a hosted workspace, someone else's).
-    .filter((entry) => entry.id !== "cloudAccount" || Boolean(window.ogb?.cloudAccount || (window.ogb?.cloudPlan && state.config?.cloudHome === true)))
+    // On the person's own Cloud the plan shows read only in this app's window
+    // (cloudPlan), and as one link to the Plan page in a browser; never on any
+    // other server open here (a VPS, a hosted workspace, someone else's).
+    .filter((entry) => entry.id !== "cloudAccount" || cloudAccountShown(state.config))
     // the operator's screen for other workspaces exists only where a fleet agent does
     .filter((entry) => entry.id !== "workspaces" || workspacesAvailable(state.config))
     // sign-in by email is a hosted server's; the desktop app pairs devices under Remote access,
@@ -896,9 +906,9 @@ export function SettingsModal() {
       case "organization":
         return window.ogb?.organization && !remoteActive ? <OrganizationSettings /> : null;
       case "cloudAccount":
-        return (window.ogb?.cloudAccount || (window.ogb?.cloudPlan && state.config?.cloudHome === true)) && !remoteActive
+        return cloudAccountShown(state.config) && !remoteActive
           ? <CloudAccountSettings linkRequest={state.appSettingsCloudLink} cloudHome={state.config?.cloudHome === true}
-            onConnectPhone={() => dispatch(phonePairingSettingsAction())} />
+            planPage={state.config?.cloudPlanPage} onConnectPhone={() => dispatch(phonePairingSettingsAction())} />
           : null;
       case "general":
         return (

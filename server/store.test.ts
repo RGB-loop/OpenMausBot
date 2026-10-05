@@ -377,6 +377,52 @@ describe("Store", () => {
     expect(reloaded.taskByThread(bot.id, autoMismatch.threadId)!.surface).toBeUndefined();
   });
 
+  it("moves bots and conversations off places this server never offers, once, and keeps the rest", () => {
+    // What a desktop's copy brings to a Cloud home: Works on This computer
+    // and Local VM, and conversations pinned to either (by the person or by
+    // an Auto turn), beside choices a Cloud home keeps.
+    const store = new Store(selection);
+    const onThisComputer = store.createBot({ name: "On this computer" }, { seedMessages: false });
+    const onLocalVm = store.createBot({ name: "On a Local VM" }, { seedMessages: false });
+    const onCloud = store.createBot({ name: "On a cloud computer" }, { seedMessages: false });
+    const browserOnly = store.createBot({ name: "Browser only" }, { seedMessages: false });
+    store.patchBot(onThisComputer.id, { computer: "local" });
+    store.patchBot(onLocalVm.id, { computer: "vm" });
+    store.patchBot(onCloud.id, { computer: "cloud" });
+    store.patchBot(browserOnly.id, { computer: "browser" });
+    const pinnedVm = store.createTask(onCloud.id, "Pinned to a Local VM", false)!;
+    store.patchTask(onCloud.id, pinnedVm.threadId, { surface: "vm", surfaceSource: "user" });
+    store.patchTask(onCloud.id, onCloud.threadId, { surface: "local", surfaceSource: "auto" });
+    store.patchTask(browserOnly.id, browserOnly.threadId, { surface: "cloud", surfaceSource: "user" });
+    const offered = (place: string) => place !== "local" && place !== "vm";
+
+    const copied = new Store(selection);
+    const changes = vi.fn();
+    copied.onChange(changes);
+    expect(copied.settleUnofferedPlaces(offered)).toBe(4);
+    expect(copied.bot(onThisComputer.id)!.computer).toBeUndefined();
+    expect(copied.bot(onLocalVm.id)!.computer).toBeUndefined();
+    expect(copied.bot(onCloud.id)!.computer).toBe("cloud");
+    expect(copied.bot(browserOnly.id)!.computer).toBe("browser");
+    // A pinned conversation follows its bot again.
+    for (const threadId of [pinnedVm.threadId, onCloud.threadId]) {
+      expect(copied.taskByThread(onCloud.id, threadId)!.surface).toBeUndefined();
+      expect(copied.taskByThread(onCloud.id, threadId)!.surfaceSource).toBeUndefined();
+    }
+    expect(copied.taskByThread(browserOnly.id, browserOnly.threadId)).toMatchObject({ surface: "cloud", surfaceSource: "user" });
+    expect(changes).toHaveBeenCalled();
+    // Saved, so the next start finds nothing to change.
+    const restarted = new Store(selection);
+    expect(restarted.bot(onThisComputer.id)!.computer).toBeUndefined();
+    expect(restarted.taskByThread(onCloud.id, pinnedVm.threadId)!.surface).toBeUndefined();
+    expect(restarted.settleUnofferedPlaces(offered)).toBe(0);
+    // Every place offered (a desktop, a self-hosted server): nothing moves.
+    const desktop = new Store(selection);
+    desktop.patchBot(onThisComputer.id, { computer: "local" });
+    expect(desktop.settleUnofferedPlaces(() => true)).toBe(0);
+    expect(new Store(selection).bot(onThisComputer.id)!.computer).toBe("local");
+  });
+
   it.skipIf(process.platform === "win32")("writes the bot and group registries owner-only and tightens loose ones on load", () => {
     const mode = (name: string) => statSync(join(DATA_DIR, name)).mode & 0o777;
     const store = new Store(selection);

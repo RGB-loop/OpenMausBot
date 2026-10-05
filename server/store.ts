@@ -31,7 +31,7 @@ import type { HandedState } from "./delta-context.ts";
 import type { AgentPart, PartPair, RoomPart } from "./package-parts.ts";
 import type {
   BotActivity, GroupDefaultResponder, GroupTask as GroupTaskRecord, MausColor,
-  ConnectorToolGrant, OptionCardData, TaskClosedBy, TaskOpenedBy, TaskUsage, WireBot, WireGroup,
+  ConnectorToolGrant, OptionCardData, Surface, TaskClosedBy, TaskOpenedBy, TaskUsage, WireBot, WireGroup,
   WireMessage, WireTask, BotProject as BotProjectRecord,
 } from "../shared/wire.ts";
 import { CONNECTOR_SLUG_PATTERN, CONNECTOR_TOOL_NAME_PATTERN } from "../shared/wire.ts";
@@ -2535,6 +2535,37 @@ export class Store {
     this.saveBots();
     this.emit({ type: "bot", botId });
     return cleared;
+  }
+
+  /** No bot or conversation keeps a place this server never offers (an
+   * OpenMausBot Cloud home has no This computer and no Local VM,
+   * shared/cloud-home.ts). A bot whose Works on names one works on Auto, and
+   * a conversation pinned to one follows its bot again. Run once at startup:
+   * a copy of another computer's bots (cloud-move.ts) is installed then,
+   * before anything loads, so copied bots are fixed as they arrive, and bots
+   * already there are fixed the first time this runs. Returns how many bots
+   * and conversations changed. */
+  settleUnofferedPlaces(offered: (place: Surface) => boolean): number {
+    let changed = 0;
+    const moved = new Set<string>();
+    for (const bot of this.bots) {
+      if (bot.computer && bot.computer !== "off" && !offered(bot.computer)) {
+        delete bot.computer;
+        moved.add(bot.id);
+        changed++;
+      }
+      for (const task of bot.tasks ?? []) {
+        if (task.surface === undefined || offered(task.surface)) continue;
+        task.surface = undefined;
+        task.surfaceSource = undefined;
+        moved.add(bot.id);
+        changed++;
+      }
+    }
+    if (!changed) return 0;
+    this.saveBots();
+    for (const botId of moved) this.emit({ type: "bot", botId });
+    return changed;
   }
 
   /** Model/provider changes are one configuration transaction: never publish

@@ -5,7 +5,7 @@ import { EMPTY_ONBOARDING, type OnboardingStatus } from "./onboarding";
 const owner = { hosted: false, canSave: true, cloudHome: true };
 const record = (extra: Partial<OnboardingStatus> = {}): OnboardingStatus => ({ ...EMPTY_ONBOARDING, ...extra });
 const facts = (extra: Partial<CloudSetupFacts> = {}): CloudSetupFacts => ({
-  viewer: owner, connected: true, enginesKnown: true, engineReady: false, onboarding: record(), move: null, ...extra,
+  viewer: owner, connected: true, enginesKnown: true, engineReady: false, cloudComputers: false, onboarding: record(), move: null, ...extra,
 });
 const idle = { phase: "idle" as const, suggest: true };
 const steps = (value: CloudSetupFacts) => cloudSetupItems(value).map((item) => `${item.id}:${item.status}`);
@@ -74,7 +74,39 @@ describe("cloudSetupItems", () => {
     expect(steps(facts({ lend: { lent: true } }))).toContain("lend:done");
   });
 
-  it("keeps the order: sign in, bring bots, try something, lend", () => {
+  it("keeps the order: sign in, bring bots, give a bot a cloud computer, try something, lend", () => {
     expect(cloudSetupItems(facts({ move: idle, lend: { lent: false } })).map((item) => item.id)).toEqual(["engine", "move", "try", "lend"]);
+    expect(cloudSetupItems(facts({ cloudComputers: true, move: idle, lend: { lent: false } })).map((item) => item.id))
+      .toEqual(["engine", "move", "computer", "try", "lend"]);
+  });
+});
+
+describe("Give a bot a cloud computer", () => {
+  const offered = (extra: Partial<CloudSetupFacts> = {}) => facts({ cloudComputers: true, ...extra });
+  const firstTurnAt = "2026-09-30T08:00:00.000Z", firstCloudComputerAt = "2026-10-05T09:00:00.000Z";
+
+  it("is listed only where this Cloud offers cloud computers", () => {
+    expect(steps(facts())).toEqual(["engine:todo", "try:todo"]);
+    expect(steps(offered())).toEqual(["engine:todo", "computer:todo", "try:todo"]);
+  });
+
+  it("is done only by the server's record of a turn that finished with a cloud computer", () => {
+    // A finished turn without one, or choosing Cloud computer, is not it.
+    expect(steps(offered({ onboarding: record({ firstTurnAt }) }))).toEqual(["engine:todo", "computer:todo", "try:done"]);
+    expect(steps(offered({ onboarding: record({ firstTurnAt, firstCloudComputerAt }) }))).toEqual(["engine:todo", "computer:done", "try:done"]);
+  });
+
+  it("brings the checklist back for a subscriber whose first turns finished without a cloud computer", () => {
+    // Before this step existed, an engine and one finished turn ended setup.
+    expect(cloudSetupStage(offered({ engineReady: true, onboarding: record({ firstTurnAt }) }))).toBe("shown");
+    expect(cloudSetupStage(offered({ engineReady: true, onboarding: record({ firstTurnAt, firstCloudComputerAt }) }))).toBe("done");
+    // Where cloud computers are not offered the step is left out, and setup ends as before.
+    expect(cloudSetupStage(facts({ engineReady: true, onboarding: record({ firstTurnAt }) }))).toBe("done");
+  });
+
+  it("Hide setup has a new id, so the checklist hidden before this step comes back once", () => {
+    expect(CLOUD_SETUP_HIDDEN).not.toBe("cloud-setup-hidden");
+    expect(cloudSetupStage(offered({ engineReady: true, onboarding: record({ firstTurnAt, hintsSeen: ["cloud-setup-hidden"] }) }))).toBe("shown");
+    expect(cloudSetupStage(offered({ onboarding: record({ hintsSeen: [CLOUD_SETUP_HIDDEN] }) }))).toBe("hidden");
   });
 });

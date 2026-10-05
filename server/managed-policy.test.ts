@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cloudHomePlaceRefusal } from "./cloud-home.ts";
+import { CLOUD_HOME_UNOFFERED_PLACE, cloudHomeOffersPlace } from "./cloud-home.ts";
 import { computerKindForResource, ManagedDesktopPolicy, mcpEntryMatches, parseManagedPolicy, type ManagedPolicy } from "./managed-policy.ts";
 
 const policies: ManagedDesktopPolicy[] = [];
@@ -145,8 +145,8 @@ describe("claim-time computer refusal in bindTurnComputer", () => {
   const refusal = source.slice(refusalStart + 1, source.indexOf("\n}\n", refusalStart) + 3);
   const code = ts.transpileModule(refusal + guard, { compilerOptions: { target: ts.ScriptTarget.ESNext } }).outputText;
   const bind = (managedPolicy: ManagedDesktopPolicy, cloudHome = false) =>
-    new Function("managedPolicy", "computerKindForResource", "CLOUD_HOME", "cloudHomePlaceRefusal", `${code}; return bindTurnComputer;`)(
-      managedPolicy, computerKindForResource, cloudHome ? { machineId: "fixture" } : null, cloudHomePlaceRefusal,
+    new Function("managedPolicy", "computerKindForResource", "CLOUD_HOME", "cloudHomeOffersPlace", "CLOUD_HOME_UNOFFERED_PLACE", `${code}; return bindTurnComputer;`)(
+      managedPolicy, computerKindForResource, cloudHome ? { machineId: "fixture" } : null, cloudHomeOffersPlace, CLOUD_HOME_UNOFFERED_PLACE,
     ) as (owner: unknown, resource: string) => Promise<string>;
 
   it("refuses a disallowed kind before claiming anything", async () => {
@@ -164,8 +164,8 @@ describe("claim-time computer refusal in bindTurnComputer", () => {
     expect(refusalStart).toBeGreaterThan(0);
     const { managed } = overlay(null);
     const bindTurnComputer = bind(managed, true);
-    await expect(bindTurnComputer({}, "computer:host")).rejects.toThrow(cloudHomePlaceRefusal("local"));
-    await expect(bindTurnComputer({}, "computer:vm:shared")).rejects.toThrow(cloudHomePlaceRefusal("vm"));
+    await expect(bindTurnComputer({}, "computer:host")).rejects.toThrow(CLOUD_HOME_UNOFFERED_PLACE);
+    await expect(bindTurnComputer({}, "computer:vm:shared")).rejects.toThrow(CLOUD_HOME_UNOFFERED_PLACE);
     await expect(bindTurnComputer({}, "computer:box:bx_1")).resolves.toBe("claimed");
     await expect(bindTurnComputer({}, "computer:vps:alias:bot")).resolves.toBe("claimed");
     // The same guard on any other server claims both.

@@ -8,7 +8,7 @@ import { SettingsModal } from "./SettingsModal";
 // (cloudPlan), on any server it opens. Settings → OMB Cloud shows it only on
 // an OMB Cloud home: on a VPS, a hosted workspace or someone else's server
 // there is no plan of this person's to show, and main would refuse it.
-const fixture = vi.hoisted(() => ({ section: "cloudAccount" as AppSettingsSection, config: undefined as { cloudHome?: boolean } | undefined, advanced: false }));
+const fixture = vi.hoisted(() => ({ section: "cloudAccount" as AppSettingsSection, config: undefined as { cloudHome?: boolean; cloudPlanPage?: string } | undefined, advanced: false }));
 vi.mock("@/lib/interface-mode", () => ({ useAdvancedMode: () => fixture.advanced, setAdvancedMode: vi.fn() }));
 vi.mock("./DesktopCapabilities", () => ({ useDesktopCapabilities: () => ({ capabilities: {} }) }));
 vi.mock("@/state/store", async (importOriginal) => ({
@@ -16,7 +16,7 @@ vi.mock("@/state/store", async (importOriginal) => ({
   api: vi.fn(),
   useStore: () => ({ state: { appSettingsSection: fixture.section, config: fixture.config }, dispatch: vi.fn() }),
 }));
-vi.mock("./CloudAccountSettings", () => ({ CloudAccountSettings: ({ cloudHome }: { cloudHome?: boolean }) => `CLOUD_PLAN_MARKER${cloudHome ? " home" : ""}` }));
+vi.mock("./CloudAccountSettings", () => ({ CloudAccountSettings: ({ cloudHome, planPage }: { cloudHome?: boolean; planPage?: string }) => `CLOUD_PLAN_MARKER${cloudHome ? " home" : ""}${planPage ? ` ${planPage}` : ""}` }));
 
 const plan = { state: vi.fn(), manage: vi.fn(), useThisComputer: vi.fn() };
 beforeEach(() => {
@@ -47,5 +47,14 @@ describe.each(["Simple", "Advanced"] as const)("%s Settings → OMB Cloud on a s
     expect(html).toContain("CLOUD_PLAN_MARKER");
     expect(html).not.toContain("CLOUD_PLAN_MARKER home");
     expect(html).toContain(reachable());
+  });
+  it("in a browser on the person's own Cloud, is the way to the Plan page", () => {
+    vi.stubGlobal("window", {});
+    fixture.config = { cloudHome: true, cloudPlanPage: "https://cloud.openmausbot.com/cloud" };
+    const html = render();
+    expect(html).toContain("CLOUD_PLAN_MARKER home https://cloud.openmausbot.com/cloud"); expect(html).toContain(reachable());
+    // A browser on any other server has no plan of this person's.
+    fixture.config = {};
+    expect(render()).not.toContain(reachable());
   });
 });

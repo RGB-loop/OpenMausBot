@@ -3,7 +3,7 @@ import type { CloudAccountBridge, CloudAccountState, CloudPlanBridge, CloudPlanS
 import type { CloudMachine } from "../../electron/cloud-home.mjs";
 import { CloudMoveSettings } from "./CloudMove";
 import { activeLocale, t } from "@/lib/i18n";
-import { cloudPlanLabel, cloudPlanLine, cloudPlanView, type CloudPlanView } from "@/lib/cloud-plan";
+import { cloudPlanAction, cloudPlanLabel, cloudPlanLine, cloudPlanView, type CloudPlanAction, type CloudPlanView } from "@/lib/cloud-plan";
 import type { LocaleKey } from "@/locales";
 import { Card } from "./SettingsPrimitives";
 import { CloudLending } from "./CloudLending";
@@ -121,13 +121,18 @@ function accountMessage(account: CloudAccountState | null, view: CloudPlanView, 
   return null;
 }
 
-/** The browser button: what fits the state, never "choose a plan" to someone who has one. */
-function dashboardLabel(account: CloudAccountState, view: CloudPlanView): string {
-  if (view.kind === "free") return t("cloudAccount.upgrade");
-  if (view.kind === "paid" || (view.kind === "unverified" && view.label)) return t("cloudAccount.manage");
-  if (account.machine?.status === "payment-problem") return t("cloudAccount.updatePayment");
-  return t("cloudAccount.dashboard");
-}
+/** Each state's one next action, by its label (lib/cloud-plan cloudPlanAction):
+ * never "choose a plan" to someone who has one. */
+const ACTION_LABEL: Record<CloudPlanAction, LocaleKey> = {
+  "sign-in": "cloudAccount.signIn",
+  "sign-in-again": "cloudAccount.signInAgain",
+  reopen: "organization.reopen",
+  "choose-plan": "cloudAccount.upgrade",
+  manage: "cloudAccount.manage",
+  "update-payment": "cloudAccount.updatePayment",
+  "plan-page": "cloudAccount.dashboard",
+  "sign-out": "cloudAccount.signOut",
+};
 
 /** On the person's own Cloud, open in this app's window: the plan, read only,
  * Manage in the browser, and back to this computer. When this app cannot
@@ -165,11 +170,23 @@ export function CloudPlanOnCloud({ bridge, onConnectPhone }: { bridge: CloudPlan
   </Card>;
 }
 
+/** My Cloud in a browser: the plan is not this page's to show, so one line
+ * says where it is, with one link to the Plan page. A render helper (no hooks). */
+function cloudPlanInBrowser(planPage: string) {
+  return <Card title={t("settings.section.cloudAccount")}>
+    <div data-cloud-plan="browser" className="flex flex-col items-start gap-3">
+      <p className="text-[13px] text-ink-secondary">{t("cloudAccount.planPageLine")}</p>
+      <a href={planPage} target="_blank" rel="noreferrer" className="ui-button">{t("cloudAccount.openPlanPage")}</a>
+    </div>
+  </Card>;
+}
+
 /** The public native snapshot carries no credential and cannot activate a plan.
  * `linkRequest` is non-zero only while openmausbot://cloud has this open.
  * `onConnectPhone` opens Settings on this window's phone pairing (on the
- * Cloud itself). */
-export function CloudAccountSettings({ linkRequest = 0, cloudHome = false, onConnectPhone }: { linkRequest?: number; cloudHome?: boolean; onConnectPhone?: () => void } = {}) {
+ * Cloud itself). `planPage`: the Plan page's address, which only a Cloud
+ * home's config names. */
+export function CloudAccountSettings({ linkRequest = 0, cloudHome = false, planPage, onConnectPhone }: { linkRequest?: number; cloudHome?: boolean; planPage?: string; onConnectPhone?: () => void } = {}) {
   const bridge = window.ogb?.remoteClient?.active ? undefined : window.ogb?.cloudAccount;
   const { platform } = useDesktopCapabilities().capabilities.host;
   const [account, setAccount] = useState<CloudAccountState | null>(null);
@@ -226,61 +243,72 @@ export function CloudAccountSettings({ linkRequest = 0, cloudHome = false, onCon
     if (action === "connect") { link.current.connected = true; connectHome(); }
   }, [bridge, linkRequest, account, busy]);
   if (!bridge) {
-    // Only on an OMB Cloud home: any other server open in this window (a VPS,
-    // a hosted workspace, someone else's) has no plan of this person's to show.
+    // Only on an OpenMausBot Cloud home: any other server open in this window
+    // (a VPS, a hosted workspace, someone else's) has no plan of this person's
+    // to show. In the app's window the plan shows read only; in a browser, the
+    // way to the Plan page.
     const plan = window.ogb?.remoteClient?.active || !cloudHome ? undefined : window.ogb?.cloudPlan;
-    return plan ? <CloudPlanOnCloud bridge={plan} onConnectPhone={onConnectPhone} /> : <p className="text-[13px] text-ink-secondary">{t("cloudAccount.desktopOnly")}</p>;
+    if (plan) return <CloudPlanOnCloud bridge={plan} onConnectPhone={onConnectPhone} />;
+    if (cloudHome && !window.ogb && planPage) return cloudPlanInBrowser(planPage);
+    return <p className="text-[13px] text-ink-secondary">{t("cloudAccount.desktopOnly")}</p>;
   }
   const view = cloudPlanView(account);
   const signed = account && ["connected", "unavailable", "reauth-required"].includes(account.status);
   // Status comes only from the server-verified native snapshot; checkout never sets it.
   const message = accountMessage(account, view, platform);
   const line = cloudPlanLine(view);
+  // The state's one next action. Signing out asks first.
+  const action = cloudPlanAction(view, account);
+  const run: Record<CloudPlanAction, () => void> = {
+    "sign-in": () => void perform(() => bridge.begin()),
+    "sign-in-again": () => void perform(() => bridge.signInAgain()),
+    reopen: () => void perform(() => bridge.reopen()),
+    "choose-plan": () => void perform(() => bridge.openDashboard()),
+    manage: () => void perform(() => bridge.openDashboard()),
+    "update-payment": () => void perform(() => bridge.openDashboard()),
+    "plan-page": () => void perform(() => bridge.openDashboard()),
+    "sign-out": () => setConfirm(true),
+  };
   // A paid plan's Cloud before the Admin lists it is being set up.
   const machine: CloudMachine | undefined = account?.status === "connected" ? account.machine ?? (view.kind === "paid" ? { status: "provisioning" } : undefined) : undefined;
   const enrollment = account?.status === "connecting" ? account.enrollment : undefined;
+  const quiet = "py-1 text-[12px] text-ink-secondary underline underline-offset-2 hover:text-ink";
+  // Asking before signing out, only while there is a sign-in to remove.
+  const confirming = confirm && Boolean(signed);
   return <>
     <p className="text-[13px] leading-relaxed text-ink-secondary">{t("cloudAccount.optional")}</p>
     <Card title={t("settings.section.cloudAccount")} subtitle={t("cloudAccount.separate")}>
-      {(!account || view.kind === "unknown") && <p role="status" className="text-[13px] text-ink-secondary">{t("cloudAccount.loading")}</p>}
-      {message && <p role="status" className="mb-3 text-[13px] text-ink-secondary">{message}</p>}
-      {view.kind === "signed-out" && <button type="button" disabled={busy} className="ui-button" onClick={() => void perform(() => bridge.begin())}>{t("cloudAccount.signIn")}</button>}
-      {account?.status === "connecting" && <div className="flex flex-col items-start gap-3">
-        <p role="status" className="text-[13px] text-ink-secondary">{t("cloudAccount.browser")}</p>
+      <div data-cloud-account={view.kind} className="flex flex-col items-start gap-3">
+        {(!account || view.kind === "unknown") && !error && <p role="status" className="text-[13px] text-ink-secondary">{t("cloudAccount.loading")}</p>}
+        {message && <p role="status" className="text-[13px] text-ink-secondary">{message}</p>}
+        {account?.status === "connecting" && <p role="status" className="text-[13px] text-ink-secondary">{t("cloudAccount.browser")}</p>}
         {/* The browser asks to check this code: it is shown, not tucked away. */}
         {enrollment && <div data-cloud-code className="flex flex-col gap-1">
           <p className="text-[13px] text-ink-secondary">{t("cloudAccount.codeCheck")}</p>
           <code dir="ltr" className="select-all text-[18px] font-semibold tracking-widest text-ink">{enrollment.userCode}</code>
           <p className="text-[12px] text-ink-secondary">{t("cloudAccount.codeUntil", { time: time(enrollment.expiresAt) })}</p>
         </div>}
-        <div className="flex flex-wrap gap-2"><button type="button" disabled={busy} className="ui-button" onClick={() => void perform(() => bridge.reopen())}>{t("organization.reopen")}</button>
-          <button type="button" disabled={busy} className="ui-button" onClick={() => void perform(() => bridge.cancel())}>{t("organization.cancel")}</button></div>
-      </div>}
-      {signed && <div className="flex flex-col gap-3">
-        {account.account && <p className="break-all text-[14px] text-ink">{account.account.email}</p>}
-        {line && <p role="status" data-cloud-plan={view.kind} className="text-[15px] font-medium text-ink">{line}
+        {signed && account.account && <p className="break-all text-[14px] text-ink">{account.account.email}</p>}
+        {signed && line && <p role="status" data-cloud-plan={view.kind} className="text-[15px] font-medium text-ink">{line}
           {view.kind === "paid" && view.checking && <span className="ms-2 text-[12px] font-normal text-ink-secondary">{t("cloudAccount.checking")}</span>}</p>}
-        {view.kind === "free" && <p className="text-[13px] text-ink-secondary">{t("cloudAccount.purchaseHelp")}</p>}
-        <div className="flex flex-wrap gap-2">
-          {view.kind === "reauth"
-            ? <button type="button" disabled={busy} className="ui-button" onClick={() => void perform(() => bridge.signInAgain())}>{t("cloudAccount.signInAgain")}</button>
-            : <>
-              <button type="button" disabled={busy} className="ui-button" onClick={() => void perform(() => bridge.openDashboard())}>{dashboardLabel(account, view)}</button>
-              <button type="button" disabled={busy} className="ui-button" onClick={() => void perform(() => bridge.refresh())}>{t("organization.refresh")}</button>
-            </>}
-          {!confirm && <button type="button" disabled={busy} className="ui-button" onClick={() => setConfirm(true)}>{t("cloudAccount.signOut")}</button>}
-        </div>
+        {signed && view.kind === "free" && <p className="text-[13px] text-ink-secondary">{t("cloudAccount.purchaseHelp")}</p>}
+        {action && !confirming && <button type="button" disabled={busy} className="ui-button" onClick={run[action]}>{t(ACTION_LABEL[action])}</button>}
+        {/* Ways out, not next steps: quiet links. */}
+        {account?.status === "connecting" && <button type="button" disabled={busy} className={quiet} onClick={() => void perform(() => bridge.cancel())}>{t("organization.cancel")}</button>}
         {/* A plan bought with another email sits on that account. */}
-        {view.kind === "free" && !confirm && <p className="text-[12px] text-ink-secondary">{t("cloudAccount.otherEmail")}{" "}
+        {signed && view.kind === "free" && !confirming && <p className="text-[12px] text-ink-secondary">{t("cloudAccount.otherEmail")}{" "}
           <button type="button" disabled={busy} className="underline hover:text-ink" onClick={() => setConfirm(true)}>{t("cloudAccount.useOtherEmail")}</button></p>}
-        {confirm && <div role="group" aria-label={t("cloudAccount.signoutTitle")} className="rounded-lg border border-hairline/40 p-3">
+        {signed && action !== "sign-out" && account.message !== "restore-failed" && !confirming
+          && <button type="button" disabled={busy} className={quiet} onClick={() => setConfirm(true)}>{t("cloudAccount.signOut")}</button>}
+        {confirming && <div role="group" aria-label={t("cloudAccount.signoutTitle")} className="rounded-lg border border-hairline/40 p-3">
           <p className="text-[13px] text-ink-secondary">{t("cloudAccount.signoutHelp")}</p><div className="mt-3 flex flex-wrap gap-2">
             <button type="button" autoFocus disabled={busy} className="ui-button" onClick={() => setConfirm(false)}>{t("cloudAccount.keep")}</button>
             <button type="button" disabled={busy} className="ui-button text-danger" onClick={() => void perform(() => bridge.signOut())}>{t("cloudAccount.signOut")}</button>
           </div></div>}
-      </div>}
-      {error && <p role="alert" className="mt-3 text-[13px] text-danger">{t("cloudAccount.actionFailed")}</p>}
-      {!account && <button type="button" disabled={busy} className="ui-button mt-3" onClick={() => void perform(() => bridge.state())}>{t("organization.refresh")}</button>}
+        {error && <p role="alert" className="text-[13px] text-danger">{t("cloudAccount.actionFailed")}</p>}
+        {/* The snapshot itself could not be read: asking again is the one step. */}
+        {!account && error && <button type="button" disabled={busy} className="ui-button" onClick={() => void perform(() => bridge.state())}>{t("cloudAccount.tryAgain")}</button>}
+      </div>
     </Card>
     {machine && cloudHomeCard({ machine, busy, failed: homeFailed, onConnect: connectHome, lending: bridge.lending })}
     {signed && view.kind === "paid" && cloudPhoneCard({ ready: machine?.status === "ready", busy, failed: phoneFailed, onUse: openOnPhone })}
