@@ -88,8 +88,16 @@ public struct CompanionState: Sendable {
     /// answer to a hang-up (`applyLiveCallEnd`) is the only source. Kept as
     /// `ended` until the harness clears it, so the bar can say why.
     public var liveCall: LiveCallState?
+    /// When the offline snapshot this state was rebuilt from was saved, or
+    /// nil for live state. A cached state is display-only: it has no
+    /// cursor, is never written back as a new snapshot, and the next
+    /// hydrate replaces it wholesale. See `StateSnapshot`.
+    public var cachedAt: Date?
 
     public init() {}
+
+    /// Showing the last sync rather than the computer's live state.
+    public var isCached: Bool { cachedAt != nil }
 
     // MARK: - Reading
 
@@ -129,7 +137,9 @@ public struct CompanionState: Sendable {
         return Array(branch[..<index]) + [standIn]
     }
 
-    private func activeBranch(forThread threadId: String) -> [Message] {
+    /// The branch the leaf selects, without an edit's stand-in — what the
+    /// offline snapshot keeps of a thread.
+    func activeBranch(forThread threadId: String) -> [Message] {
         let all = transcript(forThread: threadId)
         guard let leafId = activeLeafIds[threadId] ?? bot(forThread: threadId)?.activeLeafId else { return all }
         let byId = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { _, newest in newest })
@@ -276,6 +286,8 @@ public struct CompanionState: Sendable {
 
     /// Replace everything from a `GET /api/bots` response.
     public mutating func hydrate(_ fleet: Fleet, waitingThreads: [String: ThreadPage] = [:]) {
+        // The computer answered: whatever the last sync showed is history.
+        cachedAt = nil
         bots = fleet.bots
         rooms = fleet.groups
         messages.removeAll()
