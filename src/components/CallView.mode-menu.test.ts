@@ -151,23 +151,27 @@ describe("the call button", () => {
     }
   });
 
-  // The desktop app lets only the person's own Cloud use the microphone: a
-  // block there is the computer's, and on another server a browser is the way.
-  it("tells a blocked microphone on a server's page whether it is the person's Cloud", async () => {
-    for (const [cloudHome, notice] of [
-      [true, "Allow microphone access for this app in your computer's privacy settings"],
-      [false, "Open this server in your web browser to make a Live call."],
+  // The desktop app decides whether a server's page may use the microphone,
+  // so a block there says what the app answered, not what the server's own
+  // config claims: the app allowed it (the computer blocked it), or refused.
+  it("tells a blocked microphone on a server's page who blocked it, whatever the page's config says", async () => {
+    for (const [pageMic, notice] of [
+      ["allowed", "Allow microphone access for this app in your computer's privacy settings"],
+      ["refused", "Open it in your web browser to make the Live call."],
     ] as const) {
-      resetLiveMedia();
-      fixture.cloudHome = cloudHome;
-      configureLiveMedia({
-        getUserMedia: async () => { throw new DOMException("denied", "NotAllowedError"); },
-        capabilities: () => ({ dictation: { available: false, engine: "none", onDevice: false, reasonCode: "remote-server" } }) as DesktopCapabilities,
-      });
-      setCallMode("live");
-      pressPhone(vi.fn());
-      await vi.waitFor(() => expect(liveMedia().phase).toBe("failed"));
-      expect(liveMedia().notice, String(cloudHome)).toContain(notice);
+      for (const cloudHome of [true, false]) {
+        resetLiveMedia();
+        fixture.cloudHome = cloudHome;
+        configureLiveMedia({
+          getUserMedia: async () => { throw new DOMException("denied", "NotAllowedError"); },
+          capabilities: () => ({ dictation: { available: false, engine: "none", onDevice: false, reasonCode: "remote-server" } }) as DesktopCapabilities,
+          pageMicrophone: async () => pageMic,
+        });
+        setCallMode("live");
+        pressPhone(vi.fn());
+        await vi.waitFor(() => expect(liveMedia().phase).toBe("failed"));
+        expect(liveMedia().notice, `${pageMic} cloudHome=${cloudHome}`).toContain(notice);
+      }
     }
   });
 
@@ -204,8 +208,27 @@ describe("the call mode menu", () => {
     const props = { id: "m", mode: "live" as const, onChoose: vi.fn(), onClose: vi.fn() };
     expect(renderToStaticMarkup(createElement(CallModeMenu, props))).toContain("The OpenAI key stays on your computer.");
     const cloud = renderToStaticMarkup(createElement(CallModeMenu, { ...props, cloudHome: true }));
-    expect(cloud).toContain("The OpenAI key stays on your Cloud.");
+    expect(cloud).toContain("The OpenAI key stays on My Cloud.");
     expect(cloud).not.toContain("stays on your computer");
+  });
+
+  // Off the Mac's own page, Take turns stays in the menu so the person sees
+  // it exists, but it can't be picked, and it says where it works.
+  it("shows Take turns disabled with its reason where this page can't take turns", () => {
+    const turnsUnavailable = {
+      label: "Calls where you take turns need the Mac app",
+      reason: "They listen with on-device speech recognition, which only the Mac app has.",
+    };
+    const markup = renderToStaticMarkup(createElement(CallModeMenu, { id: "m", mode: "live", turnsUnavailable, onChoose: vi.fn(), onClose: vi.fn() }));
+    const [turns, live] = markup.split('role="menuitemradio"').slice(1);
+    expect(turns).toMatch(/^ aria-checked="false" disabled=""/);
+    expect(turns).toContain(">Take turns<");
+    expect(turns).toContain("Calls where you take turns need the Mac app. They listen with on-device speech recognition, which only the Mac app has.");
+    expect(turns).not.toContain("Listening stays on this computer");
+    expect(live).toMatch(/^ aria-checked="true"/);
+    expect(live).not.toContain('disabled=""');
+    // where it can take turns, both modes can be picked
+    expect(renderToStaticMarkup(createElement(CallModeMenu, { id: "m", mode: "turns", onChoose: vi.fn(), onClose: vi.fn() }))).not.toContain('disabled=""');
   });
 
   it("reports the chosen mode", () => {
