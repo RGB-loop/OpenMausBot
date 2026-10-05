@@ -466,7 +466,19 @@ struct ChatView: View {
                 )
             }
         }
+        // Never wider than the column, whatever is inside. A frame with only
+        // a maximum takes its content's width when that is wider, and one
+        // over-wide row then widened the transcript, the scroll view and the
+        // whole chat screen — header and composer cut off at both edges (a
+        // wide screenshot did it). An overflowing row now overflows its own
+        // edge instead: yours to the left, a bot's to the right.
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: rowAlignment(row))
         .id(row.id)
+    }
+
+    private func rowAlignment(_ row: TranscriptRow) -> Alignment {
+        if case let .message(message) = row, message.role == .user { return .trailing }
+        return .leading
     }
 
     /// The reply as it is typed. It sits after the last settled message and
