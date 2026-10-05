@@ -311,9 +311,14 @@ public struct CompanionState: Sendable {
     }
 
     /// Merge a search landing window into the pages already held.
+    ///
+    /// The held pages can repeat an id — they came from the computer as
+    /// they were, and hydrate merges waiting threads on every cold start —
+    /// so the last copy wins instead of trapping the launch.
     public mutating func merge(_ page: ThreadPage, intoThread threadId: String) {
         var byId = Dictionary(
-            uniqueKeysWithValues: (messages[threadId] ?? []).map { ($0.id, $0) }
+            (messages[threadId] ?? []).map { ($0.id, $0) },
+            uniquingKeysWith: { _, newest in newest }
         )
         for message in page.messages { byId[message.id] = message }
         messages[threadId] = byId.values.sorted {

@@ -229,6 +229,39 @@ final class StoreTests: XCTestCase {
         XCTAssertEqual(state.hasMore["t1"], true)
     }
 
+    func testMergeKeepsTheLastCopyOfARepeatedIdInsteadOfTrapping() {
+        // The held pages came from the computer as they were; one that
+        // repeats an id must not take the launch down with it.
+        var state = CompanionState()
+        state.messages["t1"] = [
+            message("a", at: 1, text: "first copy"),
+            message("a", at: 1, text: "last copy"),
+            message("b", at: 2),
+        ]
+        state.merge(ThreadPage(messages: [message("c", at: 3)], hasMore: false), intoThread: "t1")
+        XCTAssertEqual(state.transcript(forThread: "t1").map(\.id), ["a", "b", "c"])
+        XCTAssertEqual(state.transcript(forThread: "t1").first?.text, "last copy")
+    }
+
+    func testHydratingAWaitingThreadWhoseTranscriptRepeatsAnIdDoesNotTrap() throws {
+        // Every cold start merges the waiting threads into the transcripts
+        // the fleet carried: this is the path a duplicate would crash on.
+        var fleet = try fleet()
+        let threadId = try XCTUnwrap(fleet.bots.first?.threadId)
+        fleet.bots[0].messages = [message("dup", at: 1, text: "old"), message("dup", at: 1, text: "new")]
+        fleet.bots[0].activeLeafId = nil
+        var approval = Message(id: "ask", role: .bot, kind: .options, at: 2)
+        approval.card = OptionCard(
+            title: "Approval needed", subtitle: "ls", options: ["Allow", "Deny"],
+            answered: nil, dismissed: nil, requestId: "r1", tool: "Bash", held: nil, allowKey: "Bash:ls"
+        )
+        var state = CompanionState()
+        state.hydrate(fleet, waitingThreads: [threadId: ThreadPage(messages: [approval], hasMore: false)])
+        XCTAssertEqual(state.transcript(forThread: threadId).map(\.id), ["dup", "ask"])
+        XCTAssertEqual(state.transcript(forThread: threadId).first?.text, "new")
+        XCTAssertEqual(state.pendingApprovals.map(\.message.id), ["ask"])
+    }
+
     // MARK: - Bots
 
     func testABotFrameMergesRatherThanWipingTheTranscript() throws {
