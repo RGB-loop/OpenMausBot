@@ -6,8 +6,9 @@
 // is the engine sign-in. It also carries Pro's included Boat computers, voice
 // and decision model: offered with no key, their relay tokens never shown,
 // saved or passed on. Its bots get the built-in browser and cloud computers,
-// never "this computer" or a Local VM. Disposable home; no network; a synthetic
-// Claude CLI.
+// never "this computer" or a Local VM. A Live call uses the owner's own OpenAI
+// key, saved from the Cloud's page. Disposable home; no network (the one
+// exception is the fake GPT-Live on loopback); a synthetic Claude CLI.
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -16,8 +17,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { CLOUD_IGNORED_KEYS, cloudHomePlaceRefusal, cloudPairingSignature } from "./cloud-home.ts";
-import { cloudHomePrompt } from "./system-prompt.ts";
+import { CLOUD_HOME_PLACE, cloudHomePrompt } from "./system-prompt.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { startFakeOpenAiLive, type FakeOpenAiLive } from "./testing/fake-openai-live.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -44,6 +46,8 @@ let home: string;
 let base: string;
 let child: ChildProcess;
 let log = "";
+/** GPT-Live, faked on loopback: the only address the Cloud home may reach. */
+let live: FakeOpenAiLive;
 
 let ownerToken = "";
 
@@ -97,7 +101,8 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
   writeFileSync(join(home, "web", "index.html"), "<!doctype html><title>OpenMausBot</title>");
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
-  const offlinePrelude = `data:text/javascript,${encodeURIComponent('globalThis.fetch = async () => new Response("offline fixture", { status: 503 });')}`;
+  live = await startFakeOpenAiLive();
+  const offlinePrelude = `data:text/javascript,${encodeURIComponent(`const real = globalThis.fetch; globalThis.fetch = async (url, init) => String(url).startsWith(${JSON.stringify(`${live.url}/`)}) ? real(url, init) : new Response("offline fixture", { status: 503 });`)}`;
   child = spawn(process.execPath, ["--import", offlinePrelude, join(SERVER_DIR, "index.ts")], {
     cwd: join(SERVER_DIR, ".."),
     env: {
@@ -107,6 +112,7 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
       HOME: home, USERPROFILE: home, OMB_DATA_DIR: dataDir, OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1), OMB_STATIC_DIR: join(home, "web"),
       OMB_CLOUD_ROLE: "home", OMB_CLOUD_MACHINE_ID: "3f9c2a4e-8b1d-4c6e-9a7f-2d5e8c1b0a93", OMB_CLOUD_ADMIN_URL: "https://cloud.example.test",
       OMB_CLOUD_BOOTSTRAP_SECRET: secret, OMB_PUBLIC_URL: `https://${HOST}`,
+      OMB_OPENAI_LIVE_URL: live.url,
       ...gateway,
       ...included,
     },
@@ -137,6 +143,7 @@ async function ownerPairing(): Promise<string> {
 
 afterAll(async () => {
   if (child) await waitForExit(child, { signal: "SIGTERM" });
+  await live?.stop();
   if (home) await removeTempDir(home);
 });
 
@@ -420,4 +427,37 @@ it("refuses a bot still set to this computer or a Local VM, saying what is true 
     };
     await expect.poll(failure, { timeout: 15_000 }).toBe(`error: ${cloudHomePlaceRefusal(computer)}`);
   }
+});
+
+// No Cloud plan includes Live calls: the owner pastes their own OpenAI key on
+// the Cloud's page, whose key form saves it here (a server's page has no
+// credential store). The voice is then told where it runs, in the words of the
+// bot's own Cloud prompt, never "on the user's own computer".
+it("makes a Live call with the owner's own OpenAI key and tells the voice it runs on My Cloud", async () => {
+  const created = await api("POST", "/api/bots", { body: {
+    name: "Live fixture", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
+  } });
+  expect(created.status, JSON.stringify(created.body)).toBe(201);
+  const botId = created.body.bot.id as string;
+  const call = () => api("POST", "/api/live/session", { body: { botId, sdp: "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n", client: "web" } });
+  // No key yet: the page opens the key form, and nothing reached OpenAI.
+  const asked = await call();
+  expect(asked.status, JSON.stringify(asked.body)).toBe(409);
+  expect(asked.body).toMatchObject({ needsKey: true });
+  expect(live.sessions).toEqual([]);
+  const key = `sk-fixture-${randomBytes(12).toString("hex")}`;
+  expect((await api("PUT", "/api/config", { body: { live: { key } } })).status).toBe(200);
+  const started = await call();
+  expect(started.status, JSON.stringify(started.body)).toBe(201);
+  expect(started.body).toMatchObject({ call: { botId, client: "web" }, transport: { type: "webrtc", sdp: expect.stringMatching(/^v=0/) } });
+  expect(live.sessions).toHaveLength(1);
+  const [session] = live.sessions;
+  const { instructions } = session!.body.session as { instructions: string };
+  expect(instructions.split("\n")[0]).toBe(`You are Live fixture, an AI agent that runs on ${CLOUD_HOME_PLACE}.`);
+  expect(instructions).not.toContain("on the user's own computer");
+  await live.waitForAttach(session!.id);
+  expect((await api("POST", "/api/live/call/end", { body: { callId: started.body.call.callId } })).status).toBe(200);
+  // The key reached OpenAI only: never the page, the log or another engine.
+  expect(JSON.stringify((await api("GET", "/api/config")).body)).not.toContain(key);
+  expect(log).not.toContain(key);
 });
