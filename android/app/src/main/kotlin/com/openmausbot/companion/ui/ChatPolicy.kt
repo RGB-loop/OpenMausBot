@@ -488,6 +488,8 @@ object MessageActions {
         // A tool chip is context, a screenshot is pixels, a digest is a log line.
         Message.Kind.ACTIVITY, Message.Kind.SCREEN, Message.Kind.DIGEST -> null
         Message.Kind.COMPACTION -> message.compaction?.summary ?: message.text?.takeIf { it.isNotBlank() }
+        // A connection card is buttons around an app name; nothing to copy.
+        Message.Kind.CONNECTOR -> null
         // The run's report and error are the parts worth keeping; the headline without either.
         Message.Kind.ROUTINE_RUN -> message.routineRun
             ?.let { run ->

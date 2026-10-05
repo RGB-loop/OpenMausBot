@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The in-chat connection card (ui/ConnectorRequestCard.kt): a bot asking to
+     connect an app. Its own file so the card's copy travels together; every
+     language folder carries the same names. Wording follows the desktop card
+     (src/locales, connectors.card.*). -->
+<resources>
+    <string name="mobile_connector_card_connect_securely">安全連線</string>
+    <string name="mobile_connector_card_open_again">再次開啟</string>
+    <string name="mobile_connector_card_continue_task">繼續工作</string>
+    <string name="mobile_connector_card_continuing">繼續中</string>
+    <string name="mobile_connector_card_waiting">正在等待登入…</string>
+    <string name="mobile_connector_card_ready">可以開始使用</string>
+    <string name="mobile_connector_card_requested_by">由 %1$s 提出要求</string>
+    <string name="mobile_connector_card_sign_in_hint">請在安全連線頁面上登入或輸入應用程式金鑰 — 切勿在聊天中輸入。</string>
+    <string name="mobile_connector_card_paused">已安全連線。你準備好時即可繼續已暫停的工作。</string>
+    <string name="mobile_connector_card_resumed">已安全連線。你的機器人正在繼續執行這項工作。</string>
+    <string name="mobile_connector_card_invalid_link">連線頁面的連結無效。請再試一次。</string>
+    <string name="mobile_connector_card_no_computer">未連線至電腦</string>
+</resources>
