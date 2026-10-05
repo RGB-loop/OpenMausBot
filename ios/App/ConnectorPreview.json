@@ -1,0 +1,48 @@
+[
+  {
+    "id": "preview-connector-required",
+    "role": "bot",
+    "kind": "connector",
+    "at": 1789088410000,
+    "parentId": "answer",
+    "text": "Connect GitHub to continue.",
+    "connector": {
+      "slug": "github",
+      "label": "GitHub",
+      "description": "Connect GitHub so the bot can open the pull request.",
+      "status": "required",
+      "resumeKey": "preview-resume-github"
+    }
+  },
+  {
+    "id": "preview-connector-authorizing",
+    "role": "bot",
+    "kind": "connector",
+    "at": 1789088411000,
+    "parentId": "preview-connector-required",
+    "text": "Connect Gmail as “work” to continue.",
+    "connector": {
+      "slug": "gmail",
+      "label": "Gmail",
+      "description": "Connect Gmail as “work” so the bot can continue",
+      "status": "authorizing",
+      "resumeKey": "preview-resume-gmail",
+      "alias": "work"
+    }
+  },
+  {
+    "id": "preview-connector-connected",
+    "role": "bot",
+    "kind": "connector",
+    "at": 1789088412000,
+    "parentId": "preview-connector-authorizing",
+    "text": "Connect Linear to continue.",
+    "connector": {
+      "slug": "linear",
+      "label": "Linear",
+      "description": "Connect Linear so the bot can file the issue.",
+      "status": "connected",
+      "resumeKey": "preview-resume-linear"
+    }
+  }
+]

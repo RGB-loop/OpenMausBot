@@ -1870,6 +1870,16 @@ struct MessageRow: View {
                 // is written for exactly this reader.
                 TextBubble(message: message, chat: chat, tailed: endsRun, openLink: openLink)
             }
+        case .connector:
+            // A room card names the member that asked; one that does not
+            // cannot be acted on, so it reads as the line it carries.
+            if let request = message.connector, chat.connectorOwner(of: message) != nil {
+                if let presentation = ConnectorRequestPresentation.of(request) {
+                    ConnectorRequestCardView(chat: chat, message: message, request: request, presentation: presentation)
+                }
+            } else if let text = message.text, !text.isEmpty {
+                TextBubble(message: message, chat: chat, tailed: endsRun, openLink: openLink)
+            }
         case .unknown:
             // A message kind from a newer computer. Almost everything the
             // harness sends carries `text`, so showing it is usually the
