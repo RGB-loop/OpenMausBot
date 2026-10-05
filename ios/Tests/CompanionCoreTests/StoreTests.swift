@@ -765,37 +765,65 @@ final class StoreTests: XCTestCase {
         // lands while it is out; the lookup's older `null` must not end the
         // call that just began
         var state = try hydrated()
-        state.resetCursor("abc12345:7")
-        let cursor = state.cursor
-        let line = state.liveCall
+        let revision = state.liveCallRevision
         state.apply(.liveCall(botId: "b1", threadId: "t1", call: liveCall(.connecting)))
-        state.advance(to: 8)
-        XCTAssertFalse(state.applyLiveCallLookup(nil, ifCursorMatches: cursor, lineWas: line))
+        XCTAssertFalse(state.applyLiveCallLookup(nil, ifRevisionIs: revision))
         XCTAssertEqual(state.liveCall, liveCall(.connecting))
     }
 
     func testALookupThatStraddledAHangUpAnswerIsDropped() throws {
         // no frame, but the remote bar's hang-up answer changed the line
         var state = try hydrated()
-        state.resetCursor("abc12345:7")
         state.apply(.liveCall(botId: "b1", threadId: "t1", call: liveCall(.live)))
-        let cursor = state.cursor
-        let line = state.liveCall
+        let revision = state.liveCallRevision
         var ended = liveCall(.ended)
         ended.endReason = "hung-up"
         XCTAssertFalse(state.applyLiveCallEnd(callId: "c1", answer: ended))
-        XCTAssertFalse(state.applyLiveCallLookup(liveCall(.live), ifCursorMatches: cursor, lineWas: line))
+        XCTAssertFalse(state.applyLiveCallLookup(liveCall(.live), ifRevisionIs: revision))
         XCTAssertEqual(state.liveCall, ended)
+    }
+
+    func testALookupThatStraddledAFrameRestatingTheLineIsStillDropped() throws {
+        // a frame that wrote the same value is still newer than the answer
+        var state = try hydrated()
+        state.apply(.liveCall(botId: "b1", threadId: "t1", call: liveCall(.live)))
+        let revision = state.liveCallRevision
+        state.apply(.liveCall(botId: "b1", threadId: "t1", call: liveCall(.live)))
+        XCTAssertFalse(state.applyLiveCallLookup(nil, ifRevisionIs: revision))
+        XCTAssertEqual(state.liveCall, liveCall(.live))
+    }
+
+    func testALookupOutWhileOtherFramesFoldIsApplied() throws {
+        // The stream keeps folding while the lookup is out — tokens, tool
+        // steps, the cursor moving. None of it is about the line, so a phone
+        // that connects mid-call under a busy fleet still learns of the call.
+        var state = try hydrated()
+        state.resetCursor("abc12345:7")
+        let revision = state.liveCallRevision
+        state.applyBatch([
+            StreamFrame(frame: .runtime(RuntimeEvent(type: "content.delta", threadId: "t1", delta: "hi", streamKind: "assistant_text")), seq: 8),
+            StreamFrame(frame: .message(threadId: "t1", message: Message(id: "m-live", role: .bot, kind: .text, at: 9)), seq: 9),
+        ])
+        XCTAssertEqual(state.cursor, "abc12345:9")
+        XCTAssertTrue(state.applyLiveCallLookup(liveCall(.live), ifRevisionIs: revision))
+        XCTAssertEqual(state.liveCall, liveCall(.live))
     }
 
     func testALookupWithNothingNewerMeanwhileIsApplied() throws {
         var state = try hydrated()
-        state.resetCursor("abc12345:7")
-        let cursor = state.cursor
-        XCTAssertTrue(state.applyLiveCallLookup(liveCall(.live), ifCursorMatches: cursor, lineWas: nil))
+        XCTAssertTrue(state.applyLiveCallLookup(liveCall(.live), ifRevisionIs: state.liveCallRevision))
         XCTAssertEqual(state.liveCall, liveCall(.live), "a phone that connects mid-call learns about it")
-        XCTAssertTrue(state.applyLiveCallLookup(nil, ifCursorMatches: cursor, lineWas: liveCall(.live)))
+        XCTAssertTrue(state.applyLiveCallLookup(nil, ifRevisionIs: state.liveCallRevision))
         XCTAssertNil(state.liveCall)
+    }
+
+    func testHydrateLeavesTheLineRevisionAlone() throws {
+        // hydrate does not touch the line, so a lookup that straddles a
+        // hydrate (notification navigation) still lands
+        var state = try hydrated()
+        let revision = state.liveCallRevision
+        state.hydrate(try fleet())
+        XCTAssertEqual(state.liveCallRevision, revision)
     }
 
     func testHydrateKeepsTheCallTheStreamReported() throws {

@@ -87,7 +87,12 @@ public struct CompanionState: Sendable {
     /// `live.call` frame, `GET /api/live/call` (Session) or the harness's
     /// answer to a hang-up (`applyLiveCallEnd`) is the only source. Kept as
     /// `ended` until the harness clears it, so the bar can say why.
-    public var liveCall: LiveCallState?
+    public var liveCall: LiveCallState? {
+        didSet { liveCallRevision &+= 1 }
+    }
+    /// Counts writes to `liveCall`, whoever made them: what a lookup that
+    /// was out meanwhile checks before it puts its older answer on the line.
+    public private(set) var liveCallRevision = 0
 
     public init() {}
 
@@ -627,21 +632,18 @@ public struct CompanionState: Sendable {
     }
 
     /// The harness's answer to `GET /api/live/call`, applied only if nothing
-    /// newer reached the line while the request was out: no frame folded
-    /// (the cursor is where it was) and no hang-up answer applied (the line
-    /// is what it was). A lookup that straddles a start could otherwise put
-    /// back a `null` from before the 201 and end the call that just began.
-    /// Mirrors `hydrate(_:waitingThreads:ifCursorMatches:)`.
+    /// newer reached the line while the request was out: no `live.call`
+    /// frame, hang-up answer or other lookup wrote it since `revision` was
+    /// read from `liveCallRevision`. A lookup that straddles a start could
+    /// otherwise put back a `null` from before the 201 and end the call that
+    /// just began. Frames about anything else leave the line alone, so they
+    /// do not void the answer: the stream keeps folding while it is out.
     ///
     /// Returns false when the answer was stale and dropped; the stream
     /// already carried something newer.
     @discardableResult
-    public mutating func applyLiveCallLookup(
-        _ call: LiveCallState?,
-        ifCursorMatches expectedCursor: String?,
-        lineWas expectedLine: LiveCallState?
-    ) -> Bool {
-        guard cursor == expectedCursor, liveCall == expectedLine else { return false }
+    public mutating func applyLiveCallLookup(_ call: LiveCallState?, ifRevisionIs revision: Int) -> Bool {
+        guard liveCallRevision == revision else { return false }
         liveCall = call
         return true
     }

@@ -1106,7 +1106,10 @@ final class Session: ObservableObject {
                 guard let self, self.runtimeGeneration == runtime else { return }
                 self.steeringInstanceIds = Set(engines.filter { $0.capabilities?.queueing == true }.map(\.instanceId))
             }
-            await refreshLiveCall(using: client)
+            // Nor must the line: run() waits for this hydrate before it folds
+            // another frame, so awaiting the lookup here held the whole
+            // stream behind one more request (up to its 20 s timeout).
+            Task { [weak self] in await self?.refreshLiveCall(using: client) }
             return
         }
         throw APIError.status(code: 409, message: "Conversations changed while loading. Please try opening this notification again.")
@@ -2502,15 +2505,14 @@ final class Session: ObservableObject {
     ///
     /// The stream keeps running while the lookup is out. A `live.call` frame
     /// (or a hang-up's answer) that lands meanwhile is newer than the
-    /// lookup, so the answer is applied only if the line and the cursor
-    /// are still where they were — the same guard `hydrate` uses.
+    /// lookup, so the answer is applied only if nothing wrote the line in
+    /// the meantime; frames about anything else do not void it.
     private func refreshLiveCall(using client: CompanionClient) async {
-        let expectedCursor = state.cursor
-        let expectedLine = state.liveCall
+        let revision = state.liveCallRevision
         do {
             let call = try await client.liveCall()
             guard self.client?.connection.id == client.connection.id else { return }
-            if !state.applyLiveCallLookup(call, ifCursorMatches: expectedCursor, lineWas: expectedLine) {
+            if !state.applyLiveCallLookup(call, ifRevisionIs: revision) {
                 log.info("live call lookup dropped: the stream moved on while it was out")
             }
         } catch {
