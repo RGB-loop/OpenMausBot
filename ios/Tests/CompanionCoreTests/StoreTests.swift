@@ -499,6 +499,86 @@ final class StoreTests: XCTestCase {
         XCTAssertEqual(state.visibleTranscript(forThread: bot.threadId).map(\.id), ["root", "fork", "tail"])
     }
 
+    func testAnUnforkedThreadIsItsOwnBranch() throws {
+        var state = try hydrated()
+        let bot = try XCTUnwrap(state.bots.first)
+        var chain: [Message] = []
+        for index in 0..<40 {
+            var next = message("m\(index)", at: Double(index))
+            next.parentId = chain.last?.id
+            chain.append(next)
+        }
+        state.messages[bot.threadId] = chain
+        state.apply(.thread(threadId: bot.threadId, activeLeafId: "m39"))
+        XCTAssertEqual(state.visibleTranscript(forThread: bot.threadId).map(\.id), chain.map(\.id))
+        // a leaf further up hides what follows it
+        state.apply(.thread(threadId: bot.threadId, activeLeafId: "m9"))
+        XCTAssertEqual(state.visibleTranscript(forThread: bot.threadId).map(\.id), chain.prefix(10).map(\.id))
+    }
+
+    func testBranchWalkKeepsTheNewestCopyOfARepeatedIdAndStopsOnACycle() throws {
+        var state = try hydrated()
+        let bot = try XCTUnwrap(state.bots.first)
+        let first = message("a", at: 1, text: "older a")
+        var second = message("b", at: 2)
+        second.parentId = "a"
+        var repeated = message("a", at: 3, text: "newer a")
+        repeated.parentId = "b"
+        state.messages[bot.threadId] = [first, second, repeated]
+        state.apply(.thread(threadId: bot.threadId, activeLeafId: "a"))
+        // the newest "a" is the leaf; its parent "b" points back at it
+        let visible = state.visibleTranscript(forThread: bot.threadId)
+        XCTAssertEqual(visible.map(\.id), ["b", "a"])
+        XCTAssertEqual(visible.last?.text, "newer a")
+    }
+
+    func testLastVisibleMessageIsTheVisibleBranchsLast() throws {
+        var (state, threadId) = try editableConversation()
+        func check(_ label: String, file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertEqual(
+                state.lastVisibleMessage(forThread: threadId)?.id,
+                state.visibleTranscript(forThread: threadId).last?.id,
+                label, file: file, line: line
+            )
+        }
+        check("leaf at the end")
+        var fork = message("q2", at: 4, text: "second try")
+        fork.parentId = "root"
+        state.messages[threadId]?.append(fork)
+        check("a fork appended after the leaf")
+        state.apply(.thread(threadId: threadId, activeLeafId: "q2"))
+        check("the fork selected")
+        state.apply(.thread(threadId: threadId, activeLeafId: "nowhere"))
+        check("a leaf the transcript does not hold")
+        state.apply(.thread(threadId: threadId, activeLeafId: "a1"))
+        state.pendingEdits[threadId] = PendingEdit(sourceId: "q1", text: "third try", at: 5)
+        check("an edit in flight")
+        state.pendingEdits[threadId] = nil
+        state.messages[threadId]?.append(message("a1", at: 6, text: "replayed"))
+        check("a repeated id")
+        XCTAssertEqual(state.lastVisibleMessage(forThread: threadId)?.text, "replayed")
+        XCTAssertNil(state.lastVisibleMessage(forThread: "missing"))
+    }
+
+    func testAnApprovalOnAnotherBranchIsNotPending() throws {
+        var state = try hydrated()
+        let bot = try XCTUnwrap(state.bots.first)
+        let root = message("root")
+        var hidden = Message(id: "hidden-ask", role: .bot, kind: .options, at: 2)
+        hidden.parentId = root.id
+        hidden.card = OptionCard(
+            title: "Approval needed", subtitle: "ls", options: ["Allow", "Deny"],
+            answered: nil, dismissed: nil, requestId: "r1", tool: "Bash", held: nil, allowKey: "Bash:ls"
+        )
+        var visible = message("visible", at: 3)
+        visible.parentId = root.id
+        state.messages[bot.threadId] = [root, hidden, visible]
+        state.apply(.thread(threadId: bot.threadId, activeLeafId: "visible"))
+        XCTAssertFalse(state.pendingApprovals.contains { $0.message.id == "hidden-ask" })
+        state.apply(.thread(threadId: bot.threadId, activeLeafId: "hidden-ask"))
+        XCTAssertTrue(state.pendingApprovals.contains { $0.message.id == "hidden-ask" })
+    }
+
     func testVersionsAreUserMessagesWithTheSameParent() {
         var state = CompanionState()
         let root = message("root")
