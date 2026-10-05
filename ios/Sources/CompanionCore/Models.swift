@@ -215,6 +215,9 @@ public struct Message: Codable, Hashable, Identifiable, Sendable {
         /// One background routine run, upserted into the thread that asked
         /// for it and patched as the run moves. `routineRun` carries the card.
         case routineRun = "routine.run"
+        /// A bot asking to connect an app. `connector` carries the card;
+        /// see ConnectorRequest.swift.
+        case connector
         /// A kind this build has never heard of.
         ///
         /// Not decorative. `kind` is not optional, so without this a single
@@ -256,6 +259,9 @@ public struct Message: Codable, Hashable, Identifiable, Sendable {
     public var turnTerminal: Bool?
     public var card: OptionCard?
     public var secret: SecretRequestCardData?
+    /// `kind == .connector`: the app the bot is waiting on, patched in place
+    /// as the person signs in.
+    public var connector: ConnectorRequest?
     public var tool: ToolActivity?
     public var threadRef: ThreadRef?
     /// `kind == .compaction`: the record itself.

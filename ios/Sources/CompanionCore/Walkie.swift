@@ -39,6 +39,11 @@ public enum Walkie {
             // and the first thing it said. The full report is on screen.
             let line = message.routineRun?.previewLine ?? message.text ?? ""
             return line.isEmpty ? nil : line
+        case .connector:
+            // Like a credential, it cannot be done by voice: say what the
+            // bot is waiting on and where to do it, once.
+            guard let connector = message.connector, connector.isPending else { return nil }
+            return "It needs you to connect \(connector.displayName). Open the chat to connect it."
         case .activity, .screen, .digest, .compaction:
             return nil
         }

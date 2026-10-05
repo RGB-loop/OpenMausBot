@@ -197,6 +197,7 @@ func previewText(of message: Message) -> String {
     case .digest: return ""
     case .compaction: return message.compaction?.chipText ?? message.text ?? ""
     case .routineRun: return message.routineRun?.previewLine ?? message.text ?? ""
+    case .connector: return message.connectorPreviewLine
     case .unknown: return message.text ?? ""
     }
 }
@@ -328,6 +329,9 @@ public func transcriptRows(_ messages: [Message], detail: ActivityDetail) -> [Tr
         // A turn that touched nothing leaves a digest with nothing to show;
         // an empty row would still cost the transcript a gap.
         if message.kind == .digest && DigestSummary(text: message.text ?? "").isEmpty { continue }
+        // A connection request the person set aside ("Not now") is not
+        // drawn, as on desktop; the rows around it close up.
+        if message.kind == .connector && message.connector?.dismissed == true { continue }
         if detail != .reduced {
             rows.append(.message(message))
             continue
