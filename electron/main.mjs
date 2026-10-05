@@ -298,7 +298,7 @@ let cloudAccountStarted = Promise.resolve();
 // True while that restore is under way: a Cloud page asking for the microphone waits for it.
 let cloudAccountRestoring = false;
 /** Wait for a saved Cloud sign-in to finish restoring (a local read and one
- * check with OMB Cloud), at most 5 s: Settings → OMB Cloud must not take it
+ * check with OpenMausBot Cloud), at most 5 s: Settings → OpenMausBot Cloud must not take it
  * for signed out, nor the microphone refuse My Cloud for asking early. */
 function cloudAccountRestored() {
   return Promise.race([cloudAccountStarted, new Promise(resolve => setTimeout(resolve, 5_000).unref?.())]);
@@ -1010,7 +1010,7 @@ function syncPhoneSecretKey(proc) {
 
 function ensureCloudAccount() {
   if (cloudAccount) return cloudAccount;
-  if (!app.isPackaged || desktopRemoteAccess) throw new Error("OMB Cloud sign-in requires the local desktop app.");
+  if (!app.isPackaged || desktopRemoteAccess) throw new Error("OpenMausBot Cloud sign-in requires the local desktop app.");
   cloudAccount = createCloudAccountClient({
     store: createCloudAccountStore({ file: path.join(app.getPath("userData"), "cloud-account.bin"), encryption: {
       available: async () => (await safeStorage.isAsyncEncryptionAvailable()) &&
@@ -1975,9 +1975,9 @@ async function deliverOrganizationEntry() {
  * My Cloud by itself (CloudAccountSettings). No prompt: a hosted server left
  * for it stays saved under Servers, and the Cloud replaces it anyway. */
 async function openCloudEntry() {
-  if (!app.isPackaged) throw new Error("OMB Cloud requires the installed desktop app.");
-  if (desktopRemoteAccess) throw new Error("This app is connected to another computer. Disconnect it to use OMB Cloud on this computer.");
-  if (!serverReady) throw new Error("This installation is unavailable. Restart the app and open your Cloud again.");
+  if (!app.isPackaged) throw new Error("OpenMausBot Cloud requires the installed desktop app.");
+  if (desktopRemoteAccess) throw new Error("This app is connected to another computer. Disconnect it to use OpenMausBot Cloud on this computer.");
+  if (!serverReady) throw new Error("This installation is unavailable. Restart the app and open My Cloud again.");
   // Let a saved sign-in finish restoring first: the view must not take it for
   // signed out and start another.
   await cloudAccountRestored();
@@ -2045,7 +2045,7 @@ async function connectHostedWorkspace(input, name) {
 
 /** A verified Cloud session that reports the person's machine lists it under
  * Servers. It never switches to it: this computer stays active until they
- * choose "Connect to my Cloud". Signed out, nothing here runs. */
+ * choose "Open My Cloud". Signed out, nothing here runs. */
 function rememberCloudHome(state) {
   try {
     const next = withCloudHome(environmentsState, state?.status === "connected" ? state.machine : null, () => randomUUID());
@@ -2065,11 +2065,11 @@ function rememberCloudHome(state) {
 async function connectCloudHome(open = null) {
   const client = ensureCloudAccount();
   const target = client.homeTarget();
-  if (!target) throw new Error("Your Cloud is not ready to connect yet.");
+  if (!target) throw new Error("My Cloud is not ready to connect yet.");
   const grant = (await cloudHomeSignedIn(target.origin)) ? null : await client.pairHome();
   let next = withCloudHome(environmentsState, { status: "ready", origin: target.origin }, () => randomUUID());
   const entry = next.environments.find((candidate) => candidate.origin === target.origin);
-  if (!entry) throw new Error("Your Cloud could not be added to Servers.");
+  if (!entry) throw new Error("My Cloud could not be added to Servers.");
   next = withActive(next, entry.id);
   persistEnvironments(next);
   navigateMainWindow(cloudHomeConnectUrl({ origin: target.origin, grant }, Date.now(), open));
@@ -2614,11 +2614,17 @@ ipcMain.handle("desktop-viewer:state-now", localOnly("desktop-viewer:state-now",
   contextId: desktopViewerContextId,
 })));
 
-ipcMain.handle("perm:status", () => ({
+// The session's permission handlers (app-permissions.mjs), set once the app
+// is ready. perm:status asks them, so `pageMic` is the very rule that decides
+// a page's microphone request: a blocked Live call then says whether this app
+// refused the page (a web browser can make the call) or the computer did.
+let appPermissions = null;
+ipcMain.handle("perm:status", (event) => ({
   mic:
     nativeActions.appleMediaPermissions
       ? systemPreferences.getMediaAccessStatus?.("microphone") ?? "unknown"
       : "unsupported",
+  pageMic: appPermissions?.pageMicrophone(event) ?? "refused",
 }));
 ipcMain.handle("perm:request-mic", localOnly("perm:request-mic", async () => {
   if (!nativeActions.appleMediaPermissions) return false;
@@ -3095,13 +3101,13 @@ async function lendingSnapshot() {
 }
 const lendingEnv = () => {
   const env = cloudLendingEnvironment();
-  if (!env) throw new Error("Connect to your Cloud first.");
+  if (!env) throw new Error("Open My Cloud first.");
   return env;
 };
 ipcMain.handle("lending:state", localWorkspaceOnly("lending:state", () => lendingSnapshot()));
 ipcMain.handle("lending:folder", localWorkspaceOnly("lending:folder", async () => {
   lendingEnv();
-  const picked = await dialog.showOpenDialog(mainWindow, { title: "Choose a folder your Cloud can use", properties: ["openDirectory"] });
+  const picked = await dialog.showOpenDialog(mainWindow, { title: "Choose a folder My Cloud can use", properties: ["openDirectory"] });
   if (picked.canceled || !picked.filePaths[0]) return null;
   return (await validateSharedFolders([{ id: randomUUID(), path: picked.filePaths[0], write: false }]))[0];
 }));
@@ -3460,7 +3466,7 @@ app.whenReady().then(async () => {
   // person's own Cloud, open in this window, also gets the microphone (only
   // that) for a Live call: it is theirs alone. No other server does. A call
   // placed while the saved sign-in is still restoring waits for it.
-  const appPermissions = appPermissionHandlers({
+  appPermissions = appPermissionHandlers({
     rendererOrigin,
     mainContents: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null),
     cloudHomeOrigin: myCloud,
