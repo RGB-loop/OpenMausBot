@@ -11067,6 +11067,28 @@
         }
       }
     },
+    "%@ is typing": {
+      "localizations": {
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ está digitando"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 正在输入"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 正在輸入"
+          }
+        }
+      }
+    },
     "a bot": {
       "localizations": {
         "pt-BR": {

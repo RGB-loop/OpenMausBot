@@ -72,6 +72,8 @@ struct ChatView: View {
     /// a scroll offset, because iOS 16 has no scroll-position API.
     @State private var viewportBottom: CGFloat = 0
     @State private var showsJumpToLatest = false
+    /// VoiceOver has heard "… is typing" for this turn.
+    @State private var typingAnnounced = false
 
     @AppStorage(PrefKey.islandIntro) private var islandIntro = IslandIntro.oncePerBot.rawValue
     @AppStorage(PrefKey.islandSeen) private var islandSeen = ""
@@ -147,6 +149,15 @@ struct ChatView: View {
         return transcriptRows(shown, detail: detail)
     }
 
+    /// The transcript ends with the typing bubble: busy, not waiting on you,
+    /// and the last row on screen is not a finished reply (`TurnTail`). A
+    /// stream bubble takes the slot instead where the detail level shows one.
+    private var showsTyping: Bool {
+        let streaming = !(session.state.streaming[threadId] ?? "").isEmpty
+            || !(session.state.reasoning[threadId] ?? "").isEmpty
+        return current.showsTyping(messages: messages, hiddenIds: live.hiddenIds, streaming: streaming)
+    }
+
     /// The status line's words: the reply as it streams, else the newest
     /// in-between message. Nil unless Hidden and the bot is working.
     private var liveStatusLine: String? {
@@ -218,8 +229,16 @@ struct ChatView: View {
             cancelThreadOpen()
         }
         .onValueChange(of: heldSends.first?.queueId) { _ in steering = false }
-        .onValueChange(of: current.busy) { busy in if !busy { steering = false } }
-        .onValueChange(of: threadId) { _ in steering = false }
+        .onValueChange(of: current.busy) { busy in
+            if !busy {
+                steering = false
+                typingAnnounced = false
+            }
+        }
+        .onValueChange(of: threadId) { _ in
+            steering = false
+            typingAnnounced = false
+        }
         .task(id: steering) { await expireSteering() }
         .onDisappear {
             dictation.stop()
@@ -353,9 +372,22 @@ struct ChatView: View {
         // `initial: true` is what opens the chat on the newest
         // message where `scrollAnchorCompat` cannot (iOS 16). On 17 the
         // anchor has already put us there and this is a no-op.
+        // The end, not the last message: the typing bubble sits under
+        // the message that started it, and landing on the message left
+        // the bubble below the composer, where nobody saw it.
         .onValueChange(of: transcript.last?.id, initial: true) { _ in
-            guard let last = transcript.last else { return }
-            withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+            guard !transcript.isEmpty else { return }
+            withAnimation { proxy.scrollTo(Self.transcriptEndId, anchor: .bottom) }
+        }
+        // The bubble also comes and goes with no new message to follow:
+        // the turn is accepted a frame after your message lands, a tool
+        // step starts after a reply. Bring it into view then, unless you
+        // are up in the scrollback reading.
+        .onValueChange(of: showsTyping) { shown in
+            guard shown, !showsJumpToLatest else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                proxy.scrollTo(Self.transcriptEndId, anchor: .bottom)
+            }
         }
         // Neither of the above is enough on its own when the newest
         // message holds a table or a code block. Their horizontal
@@ -486,7 +518,7 @@ struct ChatView: View {
     /// the same frame that appends the message, so there is never a beat
     /// where both are on screen.
     /// At Hidden the words go to the status line above the composer; the
-    /// transcript keeps the typing dots.
+    /// transcript keeps the typing bubble, which says the bot is still on it.
     @ViewBuilder private var liveTail: some View {
         if current.busy, detail != .hidden, let live = session.state.streaming[threadId], !live.isEmpty {
             StreamingBubble(text: live, reasoning: nil, color: current.color)
@@ -498,11 +530,21 @@ struct ChatView: View {
             // and showing both is just noise.
             StreamingBubble(text: nil, reasoning: thinking, color: current.color)
                 .id(Self.liveBubbleId)
-        } else if current.busy {
-            TypingIndicatorView(tintColor: MausPalette.color(current.color))
+        } else if showsTyping {
+            TypingIndicatorView(name: current.name)
                 .id(Self.liveBubbleId)
-                .accessibilityLabel("\(current.name) is working")
+                .onAppear(perform: announceTyping)
         }
+    }
+
+    /// VoiceOver hears "Pepper is typing" once a turn, when the bubble first
+    /// appears. It comes and goes between steps, and saying it every time
+    /// would be noise.
+    private func announceTyping() {
+        guard !typingAnnounced else { return }
+        typingAnnounced = true
+        guard UIAccessibility.isVoiceOverRunning else { return }
+        UIAccessibility.post(notification: .announcement, argument: String(localized: "\(current.name) is typing"))
     }
 
     private var transcriptEnd: some View {
@@ -598,8 +640,8 @@ struct ChatView: View {
     /// the reader has already scrolled away.
     private func settleOnEnd(_ proxy: ScrollViewProxy) async {
         try? await Task.sleep(for: .milliseconds(50))
-        guard !Task.isCancelled, !readerScrolled, let last = rows.last else { return }
-        proxy.scrollTo(last.id, anchor: .bottom)
+        guard !Task.isCancelled, !readerScrolled, !rows.isEmpty else { return }
+        proxy.scrollTo(Self.transcriptEndId, anchor: .bottom)
     }
 
     private func revealFocusedMessage(_ proxy: ScrollViewProxy, in transcript: [TranscriptRow]) {
@@ -635,6 +677,12 @@ struct ChatView: View {
         // Profile parity screenshots without automating a tap through the
         // animated island/header transition.
         if ProcessInfo.processInfo.arguments.contains("-open-profile") { showingProfile = true }
+        // `-chat-typing-preview`: the turn starts a beat after the chat
+        // opens, so the typing bubble arrives with no new message to follow.
+        if ProcessInfo.processInfo.arguments.contains("-chat-typing-preview"), !openedChat.busy {
+            try? await Task.sleep(for: .milliseconds(1500))
+            if !Task.isCancelled { session.setPreviewTurn(busy: true, threadId: openedChat.threadId) }
+        }
 #endif
     }
 
@@ -2955,9 +3003,9 @@ private struct LiveStatusLine: View {
     let text: String
 
     var body: some View {
+        // No spinner of its own: the typing bubble in the transcript says
+        // the bot is working, and this line says what at.
         HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.mini)
             Text(verbatim: text.replacingOccurrences(of: "\n", with: " "))
                 .font(.system(size: 13))
                 .foregroundStyle(Color.secondary)
