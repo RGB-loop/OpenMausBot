@@ -35,7 +35,7 @@ app.commandLine.appendSwitch("use-fake-device-for-media-stream");
 const timeout = setTimeout(() => { console.error("Permission smoke timed out"); app.exit(1); }, 30_000);
 
 async function run() {
-  const servers = [0, 1, 2, 3].map(() => createServer((_req, res) => {
+  const servers = [0, 1, 2, 3, 4].map(() => createServer((_req, res) => {
     res.setHeader("Content-Type", "text/html");
     res.end("<!doctype html><title>Isolated permission smoke</title><p>Only this test page is captured.</p>");
   }));
@@ -43,15 +43,20 @@ async function run() {
   try {
     await Promise.all(servers.map(server => new Promise(resolve => server.listen(0, "127.0.0.1", resolve))));
     // `cloudOrigin` plays the person's verified Cloud; `foreignOrigin` any other server;
-    // `laterCloudOrigin` a Cloud page loaded before the saved sign-in has restored.
-    const [origin, foreignOrigin, cloudOrigin, laterCloudOrigin] = servers.map(server => `http://127.0.0.1:${server.address().port}`);
+    // `laterCloudOrigin` a Cloud page loaded before the saved sign-in has restored,
+    // `laterForeignOrigin` another server's page asking in that same window.
+    const [origin, foreignOrigin, cloudOrigin, laterCloudOrigin, laterForeignOrigin] = servers.map(server => `http://127.0.0.1:${server.address().port}`);
     await app.whenReady();
     const guard = screenPreview.createDisplayMediaGuard();
     win = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
     // The app's own handlers (electron/main.mjs installs the same ones).
+    // `restoring`: while set, the saved sign-in is restoring; the request
+    // handler asking for it starts the restore's end, so a request that never
+    // reaches it never gets the microphone.
     let home = cloudOrigin, restoring = null;
+    const waited = [];
     const permissions = appPermissionHandlers({ rendererOrigin: () => origin, mainContents: () => win?.webContents ?? null,
-      cloudHomeOrigin: () => home, cloudHomeRestoring: () => restoring });
+      cloudHomeOrigin: () => home, cloudHomeRestoring: () => restoring?.() ?? null });
     session.defaultSession.setPermissionCheckHandler(permissions.check);
     session.defaultSession.setPermissionRequestHandler(permissions.request);
     const displayDecisions = [];
@@ -93,17 +98,21 @@ async function run() {
     // The first seconds after launch: the Cloud page is open before the saved
     // sign-in has restored. Its microphone request waits, then is granted
     // once the restore names this page's origin as the person's Cloud.
+    const restoreNaming = (page, named) => () => {
+      waited.push(page);
+      return new Promise(resolve => setTimeout(() => { home = named; restoring = null; resolve(); }, 300));
+    };
     await win.loadURL(laterCloudOrigin);
     home = null;
-    let restored;
-    restoring = new Promise(resolve => { restored = resolve; });
-    const early = capture(microphone);
-    setTimeout(() => { home = laterCloudOrigin; restoring = null; restored(); }, 300);
-    assert.deepEqual(await early, { tracks: ["audio"] }, "a Cloud page that asked early hears the microphone once the sign-in has restored");
-    // A restore that ends without naming the page refuses it.
-    await win.loadURL(foreignOrigin);
-    restoring = new Promise(resolve => setTimeout(() => { restoring = null; resolve(); }, 300));
+    restoring = restoreNaming("cloud", laterCloudOrigin);
+    assert.deepEqual(await capture(microphone), { tracks: ["audio"] }, "a Cloud page that asked early hears the microphone once the sign-in has restored");
+    assert.deepEqual(waited, ["cloud"], "the request waited for the restore, then was decided");
+    // A restore that ends without naming the page refuses it, after the same wait.
+    await win.loadURL(laterForeignOrigin);
+    home = null;
+    restoring = restoreNaming("foreign", laterCloudOrigin);
     assert.deepEqual(await capture(microphone), { error: "NotAllowedError" });
+    assert.deepEqual(waited, ["cloud", "foreign"], "another server's page waited too, then was refused");
     console.log(JSON.stringify({ electron: process.versions.electron, microphone: "allowed", camera: "denied", display: "intent-bound", foreignOrigin: "denied", cloudHome: "microphone only", cloudHomeBeforeRestore: "waits, then allowed" }));
   } finally {
     clearTimeout(timeout);
