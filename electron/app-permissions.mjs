@@ -76,15 +76,10 @@ export function appPermissionAllowed(permission, requestingUrlOrOrigin, renderer
  * @returns {boolean} True only for the Cloud's own microphone request
  */
 function cloudHomeMicrophoneAllowed(permission, requestingUrlOrOrigin, homeOrigin, details) {
-  const requesting = webOrigin(requestingUrlOrOrigin);
-  const home = webOrigin(homeOrigin);
-  if (permission !== "media" || !requesting || !home || requesting !== home || details?.isMainFrame !== true) return false;
-  if (details.mediaType !== undefined && details.mediaType !== "audio") return false;
-  // A request names its media; empty is getDisplayMedia, which a Cloud never gets.
-  if (details.mediaTypes !== undefined) {
-    return Array.isArray(details.mediaTypes) && details.mediaTypes.length > 0 && details.mediaTypes.every((type) => type === "audio");
-  }
-  return details.mediaType === "audio";
+  // This computer's media rule with the Cloud as the trusted origin, narrowed
+  // to the main frame and never getDisplayMedia (empty mediaTypes).
+  if (permission !== "media" || details?.isMainFrame !== true || details.mediaTypes?.length === 0) return false;
+  return appPermissionAllowed("media", requestingUrlOrOrigin, homeOrigin, details);
 }
 
 /**
