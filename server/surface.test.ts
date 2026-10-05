@@ -4,9 +4,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  cloudPlaceDriverError,
+  cloudPlaceRefusal,
   parseSurface,
-  placeFailureMessage,
   placeUnavailable,
   resolveSurface,
   surfaceOfComputerKind,
@@ -213,37 +212,43 @@ it("does not instruct use of a selected browser when no surface is mounted", () 
   expect(surfacePrompt({ computer: null, browser: true })).toContain("For online research");
 });
 
-describe("cloudPlaceDriverError", () => {
+describe("cloudPlaceRefusal", () => {
+  const engine = (patch: { driverKind?: string; computerMcp?: boolean }) => ({ name: "Llama", ...patch });
+
   it("lets every engine with computer tools use either cloud backend, and the Computer engine only Boat", () => {
-    expect(cloudPlaceDriverError({ driverKind: "claude", computerMcp: true }, "box")).toBeNull();
-    expect(cloudPlaceDriverError({ driverKind: "claude", computerMcp: true }, "vps")).toBeNull();
-    expect(cloudPlaceDriverError({ driverKind: "boxAgent" }, "box")).toBeNull();
-    expect(cloudPlaceDriverError({ driverKind: "boxAgent" }, "vps")).toMatch(/^The Computer engine runs on Boat and can't use a self-hosted VPS\./);
+    expect(cloudPlaceRefusal(engine({ driverKind: "claude", computerMcp: true }), "box", "works-on", "Scout")).toBeNull();
+    expect(cloudPlaceRefusal(engine({ driverKind: "claude", computerMcp: true }), "vps", "works-on", "Scout")).toBeNull();
+    expect(cloudPlaceRefusal(engine({ driverKind: "boxAgent" }), "box", "works-on", "Scout")).toBeNull();
+    expect(cloudPlaceRefusal(engine({ driverKind: "boxAgent" }), "vps", "works-on", "Scout")?.message)
+      .toMatch(/^The Computer engine runs on Boat and can't use a self-hosted VPS\./);
   });
 
-  it("refuses an engine without computer tools with one message and the control that changes it", () => {
-    expect(cloudPlaceDriverError({ driverKind: "openaiCompat", computerMcp: false }, "box")).toBe("This model can't use a computer. Choose another model, or set Works on to Auto.");
-    expect(cloudPlaceDriverError({}, "vps", "pin")).toBe("This model can't use a computer. Choose another model, or clear this conversation's place in the composer.");
-    expect(cloudPlaceDriverError({}, "box", "routine")).toBe("This model can't use a computer. Choose another model, or change where this routine runs.");
+  it("refuses an engine without computer tools as one state, its fix the same whatever the source", () => {
+    const refused = cloudPlaceRefusal(engine({ driverKind: "openaiCompat", computerMcp: false }), "box", "works-on", "Scout")!;
+    expect(refused).toMatchObject({ name: "PlaceUnavailableError", place: "cloud", row: { state: "cc-cannot", params: { bot: "Scout", model: "Llama" }, source: "works-on" } });
+    expect(refused.message).toBe("Llama can't use a computer. Choose a model that can, such as Claude or ChatGPT. Choose another model in Scout's settings.");
+    for (const source of ["pin", "routine", "room"] as const) {
+      expect(cloudPlaceRefusal(engine({}), "box", source, "Scout")?.message).toBe(refused.message);
+    }
   });
 });
 
 describe("placeUnavailable", () => {
-  it("names the control that changes the failed place, by where the choice came from", () => {
-    expect(placeUnavailable("cloud", "pin", "the cloud computer could not be created or reached").message)
-      .toBe("the cloud computer could not be created or reached. Clear this conversation's place in the composer to continue.");
-    expect(placeUnavailable("cloud", "works-on", "boom.").message).toBe("boom. Set Works on to Auto in this bot's settings to continue.");
-    expect(placeUnavailable("vm", "routine", "boom").message).toBe("boom. Change where this routine runs.");
-    expect(placeUnavailable("cloud", "auto-pin", "boom").message).toContain("back on Auto");
-    expect(placeUnavailable("vm", "pin", "x")).toMatchObject({ name: "PlaceUnavailableError", place: "vm" });
+  it("words a passing cause's way on by where the place came from, and never says Set Works on to Auto", () => {
+    const cause = (source: "works-on" | "pin" | "auto-pin" | "routine" | "room") =>
+      placeUnavailable("cloud", { state: "cc-no-start", params: { bot: "Scout" }, source }).message;
+    expect(cause("works-on")).toBe("Scout's cloud computer didn't start. Try again.");
+    expect(cause("pin")).toBe("Scout's cloud computer didn't start. Clear this conversation's place in the composer to continue.");
+    expect(cause("auto-pin")).toBe("Scout's cloud computer didn't start. This conversation is back on Auto. Send your message again.");
+    expect(cause("routine")).toBe("Scout's cloud computer didn't start. Change where this routine runs.");
+    expect(cause("room")).toBe("Scout's cloud computer didn't start.");
+    expect(placeUnavailable("vm", { state: "place-failed", params: { bot: "Scout", cause: "The Local VM is not ready." }, source: "works-on" }))
+      .toMatchObject({ name: "PlaceUnavailableError", place: "vm", message: "The Local VM is not ready. Check it in the Computer panel." });
   });
 
-  it("shortens the cause, never the action, to fit the transcript row", () => {
-    const message = placeFailureMessage("x".repeat(400), "works-on");
-    expect(message.length).toBeLessThanOrEqual(160);
-    expect(message.endsWith("Set Works on to Auto in this bot's settings to continue.")).toBe(true);
-    expect(message).toContain("…");
-    // A room row has no such cut: the whole cause stays.
-    expect(placeUnavailable("vm", "works-on", "x".repeat(400), Infinity).message).toBe(`${"x".repeat(400)}. Set Works on to Auto in this bot's settings to continue.`);
+  it("keeps the whole cause: no row cuts it", () => {
+    const long = `${"x".repeat(400)}.`;
+    expect(placeUnavailable("vm", { state: "place-failed", params: { bot: "Scout", cause: long }, source: "works-on" }).message)
+      .toBe(`${long} Check it in the Computer panel.`);
   });
 });

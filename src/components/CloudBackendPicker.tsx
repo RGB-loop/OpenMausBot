@@ -1,9 +1,11 @@
 // The Boat / Self-hosted VPS segmented control shown under the "Runs on"
 // picker whenever a bot can end up on a cloud computer. One component, two
 // homes (ComputerPanel and the bot settings dialog's Access section), so the copy and the disabled
-// rules can never drift apart.
+// rules can never drift apart. My Cloud's cloud computers are the plan's own,
+// so there it is not shown at all.
 import type { CloudBackend } from "../../shared/wire";
 import { cn } from "@/lib/cn";
+import { useStore } from "@/state/store";
 
 export function CloudBackendPicker({
   value,
@@ -16,6 +18,8 @@ export function CloudBackendPicker({
   vpsSupported: boolean;
   onChange: (backend: CloudBackend) => void;
 }) {
+  const { state } = useStore();
+  if (state.config?.cloudHome) return null;
   return (
     <div className="mt-3 rounded-lg bg-inset p-3">
       <div className="text-[12px] font-medium text-ink">{compact ? "Cloud provider" : "Cloud backend"}</div>

@@ -3,7 +3,6 @@ import type { Bot, InstanceInfo } from "@/state/store";
 import {
   autoSelectsLocalComputer,
   instanceSupportsLocalComputer,
-  linuxAutoDescription,
   localComputerDisabledReason,
   localComputerSelectable,
   persistedComputerSelectionMatches,
@@ -68,7 +67,6 @@ describe("local computer UI eligibility", () => {
   });
 
   it("states that Linux Auto never selects this computer", () => {
-    expect(linuxAutoDescription()).toContain("otherwise computer use stays off");
     expect(
       autoSelectsLocalComputer({
         platform: "linux",

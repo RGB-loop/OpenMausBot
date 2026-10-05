@@ -309,7 +309,7 @@ import { ManagedDesktopProviders } from "./managed-desktop.ts";
 import { computerKindForResource, ManagedDesktopPolicy, type ComputerKind } from "./managed-policy.ts";
 import { hostedModelPolicy, HOSTED_MODEL_POLICY_HEADER, HOSTED_PROVIDER_SETTINGS_ERROR } from "./hosted-models.ts";
 import {
-  boatNotConfiguredMessage, CLOUD_HOME_SECRET_KEYS, CLOUD_IGNORED_KEYS, CLOUD_PAIRING_PATH, cloudHomeConfiguration, cloudHomeOffersPlace, cloudHomePlaceRefusal,
+  CLOUD_HOME_SECRET_KEYS, CLOUD_IGNORED_KEYS, CLOUD_PAIRING_PATH, cloudHomeConfiguration, cloudHomeOffersPlace, cloudHomePlaceRefusal,
   createCloudPairing, firstCloudTurnPatch, readSignedBody,
 } from "./cloud-home.ts";
 import { CLOUD_PERSONAL_REFUSAL, settleCloudOwnership, type CloudOwnership } from "./cloud-owner.ts";
@@ -521,7 +521,8 @@ import { autoLocalVmAttachable, type ContainerComputerStatus } from "./container
 import { startAutoVmClaim, type AutoVmClaimTable } from "./auto-vm-claims.ts";
 import { computerFreeAfterText, computerParkedText, computerStoppedWaitingText, computerWaitingText, type ComputerHolder } from "./computer-wait.ts";
 import { modelContextWindow } from "./model-context-window.ts";
-import { cloudPlaceDriverError, parseSurface, PlaceUnavailableError, placeUnavailable, resolveSurface, surfaceLabel, surfaceOfComputerKind, surfacePrompt, type PlaceSource, type Surface } from "./surface.ts";
+import { cloudPlaceRefusal, parseSurface, PlaceUnavailableError, placeUnavailable, resolveSurface, surfaceLabel, surfaceOfComputerKind, surfacePrompt, type PlaceSource, type Surface } from "./surface.ts";
+import { cloudRefusal, type PlaceRow } from "../shared/place-view.ts";
 import {
   PendingTurnCancellations,
   ProviderTurnGenerationRegistry,
@@ -2057,8 +2058,6 @@ function computerPlaceRefusal(kind: ComputerKind): { message: string; code: "clo
   const managed = managedPolicy.computerRefusal(kind);
   return managed ? { message: managed, code: "managed_policy" } : undefined;
 }
-/** Cloud chosen with no Boat account: a Cloud home suggests the browser, not a Local VM. */
-const BOAT_NOT_CONFIGURED = boatNotConfiguredMessage(Boolean(CLOUD_HOME));
 /** Why the organisation refuses this instance for bots, or undefined. */
 function policyModelRefusal(instance: { instanceId: string; driverKind: string }): string | undefined {
   const engine = BUILT_IN_DRIVERS.find(driver => driver.driverKind === instance.driverKind)?.metadata.displayName;
@@ -2517,13 +2516,52 @@ class ComputerWaitParked extends Error {
     this.generation = generation;
   }
 }
-/** A place the turn was told to use failed to attach: its cause plus the one
- * control that changes it (placeUnavailable). A cancelled setup, a parked
- * computer wait and an already-worded place failure pass through as they
- * are. The one wrapper for a bot thread and a room turn. */
-function asPlaceFailure(error: unknown, place: Surface, source: PlaceSource, limit?: number): unknown {
+/** A place the turn was told to use failed to attach, read as one state of
+ * shared/place-view.ts: a cloud computer's refusal by its code or words, any
+ * other place by its own words. Its source decides the one way on. A
+ * cancelled setup, a parked computer wait and an already-read place failure
+ * pass through as they are. The one wrapper for a bot thread and a room
+ * turn. */
+async function asPlaceFailure(
+  error: unknown, place: Surface, source: PlaceSource, bot: { id: string; name: string }, backend: "box" | "vps" = "box",
+): Promise<unknown> {
   if (error instanceof DirectTurnSetupCancelled || error instanceof ComputerWaitParked || error instanceof PlaceUnavailableError) return error;
-  return placeUnavailable(place, source, error instanceof Error ? error.message : String(error), limit);
+  const failure = error instanceof Error ? error : new Error(String(error));
+  const cause = failure.message.trim().replace(/[\s.]+$/, "");
+  if (place !== "cloud" || backend === "vps") {
+    return placeUnavailable(place, {
+      state: "place-failed", params: { bot: bot.name, cause: `${cause.charAt(0).toUpperCase()}${cause.slice(1)}.` }, source,
+    }, Boolean(CLOUD_HOME));
+  }
+  // A Boat refusal keeps the provider's own status and code (boat.ts
+  // boatRefusal); a failed read of the account keeps its status.
+  const { boatCode, boatStatus, status } = failure as { boatCode?: unknown; boatStatus?: unknown; status?: unknown };
+  const providerStatus = typeof boatStatus === "number" ? boatStatus : typeof status === "number" ? status : undefined;
+  const read = cloudRefusal({
+    message: failure.message,
+    ...(typeof boatCode === "string" ? { code: boatCode } : {}),
+    ...(providerStatus !== undefined ? { status: providerStatus } : {}),
+  }, boat.boatAccount(cfg)?.included === true);
+  const row: PlaceRow = { state: read.state, params: { bot: bot.name, ...read.params }, source };
+  if (row.state === "cc-at-once") row.params.holders = await cloudComputerHolders(bot.id);
+  return placeUnavailable(place, row, Boolean(CLOUD_HOME));
+}
+/** The bots that hold this account's cloud computers, other than `botId`,
+ * from this installation's own Boat list. Empty when it can't be read. */
+async function cloudComputerHolders(botId: string): Promise<string[]> {
+  try {
+    const listed = await boat.listManagedBoats(cfg, managedBoatOwners(), { adoptLegacy: false });
+    return [...new Set(listed.instances
+      .filter((instance) => instance.ownerBotId && instance.ownerBotId !== botId && instance.ownerName)
+      .map((instance) => instance.ownerName!))];
+  } catch {
+    return [];
+  }
+}
+/** Cloud chosen with no cloud computers here: on a Cloud home they are the
+ * plan's, so they are only unavailable; anywhere else they need a Boat key. */
+function boatNotConfigured(bot: { name: string }, source: PlaceSource): PlaceUnavailableError {
+  return placeUnavailable("cloud", { state: CLOUD_HOME ? "cc-unavailable" : "cc-needs-key", params: { bot: bot.name }, source }, Boolean(CLOUD_HOME));
 }
 const directTurnDispatchClaims = new Map<string, DirectTurnDispatchClaim>();
 const directTurnGenerationByThread = new Map<string, string>();
@@ -6589,9 +6627,14 @@ async function attachTeamBoat(computer: TeamComputerRecord, botId: string, owner
   };
 }
 
-/** The two engine facts the cloud-computer rule reads (shared/cloud-computer.ts). */
-function cloudEngine(instance: ReturnType<typeof registry.get>): CloudEngine {
-  return { driverKind: instance?.driverKind, computerMcp: instance?.adapter.capabilities.computerMcp };
+/** The two engine facts the cloud-computer rule reads (shared/cloud-computer.ts),
+ * and the model's name for a refusal to say. */
+function cloudEngine(instance: ReturnType<typeof registry.get>, model?: string): CloudEngine & { name: string } {
+  return {
+    driverKind: instance?.driverKind,
+    computerMcp: instance?.adapter.capabilities.computerMcp,
+    name: model?.trim() || instance?.displayName || instance?.driverKind || "This model",
+  };
 }
 
 /** How a turn's engine reaches a cloud computer. The Computer engine runs its
@@ -6869,6 +6912,10 @@ async function selectableComputers(bot: BotRecord) {
           ready = lifecycle === "attach";
           canStart = lifecycle === "wake";
           canCreate = lifecycle === "provision";
+        } else {
+          // The words the person reads for the same place (shared/place-view.ts).
+          reason = (cloudPlaceRefusal(cloudEngine(instance, bot.modelSelection.model), "box", "works-on", bot.name)
+            ?? boatNotConfigured(bot, "works-on")).message;
         }
       } else if (surface === "vm" && localEngine && caps?.computerMcp) {
         const target = localVmTargetForStatus(bot.id);
@@ -9766,8 +9813,8 @@ async function startTurn(
       // An engine that cannot use the cloud computer is refused here, before
       // anything is created or woken — never handed to another engine.
       if (wants === "cloud" && placeSource) {
-        const unsupported = cloudPlaceDriverError(cloudEngine(instance), cloudBackend, placeSource);
-        if (unsupported) throw new PlaceUnavailableError("cloud", unsupported);
+        const unsupported = cloudPlaceRefusal(cloudEngine(instance, bot.modelSelection.model), cloudBackend, placeSource, bot.name);
+        if (unsupported) throw unsupported;
       }
       let previewCapture: (() => Promise<{ png: string; format: string }>) | null = null;
       let browserCapture: (() => Promise<{ png: string; format: string }>) | null = null;
@@ -10105,7 +10152,7 @@ async function startTurn(
           }
         }
         if (wants === "cloud" && cloudBackend === "box" && !boat.boatConfigured(cfg)) {
-          throw new Error(BOAT_NOT_CONFIGURED);
+          throw boatNotConfigured(bot, placeSource ?? "works-on");
         }
         if (wants === "cloud" && cloudBackend === "box" && computerKind !== "box") {
           throw new Error("the cloud computer could not be created or reached");
@@ -10114,7 +10161,7 @@ async function startTurn(
         // Auto, Off and a team's shared computer name no place; they fail as
         // they are.
         if (!namedPlace || !placeSource) throw error;
-        throw asPlaceFailure(error, namedPlace, placeSource);
+        throw await asPlaceFailure(error, namedPlace, placeSource, bot, cloudBackend);
       }
 
       // Auto-only host fallback. Electron owns cua-driver/TCC attribution;
@@ -10631,7 +10678,7 @@ async function startTurn(
         role: "bot",
         kind: "activity",
         turnSucceeded: false,
-        tool: failedTurnTool(message),
+        tool: failedTurnTool(message, e instanceof PlaceUnavailableError ? { place: e.row } : {}),
       });
       // Worth a buzz for the same reason a routine failure is, and the rule
       // notify.ts encodes: the bot is not working, and the cause is usually
@@ -11121,14 +11168,14 @@ async function cloudRoutineReadiness(botId: string, threadId?: string): Promise<
   if (!boat.boatConfigured(cfg)) {
     return {
       ready: false,
-      reason: 'The cloud computer needs a working Boat API key. For the bot’s configured computer, including a self-hosted VPS, set run_on="maus" instead.',
+      reason: `${boatNotConfigured(bot, "routine").message} For the bot's configured computer, including a self-hosted VPS, set run_on="maus" instead.`,
     };
   }
   const instance = registry.get(bot.modelSelection.instanceId);
   if (!instance) return { ready: false, reason: "The target bot's model is unavailable. Choose another model in the bot's settings." };
   // The same rule a cloud turn applies, before anything is provisioned.
-  const unsupported = cloudPlaceDriverError(cloudEngine(instance), "box", "routine");
-  if (unsupported) return { ready: false, reason: unsupported };
+  const unsupported = cloudPlaceRefusal(cloudEngine(instance, bot.modelSelection.model), "box", "routine", bot.name);
+  if (unsupported) return { ready: false, reason: unsupported.message };
   try {
     if ((await instance.snapshot()).state !== "available") {
       return { ready: false, reason: "The target bot's model is not ready to use the cloud computer." };
@@ -12384,8 +12431,8 @@ async function runGroupMemberTurn(
   // The same one rule as a bot thread, before anything is provisioned: an
   // engine that cannot use the cloud computer is refused, never swapped.
   if (!roomTeamComputer && roomPlan.computer === "cloud") {
-    const unsupported = cloudPlaceDriverError(cloudEngine(instance), turnProvider(readyBot) === "vps" ? "vps" : "box");
-    if (unsupported) throw new PlaceUnavailableError("cloud", unsupported);
+    const unsupported = cloudPlaceRefusal(cloudEngine(instance, readyBot.modelSelection.model), turnProvider(readyBot) === "vps" ? "vps" : "box", "room", readyBot.name);
+    if (unsupported) throw unsupported;
   }
   // One place per room turn as well: a team computer reached on Auto means
   // no separate built-in browser.
@@ -12446,7 +12493,7 @@ async function runGroupMemberTurn(
         integrations.localComputer = mounted.integration;
         roomComputerKind = "vps";
       } else {
-        if (!boat.boatConfigured(cfg)) throw new Error(BOAT_NOT_CONFIGURED);
+        if (!boat.boatConfigured(cfg)) throw boatNotConfigured(readyBot, "room");
         const remoteAgent = instance.adapter.capabilities.remoteAgent === true;
         const attached = await attachBotBoat(readyBot, resourceOwner, { explicitCloud: true, remoteAgent });
         if (!roomSetupIsCurrent()) return false;
@@ -12462,7 +12509,7 @@ async function runGroupMemberTurn(
     // Claim the same lease as direct turns before asynchronous VM setup.
     if (readyBot.computer === "vm") {
       if (instance.adapter.capabilities.computerMcp !== true || instance.adapter.capabilities.remoteAgent === true) {
-        throw new Error("this model cannot use the Local VM");
+        throw placeUnavailable("vm", { state: "vm-cannot", params: { bot: readyBot.name, model: cloudEngine(instance, readyBot.modelSelection.model).name }, source: "room" }, Boolean(CLOUD_HOME));
       }
       // A distinct identity fences cleanup even in shared mode on the same room thread.
       const target = { ...localVmTargetForThread(readyBot.id, threadId) };
@@ -12502,8 +12549,7 @@ async function runGroupMemberTurn(
   } catch (error) {
     const place = roomPlan.computer;
     if (place !== "cloud" && place !== "vm" && place !== "local") throw error;
-    // A room row is not cut, so the cause keeps all its words.
-    throw asPlaceFailure(error, place, "works-on", Infinity);
+    throw await asPlaceFailure(error, place, "room", readyBot, turnProvider(readyBot) === "vps" ? "vps" : "box");
   }
 
   const roster = readyGroup.memberIds
@@ -12988,7 +13034,7 @@ async function runGroupMemberTurn(
     store.appendMessage(threadId, {
       role: "bot", kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
-      tool: failedTurnTool(message),
+      tool: failedTurnTool(message, error instanceof PlaceUnavailableError ? { place: error.row } : {}),
     });
     onDispatchError?.(message);
     if (orchestration) {
