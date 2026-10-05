@@ -112,9 +112,11 @@ public struct OptionCard: Codable, Hashable, Sendable {
     }
 
     /// Shared by all of the app's card surfaces and by Live Activities.
+    /// "Skip" is the team-memory card's refusal; answering it as allow
+    /// would remember the very thing the person skipped.
     public static func isRefusal(_ choice: String) -> Bool {
         let normalized = choice.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return ["deny", "cancel", "dismiss"].contains(normalized)
+        return ["deny", "cancel", "dismiss", "skip"].contains(normalized)
     }
 
     /// A provider may include the standing grant as an option of its own.

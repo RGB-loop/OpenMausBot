@@ -129,8 +129,9 @@ data class OptionCard(
             else -> "allow"
         }
 
+        /** "Skip" is the team-memory card's refusal; as allow it would remember what was skipped. */
         fun isRefusal(choice: String): Boolean = choice.trim().lowercase() in
-            setOf("deny", "cancel", "dismiss")
+            setOf("deny", "cancel", "dismiss", "skip")
     }
 }
 
