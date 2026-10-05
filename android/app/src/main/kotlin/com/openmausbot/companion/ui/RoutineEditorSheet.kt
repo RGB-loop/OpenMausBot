@@ -92,7 +92,7 @@ import kotlinx.coroutines.launch
  *
  * The work, the agent, how long it may take, where it runs, and when. Cloud VM
  * is offered only when the paired computer reports both a Boat credential and an
- * available Boat agent, and an existing cloud routine keeps that choice while its
+ * available model with computer tools, and an existing cloud routine keeps that choice while its
  * VM is unavailable rather than being silently moved back to the computer.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)

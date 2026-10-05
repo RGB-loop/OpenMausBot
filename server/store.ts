@@ -2226,6 +2226,43 @@ export class Store {
     return changed.length;
   }
 
+  /** A removed engine's saved choices move to `replacement` in one save: each
+   * bot's model, each conversation's own model, and its backups. Native
+   * resume cursors and handed-message records of the removed engine go too;
+   * the conversations stay, and the new engine reads them from the
+   * transcript. Every other setting, Works on included, is kept. Returns the
+   * ids of bots whose model moved. Idempotent: nothing left names the engine. */
+  retireInstances(ids: ReadonlySet<string>, replacement: ModelSelection): string[] {
+    const retired = (selection?: { instanceId: string }) => Boolean(selection && ids.has(selection.instanceId));
+    const without = <T>(record: Record<string, T>): Record<string, T> =>
+      Object.fromEntries(Object.entries(record).filter(([key]) => !ids.has(key)));
+    const touches = (record?: Record<string, unknown>) => Boolean(record && Object.keys(record).some(key => ids.has(key)));
+    const changed: BotRecord[] = [];
+    const moved: string[] = [];
+    for (const bot of this.bots) {
+      let dirty = false;
+      let modelMoved = false;
+      if (retired(bot.modelSelection)) { bot.modelSelection = structuredClone(replacement); dirty = modelMoved = true; }
+      if (bot.fallback?.some(retired)) {
+        const kept = bot.fallback.filter(candidate => !retired(candidate));
+        if (kept.length) bot.fallback = kept;
+        else delete bot.fallback;
+        dirty = true;
+      }
+      if (touches(bot.resumeCursors)) { bot.resumeCursors = without(bot.resumeCursors); dirty = true; }
+      for (const task of bot.tasks ?? []) {
+        if (retired(task.modelSelection)) { task.modelSelection = structuredClone(replacement); dirty = modelMoved = true; }
+        if (touches(task.resumeCursors)) { task.resumeCursors = without(task.resumeCursors); dirty = true; }
+        if (task.handedMessages && touches(task.handedMessages)) { task.handedMessages = without(task.handedMessages); dirty = true; }
+      }
+      if (dirty) changed.push(bot);
+      if (modelMoved) moved.push(bot.id);
+    }
+    if (changed.length) this.saveBots();
+    for (const bot of changed) this.emit({ type: "bot", botId: bot.id });
+    return moved;
+  }
+
   setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string) {
     const bot = this.bot(botId);
     if (!bot) return;

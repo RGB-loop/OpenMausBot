@@ -410,13 +410,11 @@ export function ComputerPanel({
     (instance) => instance.instanceId === bot.modelSelection.instanceId,
   );
   // "Works on: Browser" needs the same things as the browser switch minus
-  // the switch itself — picking it turns the switch on. The boat-native
-  // Computer engine runs inside the boat, so it has no browser-only mode.
+  // the switch itself — picking it turns the switch on.
   const browserSelectable =
     builtInBrowserEnabled(state.config) &&
     browserAvailableHere &&
-    selectedInstance?.capabilities?.browserMcp === true &&
-    selectedInstance.driverKind !== "boxAgent";
+    selectedInstance?.capabilities?.browserMcp === true;
   const browserDisabledReason = !browserAvailableHere
     ? browserUnavailableReason(state.config)
     : !builtInBrowserEnabled(state.config)
@@ -474,11 +472,11 @@ export function ComputerPanel({
   }, [bot.id, bot.computer]);
   const vmSupported = Boolean(
     selectedInstance?.snapshot.state === "available" &&
-      selectedInstance.capabilities?.computerMcp &&
-      selectedInstance.driverKind !== "boxAgent",
+      selectedInstance.capabilities?.computerMcp,
   );
-  const vpsSupported = canWorkOnCloud(cloudEngineOf(selectedInstance), "vps");
-  const cloudSupported = canWorkOnCloud(cloudEngineOf(selectedInstance), cloudBackend === "vps" ? "vps" : "box");
+  // One rule for both cloud backends (shared/cloud-computer.ts).
+  const cloudSupported = canWorkOnCloud(cloudEngineOf(selectedInstance));
+  const vpsSupported = cloudSupported;
   const botRoutines = state.routines
     .filter((routine) => routine.botId === bot.id)
     .sort((a, b) => Number(b.enabled) - Number(a.enabled) || (a.nextRunAt ?? Infinity) - (b.nextRunAt ?? Infinity));
@@ -672,8 +670,8 @@ export function ComputerPanel({
       };
     }
     // Explicit Cloud may create/wake its Boat. Auto is observation-only here:
-    // even a ready Boat and the boat-native engine stay free of POSTs until the
-    // person deliberately chooses Cloud.
+    // even a ready Boat stays free of POSTs until the person deliberately
+    // chooses Cloud.
     api(threadPath("computer"))
       .then((status) => {
         if (!alive) return;

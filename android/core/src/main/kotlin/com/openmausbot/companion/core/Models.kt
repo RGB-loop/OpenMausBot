@@ -791,6 +791,8 @@ data class InstanceCapabilities(
      * a different promise and deserves different words in the composer.
      */
     val queueing: Boolean? = null,
+    /** The engine has computer tools, so it can work on a cloud computer. */
+    val computerMcp: Boolean? = null,
 )
 
 @Serializable
@@ -1275,8 +1277,10 @@ data class RoutineRunAvailability(
 ) {
     constructor(config: ConfigStatus?, instances: List<Instance>) : this(
         cloudConfigured = config?.box?.configured == true,
+        // A bot works on its cloud computer with its own engine, so Cloud
+        // needs an available engine with computer tools.
         cloudInstanceAvailable = instances.any {
-            it.driverKind == "boxAgent" && it.snapshot.isAvailable
+            it.capabilities?.computerMcp == true && it.snapshot.isAvailable
         },
     )
 

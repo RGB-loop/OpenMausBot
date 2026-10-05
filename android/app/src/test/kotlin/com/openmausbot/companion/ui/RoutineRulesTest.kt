@@ -4,6 +4,7 @@ import androidx.compose.runtime.saveable.SaverScope
 import com.openmausbot.companion.core.ConfigFlag
 import com.openmausbot.companion.core.ConfigStatus
 import com.openmausbot.companion.core.Instance
+import com.openmausbot.companion.core.InstanceCapabilities
 import com.openmausbot.companion.core.ModelCatalog
 import com.openmausbot.companion.core.ProviderSnapshot
 import com.openmausbot.companion.core.Routine
@@ -307,7 +308,7 @@ class RoutineRulesTest {
     @Test
     fun `Cloud VM availability is derived from the paired-safe status only`() {
         val instances = listOf(
-            instance(driverKind = "boxAgent", state = "available"),
+            instance(driverKind = "claudeAgent", state = "available", computerMcp = true),
             instance(driverKind = "local", state = "available"),
         )
         val configured = ConfigStatus(box = ConfigFlag(configured = true))
@@ -318,9 +319,13 @@ class RoutineRulesTest {
         assertFalse(
             RoutineRunAvailability(
                 configured,
-                listOf(instance(driverKind = "boxAgent", state = "unavailable")),
+                listOf(instance(driverKind = "claudeAgent", state = "unavailable", computerMcp = true)),
             ).cloudReady,
-            "a Boat agent that is not available is not a Cloud VM to run on",
+            "an engine that is not available cannot run on the Cloud VM",
+        )
+        assertFalse(
+            RoutineRunAvailability(configured, listOf(instance(driverKind = "openai-compat", state = "available"))).cloudReady,
+            "an engine without computer tools cannot work on the Cloud VM",
         )
     }
 
@@ -906,10 +911,11 @@ class RoutineRulesTest {
         createdAt = 0.0,
     )
 
-    private fun instance(driverKind: String, state: String) = Instance(
+    private fun instance(driverKind: String, state: String, computerMcp: Boolean? = null) = Instance(
         instanceId = "instance-$driverKind",
         driverKind = driverKind,
         snapshot = ProviderSnapshot(state = state),
         models = ModelCatalog(defaultModel = "model-1", options = emptyList()),
+        capabilities = computerMcp?.let { InstanceCapabilities(computerMcp = it) },
     )
 }

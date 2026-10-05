@@ -1145,10 +1145,13 @@ public struct ModelCatalog: Codable, Hashable, Sendable {
 public struct InstanceCapabilities: Codable, Hashable, Sendable {
     public var effortLevels: [String]?
     public var queueing: Bool?
+    /// The engine has computer tools, so it can work on a cloud computer.
+    public var computerMcp: Bool?
 
-    public init(effortLevels: [String]? = nil, queueing: Bool? = nil) {
+    public init(effortLevels: [String]? = nil, queueing: Bool? = nil, computerMcp: Bool? = nil) {
         self.effortLevels = effortLevels
         self.queueing = queueing
+        self.computerMcp = computerMcp
     }
 }
 
@@ -1472,7 +1475,8 @@ public enum RoutineRunLocation: String, CaseIterable, Codable, Hashable, Sendabl
 
 /// Desktop-equivalent run-location availability, derived only from paired-safe
 /// status endpoints. Selecting Cloud VM requires both the host credential and
-/// an available Boat agent. An existing cloud routine remains editable without
+/// an available engine with computer tools: a bot works on its cloud computer
+/// with its own engine. An existing cloud routine remains editable without
 /// silently changing where it runs if that VM is temporarily unavailable.
 public struct RoutineRunAvailability: Equatable, Sendable {
     public var cloudConfigured: Bool
@@ -1481,7 +1485,7 @@ public struct RoutineRunAvailability: Equatable, Sendable {
     public init(config: ConfigStatus?, instances: [Instance]) {
         cloudConfigured = config?.box?.configured == true
         cloudInstanceAvailable = instances.contains {
-            $0.driverKind == "boxAgent" && $0.snapshot.isAvailable
+            $0.capabilities?.computerMcp == true && $0.snapshot.isAvailable
         }
     }
 

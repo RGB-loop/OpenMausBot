@@ -22,6 +22,14 @@ export interface DefaultSelectionContext {
 const claudeFirst = (instances: readonly SelectableInstance[]) =>
   instances.find((instance) => instance.driverKind === "claudeAgent") ?? instances[0];
 
+/** The ready rule: an engine can run a turn now when it is available, the
+ * organisation allows it, and it is not signed out. A custom endpoint brings
+ * its own credential, so its sign-in state does not count. */
+export function readyToRun(instance: SelectableInstance, context: DefaultSelectionContext = {}): boolean {
+  return instance.snapshot.state === "available" && context.refusal?.(instance) === undefined &&
+    (instance.access === "custom" || instance.snapshot.authenticated !== false);
+}
+
 /** A saved choice is intentional: an unavailable provider or removed model
  * sends new bots to setup instead of silently changing their provider. */
 export function selectDefaultModelSelection(
@@ -57,11 +65,30 @@ export function selectDefaultModelSelection(
     // new bot to setup although a Company model can run. Prefer instances that
     // can run a turn now; a working personal engine still wins, so billing
     // stays the person's explicit choice.
-    const ready = available.filter((instance) => instance.access === "custom" || instance.snapshot.authenticated !== false);
+    const ready = available.filter((instance) => readyToRun(instance, context));
     pick = claudeFirst(ready.filter((instance) => !company(instance.instanceId))) ?? claudeFirst(ready) ?? claudeFirst(available);
   } else {
     pick = claudeFirst(available);
   }
+  return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
+}
+
+/** Where a bot goes when its engine is removed: the engine a new bot gets,
+ * as long as it can run a turn now. That is the workspace's saved default,
+ * else the first ready engine (Claude first), else the first available one.
+ * Empty only when nothing is available at all. */
+export function selectReplacementModelSelection(
+  instances: readonly SelectableInstance[],
+  preferred?: ModelSelection,
+  context: DefaultSelectionContext = {},
+): ModelSelection {
+  if (preferred) {
+    const saved = selectDefaultModelSelection(instances, preferred, context);
+    const instance = instances.find((candidate) => candidate.instanceId === saved.instanceId);
+    if (instance && readyToRun(instance, context)) return saved;
+  }
+  const available = instances.filter((instance) => instance.snapshot.state === "available" && context.refusal?.(instance) === undefined);
+  const pick = claudeFirst(available.filter((instance) => readyToRun(instance, context))) ?? claudeFirst(available);
   return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
 

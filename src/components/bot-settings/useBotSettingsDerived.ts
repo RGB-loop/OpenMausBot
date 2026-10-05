@@ -76,7 +76,7 @@ export function useBotSettingsDerived(bot: Bot) {
   const trustedModesAvailable = Boolean(window.ogb?.approvals && capabilities.host.packaged);
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
   const canUseConnectedApps = engine?.capabilities?.composioMcp === true;
-  const canUseVps = engine?.capabilities?.computerMcp === true && engine.driverKind !== "boxAgent";
+  const canUseVps = engine?.capabilities?.computerMcp === true;
   const connectedAppsConfigured = state.config?.composio?.configured === true;
   const connectedAppsEnabled = bot.composio !== false;
   const connectorGrantState: ConnectorGrantsState = connectorGrantsState(bot);
@@ -87,8 +87,8 @@ export function useBotSettingsDerived(bot: Bot) {
   const browserAllowed = bot.browser !== false;
   const browserEnabled = browserFeature && browserAllowed;
   // "Works on: Browser" needs everything the switch needs except the switch
-  // itself; the boat-native Computer engine has no browser-only mode.
-  const browserSelectable = desktopBrowser && browserFeature && canUseBrowser && engine?.driverKind !== "boxAgent";
+  // itself.
+  const browserSelectable = desktopBrowser && browserFeature && canUseBrowser;
   const browserDisabledReason = !desktopBrowser
     ? browserUnavailableReason(state.config)
     : !browserFeature

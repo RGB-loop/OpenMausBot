@@ -29,9 +29,14 @@ class ProfileRoutinePolicyTest {
         val unconfigured = decodeConfig("""{"box":{"configured":false}}""")
         val available = decodeInstances("available")
         val unavailable = decodeInstances("unavailable")
+        val noComputerTools = decodeInstances("available", computerMcp = false)
 
         assertFalse(RoutineRunAvailability(unconfigured, available).cloudReady)
         assertFalse(RoutineRunAvailability(configured, unavailable).cloudReady)
+        assertFalse(
+            RoutineRunAvailability(configured, noComputerTools).cloudReady,
+            "an engine without computer tools cannot work on the cloud computer",
+        )
 
         val ready = RoutineRunAvailability(configured, available)
         assertTrue(ready.cloudReady)
@@ -141,11 +146,12 @@ class ProfileRoutinePolicyTest {
 
     private fun decodeConfig(json: String): ConfigStatus = CompanionJson.decodeFromString(json)
 
-    private fun decodeInstances(state: String): List<Instance> = CompanionJson.decodeFromString<InstanceList>(
+    private fun decodeInstances(state: String, computerMcp: Boolean = true): List<Instance> = CompanionJson.decodeFromString<InstanceList>(
         """{"instances":[{
-          "instanceId":"box-1","driverKind":"boxAgent",
+          "instanceId":"claude","driverKind":"claudeAgent",
           "snapshot":{"state":"$state"},
-          "models":{"default":"model-1","options":[]}
+          "models":{"default":"model-1","options":[]},
+          "capabilities":{"computerMcp":$computerMcp}
         }]}""",
     ).instances
 }

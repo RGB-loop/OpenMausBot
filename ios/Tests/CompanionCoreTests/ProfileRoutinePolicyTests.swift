@@ -31,9 +31,14 @@ final class ProfileRoutinePolicyTests: XCTestCase {
         let unconfigured = try decodeConfig(#"{"box":{"configured":false}}"#)
         let available = try decodeInstances(state: "available")
         let unavailable = try decodeInstances(state: "unavailable")
+        let noComputerTools = try decodeInstances(state: "available", computerMcp: false)
 
         XCTAssertFalse(RoutineRunAvailability(config: unconfigured, instances: available).cloudReady)
         XCTAssertFalse(RoutineRunAvailability(config: configured, instances: unavailable).cloudReady)
+        XCTAssertFalse(
+            RoutineRunAvailability(config: configured, instances: noComputerTools).cloudReady,
+            "an engine without computer tools cannot work on the cloud computer"
+        )
 
         let ready = RoutineRunAvailability(config: configured, instances: available)
         XCTAssertTrue(ready.cloudReady)
@@ -157,12 +162,13 @@ final class ProfileRoutinePolicyTests: XCTestCase {
         try JSONDecoder().decode(ConfigStatus.self, from: Data(json.utf8))
     }
 
-    private func decodeInstances(state: String) throws -> [Instance] {
+    private func decodeInstances(state: String, computerMcp: Bool = true) throws -> [Instance] {
         let json = """
         {"instances":[{
-          "instanceId":"box-1","driverKind":"boxAgent",
+          "instanceId":"claude","driverKind":"claudeAgent",
           "snapshot":{"state":"\(state)"},
-          "models":{"default":"model-1","options":[]}
+          "models":{"default":"model-1","options":[]},
+          "capabilities":{"computerMcp":\(computerMcp)}
         }]}
         """
         return try JSONDecoder().decode(InstanceList.self, from: Data(json.utf8)).instances
