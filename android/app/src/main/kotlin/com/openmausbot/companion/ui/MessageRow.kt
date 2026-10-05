@@ -77,6 +77,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -670,6 +671,24 @@ private sealed interface AttachmentThumbnailState {
     data object Failed : AttachmentThumbnailState
 }
 
+/**
+ * Card shapes seen this run. The transcript is a lazy list, so a card that
+ * scrolls away and back is composed afresh; without this it would come back
+ * at the placeholder height and jump when its thumbnail decodes again.
+ */
+private object InlineImageShapes {
+    private const val LIMIT = 256
+    private val shapes = object : LinkedHashMap<String, Float>(LIMIT, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Float>?): Boolean = size > LIMIT
+    }
+
+    @Synchronized fun aspect(key: String): Float? = shapes[key]
+
+    @Synchronized fun remember(key: String, aspect: Float) {
+        shapes[key] = aspect
+    }
+}
+
 @Composable
 private fun SharedImageAttachment(
     threadId: String,
@@ -679,6 +698,7 @@ private fun SharedImageAttachment(
 ) {
     val foreground = if (message.role == Message.Role.USER) BubbleColor.mineText else MaterialTheme.colorScheme.onSurface
     val session = LocalCompanion.current.session
+    val shapeKey = "$threadId\u001F${message.id}\u001F${attachment.path}"
     var attempt by remember(message.id, attachment.path) { mutableStateOf(0) }
     var state by remember(message.id, attachment.path) {
         mutableStateOf<AttachmentThumbnailState>(AttachmentThumbnailState.Loading)
@@ -701,14 +721,24 @@ private fun SharedImageAttachment(
         val bitmap = withContext(Dispatchers.Default) {
             decodeAttachmentImage(downloaded.data, AttachmentImageRules.THUMBNAIL_EDGE)
         }
+        bitmap?.let { image ->
+            AttachmentImageRules.inlineAspect(image.width, image.height)?.let { InlineImageShapes.remember(shapeKey, it) }
+        }
         state = bitmap?.let { AttachmentThumbnailState.Ready(downloaded, it) }
             ?: AttachmentThumbnailState.Failed
     }
 
     val ready = state as? AttachmentThumbnailState.Ready
+    // The whole image at its own shape, fitted to the bubble: the frame's size
+    // comes from the bubble's width and the clamped shape, and the picture is
+    // fitted inside it — a wide screenshot is no longer cropped and zoomed into
+    // a 4:3 window, and a tall one stops at the height cap on the card's tint.
+    val aspect = ready?.let { AttachmentImageRules.inlineAspect(it.image.width, it.image.height) }
+        ?: InlineImageShapes.aspect(shapeKey)
+    val maxWidth = aspect?.let(AttachmentImageRules::inlineMaxWidthDp) ?: AttachmentImageRules.INLINE_MAX_WIDTH_DP
     Column(
         modifier = Modifier
-            .widthIn(max = 360.dp)
+            .widthIn(max = maxWidth.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(foreground.copy(alpha = 0.10f))
             .clickable(enabled = ready != null && onOpen != null, role = Role.Button) {
@@ -721,7 +751,14 @@ private fun SharedImageAttachment(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(4f / 3f),
+                .then(
+                    if (aspect != null) {
+                        Modifier.aspectRatio(aspect)
+                    } else {
+                        Modifier.height(AttachmentImageRules.INLINE_PLACEHOLDER_HEIGHT_DP.dp)
+                    },
+                )
+                .testTag(SHARED_IMAGE_FRAME_TAG),
             contentAlignment = Alignment.Center,
         ) {
             when (val current = state) {
@@ -735,8 +772,8 @@ private fun SharedImageAttachment(
                 is AttachmentThumbnailState.Ready -> Image(
                     bitmap = current.image,
                     contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f),
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
         }
@@ -746,11 +783,14 @@ private fun SharedImageAttachment(
             fontWeight = FontWeight.Medium,
             color = foreground,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            overflow = TextOverflow.MiddleEllipsis,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
         )
     }
 }
+
+/** The fitted frame an inline image is drawn in; tests measure it. */
+internal const val SHARED_IMAGE_FRAME_TAG = "shared-image-frame"
 
 @Composable
 private fun AttachmentLoadFailure(label: String, foreground: Color = BubbleColor.mineText, onRetry: () -> Unit) {
