@@ -928,7 +928,7 @@ function cloudLendingTurn(capability: Pick<InternalCapability, "botId" | "thread
     generation: capability.generation,
     thread: store.messagesFor(capability.threadId),
     starters: cloudThreadStarters(capability.threadId),
-    reportsFromOthers: store.messagesFor(capability.threadId).some(cloudOthersRoutineReport),
+    reportsFromOthers: store.messagesFor(capability.threadId).some(cloudReportFromOthers),
     ownerPerson: cloudProvenOwnerPerson,
     cardAnswerer: cloudCardAnswerer,
     routineRun: () => {
@@ -974,11 +974,12 @@ function cloudLendingView(capability: Pick<InternalCapability, "botId" | "thread
   return CLOUD_HOME !== null && cloudHomeLendingRefusal(cloudLendingTurn(capability)) === null;
 }
 
-/** On a Cloud home: a routine's report (its lifecycle card, carrying what
- * the run said) of a routine the owner did not write, as it stands now. It
- * brings someone else's instructions' results into the conversation it
- * reports to. */
-function cloudOthersRoutineReport(line: Message): boolean {
+/** On a Cloud home: a line that brings someone else's words into the
+ * conversation it lands in: a "post" webhook's payload, or a routine's
+ * report (its lifecycle card, carrying what the run said) of a routine the
+ * owner did not write, as it stands now. */
+function cloudReportFromOthers(line: Message): boolean {
+  if (line.webhookPost) return true;
   if (line.kind !== "routine.run" || !line.routineRun) return false;
   const routine = routines?.listRoutines().find((candidate) => candidate.id === line.routineRun!.routineId);
   return !routine || cloudRoutineAuthors?.authored(routine.id, routine) !== true;
@@ -998,7 +999,7 @@ function cloudOwnerOnlyThread(threadId: string): boolean {
   // A card answered later changes the answer too: key on its answerer as well.
   const lastKey = last ? `${last.id}:${last.card?.answeredBy ? JSON.stringify(last.card.answeredBy) : ""}` : undefined;
   if (cached && cached.length === thread.length && cached.last === lastKey) return cached.owner;
-  const owner = ownerOnlyConversation(thread, cloudProvenOwnerPerson, cloudCardAnswerer) && !thread.some(cloudOthersRoutineReport);
+  const owner = ownerOnlyConversation(thread, cloudProvenOwnerPerson, cloudCardAnswerer) && !thread.some(cloudReportFromOthers);
   if (ownerOnlyCache.size > 5_000) ownerOnlyCache.clear();
   ownerOnlyCache.set(threadId, { length: thread.length, last: lastKey, owner });
   return owner;
@@ -1140,14 +1141,10 @@ function approvalShape(shape: { prompt?: string; botId?: string; runOn?: string;
 /** Who opens a routine's results conversation on a Cloud home: the writer
  * of this request, else the owner for a routine that is theirs (they wrote
  * it as it stands, or they are its writer: cloud-owner.ts), else its last
- * writer, else nobody. A webhook's run is the owner's: only their own
- * devices can create, edit or rotate one (admin scope), so it runs at the
- * bot's own level, in its folder, as on the desktop. Its payload still never
- * reaches the lent Mac: cloud-lending.ts refuses every webhook run. */
+ * writer, else nobody. */
 function routineOpener(routineId: string): string {
   if (routineWriterInFlight) return routineWriterInFlight;
   const routine = routines?.listRoutines().find((candidate) => candidate.id === routineId);
-  if (!routine && CLOUD_OWNER_KEY && webhooks.list().some((hook) => hook.id === routineId)) return CLOUD_OWNER_KEY;
   if (routine && CLOUD_OWNER_KEY && cloudRoutineAuthors?.authored(routineId, routine)) return CLOUD_OWNER_KEY;
   const writer = cloudRoutineAuthors?.writer(routineId);
   if (writer && CLOUD_OWNER_KEY && writer === CLOUD_OWNER_KEY) return CLOUD_OWNER_KEY;
@@ -2205,6 +2202,11 @@ const EXTERNAL_RUNTIMES_FILE = join(DATA_DIR, "external-runtimes.json");
 function externalRuntimeMayCall(method: string, path: string): boolean {
   if (method === "GET") return path === "/api/internal/agents" || /^\/api\/internal\/delegations\/[\w-]+$/.test(path);
   return method === "POST" && (path === "/api/internal/ask-bot" || path === "/api/internal/delegate-bot");
+}
+/** An external runtime polls check/wait_delegation for what it hands off, so
+ * the result must not also wake the bot's own engine on the pinned thread. */
+function externalCompletion(capability: InternalCapability): { completionOwner?: "external" } {
+  return capability.generation === EXTERNAL_RUNTIME_GENERATION ? { completionOwner: "external" } : {};
 }
 function externalRuntimeCapability(header: string | string[] | undefined): InternalCapability | null {
   const grant = authorizeExternalRuntime(EXTERNAL_RUNTIMES_FILE, header, id => store.bot(id));
@@ -7944,6 +7946,8 @@ const delegationWatch = new Map<string, {
   startedAtMs?: number;
   /** Cross-bot send: leave the terminal state in the recipient thread. */
   oneWay?: boolean;
+  /** An external runtime's handoff: record the receipt, never wake the source. */
+  completionOwner?: "external";
 }>();
 
 /** The card in this thread that is waiting on the person: an approval, a
@@ -8426,11 +8430,14 @@ function finalizeDelegationWatch(
       // with the reply only visible in the thread (the "delegated and went
       // silent" gap). Failures wake it too — the user must hear the task did
       // not finish. Idle-checked and burst-capped so a busy source or a
-      // re-delegating loop cannot spin up runs.
-      if (ok) {
-        wakeDelegationSource(source, watched.sourceThreadId, targetName, undefined, watched.routineRunId);
-      } else if (!ok) {
-        wakeDelegationSource(source, watched.sourceThreadId, targetName, failureName || "the delegated turn did not finish", watched.routineRunId);
+      // re-delegating loop cannot spin up runs. An external runtime polls
+      // for the receipt instead; waking would answer it a second time.
+      if (watched.completionOwner !== "external") {
+        if (ok) {
+          wakeDelegationSource(source, watched.sourceThreadId, targetName, undefined, watched.routineRunId);
+        } else {
+          wakeDelegationSource(source, watched.sourceThreadId, targetName, failureName || "the delegated turn did not finish", watched.routineRunId);
+        }
       }
     }
   }
@@ -8478,7 +8485,7 @@ bus.subscribe((event: RuntimeEvent) => {
 /** How a drained delegation becomes a real turn on the target. Shared by
  * the settle-time drain and the boot-time drain of what a previous process
  * left queued. */
-const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, rawText, commsDepth, sourceThreadId, channel, taskId, sourceBotId, openedThreadId, oneWay) => {
+const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, rawText, commsDepth, sourceThreadId, channel, taskId, sourceBotId, openedThreadId, oneWay, completionOwner) => {
     // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
@@ -8512,6 +8519,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, rawTe
         routineRunId: activeRoutineRunForThread(sourceThreadId)?.id,
         startedAtMs: Date.now(),
         ...(oneWay ? { oneWay: true } : {}),
+        ...(completionOwner ? { completionOwner } : {}),
       });
     }
     let failureReported = false;
@@ -9643,7 +9651,11 @@ async function startTurn(
       );
       // Decided again at dispatch when setup outlasted a soul edit (config).
       const decideContext = (config: string) => {
-        const handedStale = Boolean(handed && (!unseen || (externalUpdate && handed.config !== config)));
+        // A Codex thread keeps the last effort it was sent and no turn can clear
+        // one: back on the default, a thread that holds a level is rebuilt from
+        // the transcript rather than resumed on that level.
+        const effortHeld = !effort && typeof handed?.effort === "string";
+        const handedStale = Boolean(handed && (!unseen || effortHeld || (externalUpdate && handed.config !== config)));
         const { block: unseenBlock, placed } = unseen && !handedStale ? renderUnseen(unseen) : { block: "", placed: [] };
         const { turnText: contextTurnText, resume } = buildTurnContext({
           text: userTurnText,
@@ -9676,6 +9688,7 @@ async function startTurn(
           resumeCursor, sessionReset: !resume, recoveryText, recoveryIsReplay,
           handoff: strictResume ? {
             botId: bot.id, instanceId, config, resumeCursor: typeof resumeCursor === "string" ? resumeCursor : undefined,
+            ...(instance.driverKind === "codex" ? { effort: effort ?? null } : {}),
             started: sessionStart(contextOrder, contextTurnText !== userTurnText ? windowIds : [], carried),
             recovery: sessionStart(contextOrder, recoveryText !== undefined ? windowIds : [], carried),
             resumed: sessionStart(contextOrder, [], [...placed, ...carried]),
@@ -10950,12 +10963,18 @@ routines = new RoutineManager({
     }
     return groupIsWorking(group) || coordinator.busy ? "busy" : "ready";
   },
-  createTask: (botId, title, activate = false, routineId) => {
+  createTask: (botId, title, activate = false, run) => {
     const task = store.createTask(botId, title, activate);
     // On a Cloud home a run's conversation is opened, like its results
     // conversation, by whoever wrote the routine: a run of one that is
     // nobody's is confined to a folder of its own, never the bot's project.
-    if (task && CLOUD_HOME && routineId) threadStarters.set(task.threadId, routineOpener(routineId));
+    // A webhook's run is the owner's: only their own devices can create,
+    // edit or rotate a webhook, so it works at the bot's own level, in its
+    // folder, as on the desktop. Its payload still never reaches the lent
+    // Mac: cloud-lending.ts refuses every webhook run by its trigger.
+    if (task && CLOUD_HOME && run) {
+      threadStarters.set(task.threadId, run.triggerSource === "webhook" ? CLOUD_OWNER_KEY! : routineOpener(run.routineId));
+    }
     // The store's frame announces it. A run's task that stays in the
     // background leaves the open thread alone, so that frame carries no
     // transcript: a whole thread on every scheduled run once passed the phone
@@ -11869,7 +11888,7 @@ const webhooks = new WebhookManager({
   // that bot's selection, including a live conversation.
   post: (botId, threadId, text) => {
     if (!store.bot(botId)) return;
-    store.appendMessage(threadId, { role: "bot", kind: "text", text });
+    store.appendMessage(threadId, { role: "bot", kind: "text", text, webhookPost: true });
   },
   // Mirrors resolveResultsThread's routines wiring a few hundred lines up
   // in this same file: create-on-first-use, never activated (so it never
@@ -17039,7 +17058,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           const queued = queueDelegation(
             commsBus,
             from,
-            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted, ...(guestThread ? { targetThreadId: guestThread } : {}) },
+            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted, ...(guestThread ? { targetThreadId: guestThread } : {}),
+              ...externalCompletion(internalCapability) },
             MAX_COMMS_DEPTH,
             fromThreadId,
           );
@@ -17213,6 +17233,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             sourceThreadId: fromThreadId,
             sourceBotId: currentFrom.id,
             routineRunId: activeRoutineRunForThread(fromThreadId)?.id,
+            ...externalCompletion(internalCapability),
           });
           store.appendMessage(fromThreadId, {
             role: "bot",
@@ -17413,7 +17434,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const queued = queueDelegation(
           commsBus,
           from,
-          { toBotId, message, reason, depth, ...(guestThread ? { targetThreadId: guestThread } : {}) },
+          { toBotId, message, reason, depth, ...(guestThread ? { targetThreadId: guestThread } : {}), ...externalCompletion(internalCapability) },
           MAX_COMMS_DEPTH,
           fromThreadId,
         );
@@ -18373,8 +18394,15 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           const policy = currentSender.outbound ?? DEFAULT_OUTBOUND_POLICY;
           const threadId = internalCapability.threadId;
           const { app } = describeTool(outboundTool);
-          const summary = outboundCalls.map((call) => {
+          // One entry per call, in the summary's order, so a phone can say
+          // "Send to Linear? Create linear comment ×2" without parsing the
+          // raw arguments out of the subtitle.
+          const calls = outboundCalls.map((call) => {
             const described = describeTool(call.slug);
+            return { app: described.app, label: described.label };
+          });
+          const summary = outboundCalls.map((call, index) => {
+            const described = calls[index];
             const argsText = call.arguments === undefined ? "" : JSON.stringify(call.arguments);
             return `${described.app ? `${described.app} · ` : ""}${described.label}${argsText ? `\n${argsText.slice(0, 400)}${argsText.length > 400 ? "… [arguments truncated]" : ""}` : ""}`;
           }).join("\n\n");
@@ -18404,7 +18432,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
                 tool: outboundTool,
                 held: HELD_NOTE["approval.held.outbound"],
                 heldCode: "approval.held.outbound",
-                outboundRequest: { tool: outboundTool, app },
+                outboundRequest: { tool: outboundTool, app, calls },
               },
             });
             appendDecision(DATA_DIR, {

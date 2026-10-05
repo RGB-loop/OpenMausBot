@@ -431,6 +431,10 @@ export interface WireMessage {
      * server-local spill paths are not exposed to clients. */
     fullResult?: boolean;
   };
+  /** A bot line a "post" webhook wrote: whoever called the webhook chose
+   * its words. On a Cloud home a conversation holding one is someone else's
+   * for lending and memory (server/cloud-lending.ts reportsFromOthers). */
+  webhookPost?: boolean;
   /** user messages sent INTO a running turn (capabilities.queueing). */
   steered?: boolean;
   /** user messages a peer bot handed to this thread's RUNNING turn through
@@ -504,7 +508,9 @@ export interface WireMessage {
 }
 
 export interface OptionCardData {
-  outboundRequest?: { tool: string; app: string | null };
+  /** calls: one per outbound call the card covers, in subtitle order. Absent
+   * on cards from older computers. */
+  outboundRequest?: { tool: string; app: string | null; calls?: Array<{ app: string | null; label: string }> };
   teamMemoryRequest?: { section: string; entryId: string; kind: string };
   title: string;
   subtitle: string;
