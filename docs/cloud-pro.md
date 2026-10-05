@@ -136,6 +136,11 @@ Every other routine is nobody's: it runs confined, like a guest's, and
 reports into a conversation that is nobody's. An owner's routine reports
 into a conversation that is the owner's.
 
+A webhook is the owner's: only their own devices can create, edit or rotate
+one, so its runs work at the bot's own level, in its project folder, with its
+shell, as on the desktop. What a webhook brings in still never reaches the
+lent Mac (below).
+
 The routines a revoked session wrote are paused at that start, and the
 conversations it opened lose their working folder: their next turn works in
 a folder of their own, never the owner's project.
@@ -250,6 +255,18 @@ Cloud use this Mac**, below), through the shared-computer tools.
 
 `shared/cloud-home.ts` decides which places are offered, for the server and
 the app alike.
+
+### Live calls in the desktop app
+
+A Cloud is personal, so in the desktop app its own page may use the
+microphone for a Live call, as this computer's own page does. That is the
+microphone only, never the camera or screen capture, and only for the main
+frame of the app's window at the exact origin the verified Cloud sign-in
+reports (`electron/app-permissions.mjs`, `appPermissionHandlers`). Signing out
+of Cloud takes it away at once; every other server's page stays refused. The
+OpenAI key for Live calls is saved on the Cloud, and the Live copy says so.
+Take-turns calls still need the Mac's on-device listening, so they stay on
+**This computer**.
 
 ### Open in the app: `openmausbot://cloud`
 

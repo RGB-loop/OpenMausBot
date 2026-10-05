@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, Bot } from "@/state/store";
 
-const fixture = vi.hoisted(() => ({ liveConfigured: true, liveCall: null as AppState["liveCall"] }));
+const fixture = vi.hoisted(() => ({ liveConfigured: true, liveCall: null as AppState["liveCall"], cloudHome: false }));
 vi.mock("@/state/store", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/state/store")>();
   return {
@@ -18,6 +18,7 @@ vi.mock("@/state/store", async (importOriginal) => {
         config: {
           tts: { configured: true, ready: true, voice: "v" },
           live: { configured: fixture.liveConfigured, voice: "marin", readTypedReplies: true, idleMinutes: 5 },
+          cloudHome: fixture.cloudHome,
         } as AppState["config"],
       },
       dispatch: vi.fn(),
@@ -77,6 +78,7 @@ function pressPhone(onStart: (mode: CallMode) => void) {
 beforeEach(() => {
   fixture.liveConfigured = true;
   fixture.liveCall = null;
+  fixture.cloudHome = false;
   vi.stubGlobal("window", { ogb: { speechStart: vi.fn(), speechStop: vi.fn(async () => {}) } });
   // the microphone prompt never answers: a Live call stays "starting"
   configureLiveMedia({ getUserMedia: () => new Promise<MediaStream>(() => {}) });
@@ -149,6 +151,26 @@ describe("the call button", () => {
     }
   });
 
+  // The desktop app lets only the person's own Cloud use the microphone: a
+  // block there is the computer's, and on another server a browser is the way.
+  it("tells a blocked microphone on a server's page whether it is the person's Cloud", async () => {
+    for (const [cloudHome, notice] of [
+      [true, "Allow microphone access for this app in your computer's privacy settings"],
+      [false, "Open this server in your web browser to make a Live call."],
+    ] as const) {
+      resetLiveMedia();
+      fixture.cloudHome = cloudHome;
+      configureLiveMedia({
+        getUserMedia: async () => { throw new DOMException("denied", "NotAllowedError"); },
+        capabilities: () => ({ dictation: { available: false, engine: "none", onDevice: false, reasonCode: "remote-server" } }) as DesktopCapabilities,
+      });
+      setCallMode("live");
+      pressPhone(vi.fn());
+      await vi.waitFor(() => expect(liveMedia().phase).toBe("failed"));
+      expect(liveMedia().notice, String(cloudHome)).toContain(notice);
+    }
+  });
+
   it("keeps Take turns as it was: the overlay's call, no Live media", () => {
     setCallMode("turns");
     const onStart = vi.fn();
@@ -176,6 +198,14 @@ describe("the call mode menu", () => {
     expect(items[0]).toMatch(/^ aria-checked="false"/);
     expect(items[1]).toContain(">Live<");
     expect(items[1]).toMatch(/^ aria-checked="true"/);
+  });
+
+  it("says where the OpenAI key stays: this computer, or the person's Cloud", () => {
+    const props = { id: "m", mode: "live" as const, onChoose: vi.fn(), onClose: vi.fn() };
+    expect(renderToStaticMarkup(createElement(CallModeMenu, props))).toContain("The OpenAI key stays on your computer.");
+    const cloud = renderToStaticMarkup(createElement(CallModeMenu, { ...props, cloudHome: true }));
+    expect(cloud).toContain("The OpenAI key stays on your Cloud.");
+    expect(cloud).not.toContain("stays on your computer");
   });
 
   it("reports the chosen mode", () => {
