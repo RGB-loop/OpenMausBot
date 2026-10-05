@@ -10,8 +10,7 @@ interface SelectableInstance {
 }
 
 /** What an enrolled organisation adds to the choice. Both are omitted (or
- * answer nothing) on a desktop that is not enrolled, which keeps the
- * selection exactly what it has always been. */
+ * answer nothing) on a desktop that is not enrolled. */
 export interface DefaultSelectionContext {
   /** True for a Company instance the enrolled organisation provides. */
   company?: (instanceId: string) => boolean;
@@ -30,8 +29,14 @@ export function readyToRun(instance: SelectableInstance, context: DefaultSelecti
     (instance.access === "custom" || instance.snapshot.authenticated !== false);
 }
 
-/** A saved choice is intentional: an unavailable provider or removed model
- * sends new bots to setup instead of silently changing their provider. */
+/** The engine a new bot gets, and the one a bot moved off a removed engine
+ * gets (computer-engine-removal.ts): one picker for both.
+ *
+ * A saved choice is intentional: an unavailable provider or removed model
+ * sends new bots to setup instead of silently changing their provider.
+ * Without one, an engine that can run a turn now wins (Claude first), then the
+ * first available one. On an enrolled desktop a working personal engine
+ * still beats a Company one, so billing stays the person's explicit choice. */
 export function selectDefaultModelSelection(
   instances: readonly SelectableInstance[],
   preferred?: ModelSelection,
@@ -58,37 +63,12 @@ export function selectDefaultModelSelection(
   }
   // The organisation's policy is inert (no refusal) unless this desktop is enrolled.
   const available = instances.filter((instance) => instance.snapshot.state === "available" && context.refusal?.(instance) === undefined);
+  const ready = available.filter((instance) => readyToRun(instance, context));
   const company = context.company;
-  let pick: SelectableInstance | undefined;
-  if (company && instances.some((instance) => company(instance.instanceId))) {
-    // Enrolled: an installed but signed-out personal Claude would send every
-    // new bot to setup although a Company model can run. Prefer instances that
-    // can run a turn now; a working personal engine still wins, so billing
-    // stays the person's explicit choice.
-    const ready = available.filter((instance) => readyToRun(instance, context));
-    pick = claudeFirst(ready.filter((instance) => !company(instance.instanceId))) ?? claudeFirst(ready) ?? claudeFirst(available);
-  } else {
-    pick = claudeFirst(available);
-  }
-  return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
-}
-
-/** Where a bot goes when its engine is removed: the engine a new bot gets,
- * as long as it can run a turn now. That is the workspace's saved default,
- * else the first ready engine (Claude first), else the first available one.
- * Empty only when nothing is available at all. */
-export function selectReplacementModelSelection(
-  instances: readonly SelectableInstance[],
-  preferred?: ModelSelection,
-  context: DefaultSelectionContext = {},
-): ModelSelection {
-  if (preferred) {
-    const saved = selectDefaultModelSelection(instances, preferred, context);
-    const instance = instances.find((candidate) => candidate.instanceId === saved.instanceId);
-    if (instance && readyToRun(instance, context)) return saved;
-  }
-  const available = instances.filter((instance) => instance.snapshot.state === "available" && context.refusal?.(instance) === undefined);
-  const pick = claudeFirst(available.filter((instance) => readyToRun(instance, context))) ?? claudeFirst(available);
+  const personal = company && instances.some((instance) => company(instance.instanceId))
+    ? claudeFirst(ready.filter((instance) => !company(instance.instanceId)))
+    : undefined;
+  const pick = personal ?? claudeFirst(ready) ?? claudeFirst(available);
   return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
 

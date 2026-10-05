@@ -33,21 +33,26 @@ final class ProfileRoutinePolicyTests: XCTestCase {
         let unavailable = try decodeInstances(state: "unavailable")
         let noComputerTools = try decodeInstances(state: "available", computerMcp: false)
 
-        XCTAssertFalse(RoutineRunAvailability(config: unconfigured, instances: available).cloudReady)
-        XCTAssertFalse(RoutineRunAvailability(config: configured, instances: unavailable).cloudReady)
+        XCTAssertFalse(RoutineRunAvailability(config: unconfigured, instances: available).cloudReady(engine: "claude"))
+        XCTAssertFalse(RoutineRunAvailability(config: configured, instances: unavailable).cloudReady(engine: "claude"))
         XCTAssertFalse(
-            RoutineRunAvailability(config: configured, instances: noComputerTools).cloudReady,
+            RoutineRunAvailability(config: configured, instances: noComputerTools).cloudReady(engine: "claude"),
             "an engine without computer tools cannot work on the cloud computer"
         )
 
         let ready = RoutineRunAvailability(config: configured, instances: available)
-        XCTAssertTrue(ready.cloudReady)
-        XCTAssertTrue(ready.canSelect(.cloud, preserving: .maus))
+        XCTAssertTrue(ready.cloudReady(engine: "claude"))
+        XCTAssertTrue(ready.canSelect(.cloud, preserving: .maus, engine: "claude"))
+        // The routine runs on its own bot's engine, like on the desktop and
+        // the server: another bot's engine does not count.
+        XCTAssertFalse(ready.cloudReady(engine: "codex"))
+        XCTAssertFalse(ready.canSelect(.cloud, preserving: .maus, engine: "codex"))
+        XCTAssertFalse(ready.cloudReady(engine: nil), "no bot chosen yet")
 
         let offline = RoutineRunAvailability(config: configured, instances: unavailable)
-        XCTAssertFalse(offline.canSelect(.cloud, preserving: .maus))
-        XCTAssertTrue(offline.canSelect(.cloud, preserving: .cloud), "an existing cloud routine must not silently move")
-        XCTAssertTrue(offline.canSelect(.maus, preserving: .cloud))
+        XCTAssertFalse(offline.canSelect(.cloud, preserving: .maus, engine: "claude"))
+        XCTAssertTrue(offline.canSelect(.cloud, preserving: .cloud, engine: "claude"), "an existing cloud routine must not silently move")
+        XCTAssertTrue(offline.canSelect(.maus, preserving: .cloud, engine: "claude"))
     }
 
     func testAgentVoiceWorksWithoutANonexistentWorkspaceDefault() throws {

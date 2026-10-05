@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { canWorkOnCloud } from "../../shared/cloud-computer.ts";
+import { cloudPlaceDriverError } from "../surface.ts";
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { BUILT_IN_DRIVERS } from "./builtIn.ts";
@@ -46,6 +47,11 @@ describe("typed capability fields for the cloud computer", () => {
     }));
     expect(bare.adapter.capabilities.computerMcp).toBe(false);
     expect(onBoat(bare)).toBe(false);
+    // What a turn set to Cloud then gets: refused before anything starts, in
+    // one plain line with the next step, not handed to some other engine.
+    expect(cloudPlaceDriverError({ computerMcp: bare.adapter.capabilities.computerMcp }))
+      .toBe("This model can't use a computer. Choose another model, or set Works on to Auto.");
+    expect(cloudPlaceDriverError({ computerMcp: mounted.adapter.capabilities.computerMcp })).toBeNull();
   });
 
   it("lets host-harness drivers with computer tools use the cloud computer on their own engine", async () => {
@@ -75,9 +81,8 @@ describe("typed capability fields for the cloud computer", () => {
         instanceId: `caps-fleet-${driver.driverKind}`, displayName: "Caps Fleet", environment: {}, enabled: true,
         config: driver.driverKind === "customAcp" ? { cli: "echo" } : {},
       }));
-      // The cloud computer is a tool: an engine reaches it only through its
-      // own computer tools, never by handing the turn to Boat.
-      expect(onBoat(instance), driver.driverKind).toBe(instance.adapter.capabilities.computerMcp === true);
+      // The cloud computer is a tool: no driver declares that its turn runs
+      // somewhere else (the removed engine's remoteAgent flag).
       expect(instance.adapter.capabilities, driver.driverKind).not.toHaveProperty("remoteAgent");
     }
   });

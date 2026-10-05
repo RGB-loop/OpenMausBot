@@ -76,7 +76,6 @@ export function useBotSettingsDerived(bot: Bot) {
   const trustedModesAvailable = Boolean(window.ogb?.approvals && capabilities.host.packaged);
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
   const canUseConnectedApps = engine?.capabilities?.composioMcp === true;
-  const canUseVps = engine?.capabilities?.computerMcp === true;
   const connectedAppsConfigured = state.config?.composio?.configured === true;
   const connectedAppsEnabled = bot.composio !== false;
   const connectorGrantState: ConnectorGrantsState = connectorGrantsState(bot);
@@ -110,7 +109,6 @@ export function useBotSettingsDerived(bot: Bot) {
     trustedModesAvailable,
     canCoordinate,
     canUseConnectedApps,
-    canUseVps,
     connectedAppsConfigured,
     connectedAppsEnabled,
     connectorGrantState,

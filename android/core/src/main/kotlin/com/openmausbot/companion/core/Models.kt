@@ -1271,23 +1271,31 @@ enum class RoutineRunLocation(val wireValue: String) {
     CLOUD("cloud"),
 }
 
+/**
+ * Desktop-equivalent run-location availability, from paired-safe status only.
+ * A cloud routine runs on its bot's own engine, which uses the cloud computer
+ * as a tool, so Cloud VM needs the host's cloud computers and an available
+ * engine with computer tools for that bot: the rule the desktop and the
+ * server apply to the routine's bot.
+ */
 data class RoutineRunAvailability(
     val cloudConfigured: Boolean,
-    val cloudInstanceAvailable: Boolean,
+    /** The available engines that have computer tools, by instance id. */
+    val cloudEngines: Set<String>,
 ) {
     constructor(config: ConfigStatus?, instances: List<Instance>) : this(
         cloudConfigured = config?.box?.configured == true,
-        // A bot works on its cloud computer with its own engine, so Cloud
-        // needs an available engine with computer tools.
-        cloudInstanceAvailable = instances.any {
-            it.capabilities?.computerMcp == true && it.snapshot.isAvailable
-        },
+        cloudEngines = instances
+            .filter { it.capabilities?.computerMcp == true && it.snapshot.isAvailable }
+            .map { it.instanceId }
+            .toSet(),
     )
 
-    val cloudReady: Boolean get() = cloudConfigured && cloudInstanceAvailable
+    /** Whether a routine for the bot on this engine can run on the Cloud VM. */
+    fun cloudReady(engine: String?): Boolean = cloudConfigured && engine != null && engine in cloudEngines
 
-    fun canSelect(location: RoutineRunLocation, preserving: RoutineRunLocation): Boolean =
-        location == RoutineRunLocation.MAUS || cloudReady || preserving == RoutineRunLocation.CLOUD
+    fun canSelect(location: RoutineRunLocation, preserving: RoutineRunLocation, engine: String?): Boolean =
+        location == RoutineRunLocation.MAUS || cloudReady(engine) || preserving == RoutineRunLocation.CLOUD
 }
 
 @Serializable

@@ -476,7 +476,6 @@ export function ComputerPanel({
   );
   // One rule for both cloud backends (shared/cloud-computer.ts).
   const cloudSupported = canWorkOnCloud(cloudEngineOf(selectedInstance));
-  const vpsSupported = cloudSupported;
   const botRoutines = state.routines
     .filter((routine) => routine.botId === bot.id)
     .sort((a, b) => Number(b.enabled) - Number(a.enabled) || (a.nextRunAt ?? Infinity) - (b.nextRunAt ?? Infinity));
@@ -597,11 +596,6 @@ export function ComputerPanel({
     }
     if (bot.computer !== "cloud" && !capabilitiesReady) return;
     if (cloudBackend === "vps") {
-      if (!vpsSupported) {
-        setError(new LocalizedPanelError("computer.err.vpsEngine"));
-        setPhase("error");
-        return;
-      }
       api(threadPath("computer"))
         .then((rawStatus) => {
           if (!alive) return;
@@ -770,7 +764,6 @@ export function ComputerPanel({
     selectedInstance?.driverKind,
     vmSupported,
     cloudSupported,
-    vpsSupported,
     state.config?.vps?.sshAlias,
     panelView,
     computerSelectionPersisted,
@@ -1959,7 +1952,6 @@ export function ComputerPanel({
               <CloudBackendPicker
                 compact
                 value={cloudBackend}
-                vpsSupported={vpsSupported}
                 onChange={(backend) => updateComputerSelection({ cloudBackend: backend })}
               />
             </>

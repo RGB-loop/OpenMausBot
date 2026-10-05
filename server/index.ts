@@ -317,7 +317,7 @@ import { createCloudMoveRoutes, workspaceShared } from "./cloud-move-http.ts";
 import { RESTART_EXIT_CODE } from "./restart.ts";
 import { holdIncludedServices } from "./included-services.ts";
 import type { ProviderInstance } from "./contracts.ts";
-import { selectDefaultModelSelection, selectReplacementModelSelection, withNewBotEffort } from "./default-model-selection.ts";
+import { selectDefaultModelSelection, withNewBotEffort } from "./default-model-selection.ts";
 import { computerEngineMoveText, removedComputerInstanceIds } from "./computer-engine-removal.ts";
 import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, peerApprovalFailure, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
 import { peerDeliveryReceipt, type PeerDeliveryReceipt } from "./peer-delivery.ts";
@@ -3218,48 +3218,78 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, from
   });
 }
 
-// New bots honor setup's saved choice; unconfigured workspaces prefer Claude.
-// While enrolled, a Company model that can run beats a signed-out personal
-// engine, and the organisation's policy is respected; otherwise inert.
-async function defaultSelection() {
-  if (hostedModels) return hostedModels.select(cfg.defaultModelSelection);
-  return selectDefaultModelSelection(await registry.describe(), cfg.defaultModelSelection, {
+// New bots honor setup's saved choice; without one, an engine that can run a
+// turn now (Claude first). While enrolled, a Company model that can run beats
+// a signed-out personal engine, and the organisation's policy is respected;
+// otherwise inert. `null` leaves the saved choice out (moveOffComputerEngine).
+async function defaultSelection(saved: ModelSelection | null = cfg.defaultModelSelection ?? null) {
+  if (hostedModels) return hostedModels.select(saved ?? undefined);
+  return selectDefaultModelSelection(await registry.describe(), saved ?? undefined, {
     company: (instanceId) => managedDesktop.owns(instanceId),
     refusal: (instance) => policyModelRefusal(instance),
   });
 }
 
 /** The Computer engine was removed: it ran a whole turn on Boat's own agent.
- * A bot that was set to it moves, once, to the engine a new bot gets, chosen
- * by the ready rule (default-model-selection.ts), and keeps where it works.
- * The bot's conversation says so in one plain line. A hosted workspace's
- * reconcile has already moved every bot onto its own models. */
+ * Everything still set to it moves, once, to the engine a new bot gets
+ * (defaultSelection, the one picker), or the one a new bot would get without
+ * the saved choice when that cannot run: the saved default and new-bot
+ * defaults, each bot and conversation (Store.retireInstances keeps each one
+ * where it worked), and an automatic-recovery backup, which could never run
+ * and is cleared. Each moved conversation says so in one plain line. When no
+ * engine is available yet it runs again the next time the engines are read
+ * (describeInstances): an install, a sign-in, a key or a Company engine. At
+ * start it sees what a new bot made then would see; a policy that arrives
+ * later refuses an engine for a moved bot the way it does for any bot. A
+ * hosted workspace's reconcile has already moved every bot onto its own
+ * models. */
 async function moveOffComputerEngine(): Promise<void> {
   if (hostedModels) return;
   const removed = removedComputerInstanceIds(cfg.instances);
   const named = (selection?: { instanceId: string }) => Boolean(selection && removed.has(selection.instanceId));
-  const savedDefault = named(cfg.defaultModelSelection);
-  if (!savedDefault && !store.bots.some(bot => named(bot.modelSelection) || bot.fallback?.some(named) ||
+  if (named(cfg.automaticRecovery?.backup)) {
+    saveConfig({ automaticRecovery: { enabled: false } });
+    cfg.automaticRecovery = { enabled: false };
+  }
+  const defaults = named(cfg.defaultModelSelection) || named(cfg.newBotDefaults?.profile.modelSelection);
+  if (!defaults && !store.bots.some(bot => named(bot.modelSelection) || bot.fallback?.some(named) ||
     store.tasks(bot.id).some(task => named(task.modelSelection)))) return;
-  const instances = await registry.describe();
-  const replacement = selectReplacementModelSelection(instances, savedDefault ? undefined : cfg.defaultModelSelection, {
-    company: (instanceId) => managedDesktop.owns(instanceId),
-    refusal: (instance) => policyModelRefusal(instance),
-  });
+  let replacement = named(cfg.defaultModelSelection) ? { instanceId: "", model: "" } : await defaultSelection();
+  if (!replacement.instanceId) replacement = await defaultSelection(null);
   if (!replacement.instanceId) {
-    console.warn("[engines] the Computer engine was removed and no other engine is available yet; its bots move on a later start");
+    console.warn("[engines] the Computer engine was removed and no other engine is available yet; its bots move when one is");
     return;
   }
-  if (savedDefault) {
-    saveConfig({ defaultModelSelection: replacement });
+  if (defaults) {
+    // One write keeps both saved defaults on the replacement (saveConfig
+    // syncs them), and the copies in memory follow at once, so a bot made
+    // before the next start never lands on the removed engine.
+    const newBotDefaults = cfg.newBotDefaults && newBotDefaultsSchema.parse({
+      ...cfg.newBotDefaults, profile: { ...cfg.newBotDefaults.profile, modelSelection: replacement },
+    });
+    saveConfig(newBotDefaults ? { newBotDefaults } : { defaultModelSelection: replacement });
     cfg.defaultModelSelection = replacement;
+    if (newBotDefaults) cfg.newBotDefaults = newBotDefaults;
   }
-  const engine = instances.find(instance => instance.instanceId === replacement.instanceId)?.displayName ?? replacement.instanceId;
-  for (const botId of store.retireInstances(removed, replacement)) {
-    const bot = store.bot(botId);
+  const instance = registry.get(replacement.instanceId);
+  const engine = instance?.displayName ?? instance?.driverKind ?? replacement.instanceId;
+  const moves = store.retireInstances(removed, replacement, {
+    driverKind: instance?.driverKind,
+    keepCloud: (bot) => boat.boatConfigured(cfg) && bot.cloudBackend !== "vps" && !inheritedTeamComputer(bot),
+  });
+  for (const move of moves) {
+    const bot = store.bot(move.botId);
     if (!bot) continue;
-    store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: computerEngineMoveText(bot.name, engine), ok: true } });
+    store.appendMessage(move.threadId, { role: "bot", kind: "activity", tool: { name: computerEngineMoveText(move, bot.name, engine), ok: true } });
   }
+}
+let computerEngineMoveRunning: Promise<void> | null = null;
+/** The move again, once at a time; it returns at once when nothing names the
+ * removed engine any more. */
+function retryComputerEngineMove(): void {
+  computerEngineMoveRunning ??= moveOffComputerEngine()
+    .catch((error) => console.warn(`[engines] moving bots off the removed Computer engine failed: ${error instanceof Error ? error.message : String(error)}`))
+    .finally(() => { computerEngineMoveRunning = null; });
 }
 
 function checkedModelSelection(
@@ -15042,6 +15072,10 @@ function persistMcpServers(next: Record<string, unknown>): void {
 
 async function describeInstances() {
   const configs = providerConfigs();
+  // Reading the engines is where this server learns one became available
+  // (an install, a sign-in, a key or a Company engine), so a bot still on the
+  // removed Computer engine moves now rather than at the next start.
+  retryComputerEngineMove();
   return (await registry.describe()).map((instance) => {
     const entry = configs[instance.instanceId];
     const described = {
