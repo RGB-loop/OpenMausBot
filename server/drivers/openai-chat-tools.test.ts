@@ -916,6 +916,25 @@ describe("structured tool execution boundaries", () => {
     })]);
   });
 
+  it("keeps Grok's native log small on a long turn with large tool results", async () => {
+    // Logging the whole transcript on every step grows with the square of the
+    // step count; a step is logged by its message count, like the other engines.
+    ensureDirs();
+    const large = "note ".repeat(4_000);
+    const f = await fixture((_body, response, round) => round <= 20
+      ? sse(response, [chunk({ tool_calls: [toolCall("audit_write", JSON.stringify({ name: `step${round}`, value: large }), `call_${round}`)] }, "tool_calls")])
+      : answer(response), "grok");
+    await f.start({ approvalMode: "full" });
+    expect(await f.completed()).toMatchObject({ ok: true });
+    expect(f.effects()).toHaveLength(20);
+    const log = readFileSync(join(NATIVE_DIR, `${f.threadId}.ndjson`), "utf8");
+    // The whole turn's log is smaller than one tool result.
+    expect(log.length).toBeLessThan(large.length);
+    const outgoing = log.trim().split("\n").map((line) => JSON.parse(line) as { dir: string; msg: unknown })
+      .filter((entry) => entry.dir === "out").map((entry) => entry.msg);
+    expect(outgoing).toEqual(f.requests.map((request) => ({ model: "fixture-model", messageCount: request.messages.length })));
+  });
+
   it.each(["stream", "approval", "rpc", "continuation"] as const)("cancels during %s, closes execution authority, and settles exactly once", async (stage) => {
     const heldResponse = deferred();
     const f = await fixture((_body, response, round) => {

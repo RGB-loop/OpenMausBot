@@ -7,7 +7,7 @@ export interface ChatToolCall {
 
 /** Calls one model reply may carry (its index bound). The turn's own total is
  * MAX_TURN_TOOL_CALLS in openai-chat.ts. */
-export const MAX_REPLY_TOOL_CALLS = 32;
+const MAX_REPLY_TOOL_CALLS = 32;
 const MAX_ARGUMENT_CHARS = 256_000;
 
 export class ChatProtocolError extends Error {}
