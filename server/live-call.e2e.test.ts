@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LIVE_COPY } from "../shared/live-approval.ts";
 import { cloudPairingSignature } from "./cloud-home.ts";
+import { CLOUD_HOME_PLACE } from "./system-prompt.ts";
 import type { LiveCallState } from "../shared/wire.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { startFakeOpenAiLive, type FakeOpenAiLive } from "./testing/fake-openai-live.ts";
@@ -558,6 +559,11 @@ posixOnly("Live call on the person's Cloud", () => {
     // the call reached GPT-Live and its sideband attached
     const session = live.sessions[before201];
     expect(session).toBeDefined();
+    // the voice is told it runs on My Cloud, in the bot's own words, never on
+    // the person's own computer (server/index.ts passes cloudHome)
+    const { instructions } = session.body.session as { instructions: string };
+    expect(instructions.split("\n")[0]).toBe(`You are Ada, an AI agent that runs on ${CLOUD_HOME_PLACE}.`);
+    expect(instructions).not.toContain("on the user's own computer");
     await live.waitForAttach(session.id);
 
     const ended = await request("POST", "/api/live/call/end", { callId: started.body.call.callId });
