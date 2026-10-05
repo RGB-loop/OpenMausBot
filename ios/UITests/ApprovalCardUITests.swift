@@ -17,16 +17,17 @@ final class ApprovalCardUITests: XCTestCase {
         XCTAssertFalse(contains("issueId", in: app), "the arguments stay collapsed")
         XCTAssertFalse(contains("always asks first", in: app), "the headline already says it")
 
-        // Settled cards say what happened in words, not the stored verdict.
-        XCTAssertTrue(contains("Allowed", in: app))
-        XCTAssertTrue(contains("Denied", in: app))
+        // Answered cards leave the chat at the default detail: the earlier
+        // allowed send and the denied push are gone, verdicts and all.
+        XCTAssertFalse(contains("Allowed", in: app))
+        XCTAssertFalse(contains("Denied", in: app))
         XCTAssertFalse(app.staticTexts["allow"].exists)
-        XCTAssertFalse(contains("requires your approval", in: app), "a settled card drops its held note")
-        screenshot("Pending and settled approval cards", in: app)
+        XCTAssertFalse(app.staticTexts["Approval needed"].exists)
+        screenshot("Pending approval card", in: app)
 
         let toggles = app.buttons.matching(identifier: "approval-details-toggle")
-        XCTAssertGreaterThanOrEqual(toggles.count, 1)
-        toggles.element(boundBy: toggles.count - 1).tap()
+        XCTAssertEqual(toggles.count, 1, "only the waiting card is left")
+        toggles.element(boundBy: 0).tap()
         XCTAssertTrue(app.descendants(matching: .any)["approval-details"].waitForExistence(timeout: 3))
         XCTAssertTrue(contains("issueId", in: app), "Details shows the full request")
         // Bring the opened box above the composer for the screenshot.

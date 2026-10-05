@@ -324,6 +324,7 @@ public func transcriptRows(_ messages: [Message], detail: ActivityDetail) -> [Tr
             continue
         }
         if hiddenIDs.contains(message.id) { continue }
+        if detail != .full, message.card?.leavesTranscriptWhenSettled == true { continue }
         if detail == .hidden && isActivityReceipt(message) && !isStatusNotice(message) && !isFailedTurn(message) { continue }
         // A turn that touched nothing leaves a digest with nothing to show;
         // an empty row would still cost the transcript a gap.

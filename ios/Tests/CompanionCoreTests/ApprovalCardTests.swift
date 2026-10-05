@@ -251,4 +251,32 @@ final class ApprovalCardTests: XCTestCase {
         let spoken = Walkie.settledReply(transcript: [message], baseline: [], busy: true)
         XCTAssertEqual(spoken, "Send to Linear? Create linear comment ×2")
     }
+
+    // MARK: - Settled cards leave the transcript
+
+    func testAnsweredApprovalsLeaveTheTranscriptBelowFull() {
+        func row(_ id: String, _ card: OptionCard) -> Message {
+            var message = Message(id: id, role: .bot, kind: .options, at: 0)
+            message.card = card
+            return message
+        }
+        var permission = OptionCard(title: "Approval needed", subtitle: "git push origin main", options: ["Allow", "Deny"])
+        permission.requestId = "p"
+        permission.tool = "Bash"
+        permission.requestType = "permission"
+        permission.answered = "allow"
+        var proposal = OptionCard(title: "Add this routine?", subtitle: "Every morning", options: ["Confirm", "Cancel"])
+        proposal.requestId = "r"
+        proposal.answered = "Confirm"
+        let messages = [
+            row("sent", outbound(calls: nil, answered: "allow")),
+            row("denied", permission),
+            row("waiting", outbound(calls: nil)),
+            row("proposal", proposal),
+        ]
+        for detail in [ActivityDetail.hidden, .reduced] {
+            XCTAssertEqual(transcriptRows(messages, detail: detail).map(\.id), ["waiting", "proposal"], "\(detail)")
+        }
+        XCTAssertEqual(transcriptRows(messages, detail: .full).map(\.id), ["sent", "denied", "waiting", "proposal"])
+    }
 }

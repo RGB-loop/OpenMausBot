@@ -278,7 +278,9 @@ fun transcriptRows(messages: List<Message>, detail: ActivityDetail): List<Transc
             if (turn != null) {
                 flush()
                 add(turn)
-            } else if (message.id in hiddenIds || (detail == ActivityDetail.HIDDEN && isActivityReceipt(message) && !isStatusNotice(message) && !isFailedTurn(message))) {
+            } else if (message.id in hiddenIds ||
+                (detail != ActivityDetail.FULL && message.card?.leavesTranscriptWhenSettled == true) ||
+                (detail == ActivityDetail.HIDDEN && isActivityReceipt(message) && !isStatusNotice(message) && !isFailedTurn(message))) {
                 // The reversible turn fold owns narration; Hidden owns tools.
             } else if (detail != ActivityDetail.REDUCED || message.kind != Message.Kind.ACTIVITY) {
                 // The digest lands here too: its own row, never a step in a run.

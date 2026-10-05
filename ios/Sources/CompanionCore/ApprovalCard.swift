@@ -202,6 +202,13 @@ extension OptionCard {
         return [headline, rest].filter { !$0.isEmpty }.joined(separator: " ")
     }
 
+    /// An answered permission or outbound card has done its job: the bot's
+    /// next message says what happened, and the card's request and verdict
+    /// are clutter on a phone. Proposals keep their settled card.
+    public var leavesTranscriptWhenSettled: Bool {
+        !isPending && presentation != .standard
+    }
+
     /// The "why this asked" note is for deciding. Once the card is settled
     /// it has done its job; an outbound card's headline already says it. A
     /// free-text note written after the decision (an error, no catalog key)

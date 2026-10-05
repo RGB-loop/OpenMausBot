@@ -296,4 +296,36 @@ class ApprovalCardTest {
         assertEquals("Linear · Create linear comment", previewText(message))
         assertEquals("Send to Linear?", previewText(message.copy(card = message.card?.copy(answered = "allow"))))
     }
+
+    @Test
+    fun `answered approvals leave the transcript below Full`() {
+        fun row(id: String, card: OptionCard) = Message(id = id, role = Message.Role.BOT, kind = Message.Kind.OPTIONS, at = 0.0, card = card)
+        val permission = OptionCard(
+            title = "Approval needed",
+            subtitle = "git push origin main",
+            options = listOf("Allow", "Deny"),
+            requestId = "p",
+            tool = "Bash",
+            requestType = "permission",
+            answered = "deny",
+        )
+        val proposal = OptionCard(
+            title = "Add this routine?",
+            subtitle = "Every morning",
+            options = listOf("Confirm", "Cancel"),
+            requestId = "r",
+            answered = "Confirm",
+        )
+        val messages = listOf(
+            row("sent", outbound(null, answered = "allow")),
+            row("denied", permission),
+            row("waiting", outbound(null)),
+            row("proposal", proposal),
+        )
+        for (detail in listOf(ActivityDetail.HIDDEN, ActivityDetail.REDUCED)) {
+            assertEquals(listOf("waiting", "proposal"), transcriptRows(messages, detail).map { it.id }, detail.name)
+        }
+        assertEquals(listOf("sent", "denied", "waiting", "proposal"), transcriptRows(messages, ActivityDetail.FULL).map { it.id })
+    }
 }
+
