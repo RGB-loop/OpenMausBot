@@ -97,7 +97,9 @@ export function cloudLinkAction(account: CloudAccountState, link: { arrived: boo
 function accountMessage(account: CloudAccountState | null, view: CloudPlanView): string | null {
   if (!account) return null;
   if (account.message === "signout-local-only") return t("cloudAccount.signoutLocalOnly");
-  if (account.message === "signout-storage-failed" || account.message === "restore-failed") return t("cloudAccount.storageFailed");
+  if (account.message === "signout-storage-failed") return t("cloudAccount.storageFailed");
+  // Kept and read again by itself: signing out here would delete a sign-in that comes back.
+  if (account.message === "restore-failed") return t("cloudAccount.restoreWaiting");
   if (view.kind === "reauth") return t(view.reason === "expired" ? "cloudAccount.reauthExpired" : "cloudAccount.reauthEnded");
   if (view.kind === "unverified") return t("cloudAccount.unavailable");
   if (view.kind === "purchase") return view.paidAt ? t("cloudAccount.purchaseNote", { date: day(view.paidAt) }) : t("cloudAccount.purchaseNoteNoDate");

@@ -148,6 +148,19 @@ it("a saved sign-in that could not be read was removed: one line says so, and Si
   none(html, ["could not be completed", "Unlock your system keychain"]);
   expect(button("Sign in to OMB Cloud")).toBeTruthy();
 });
+it("a saved sign-in that can't be read right now says the app tries again by itself, and asks for no sign-out", async () => {
+  await ready({ status: "unavailable", message: "restore-failed" });
+  const html = render().html;
+  expect(html).toContain("This computer&#x27;s saved Cloud sign-in can&#x27;t be read right now. OpenMausBot tries again every minute.");
+  // Signing out here would delete a sign-in that comes back by itself.
+  none(html, ["could not be read or cleared", "sign out again", "Sign out of OMB Cloud, then"]);
+});
+it("a sign-out that could not clear the saved sign-in still asks for it", async () => {
+  await ready({ status: "unavailable", message: "signout-storage-failed" });
+  const html = render().html;
+  expect(html).toContain("could not be read or cleared");
+  none(html, ["tries again every minute"]);
+});
 it("setting up shows the Cloud page's steps, a slow setup and a failed setup's next try", async () => {
   const paid = { ...free, entitlement: { plan: "pro" as const, status: "active" as const, expiresAt: 1_900_000_000_000, version: 2 } };
   // Paid, and the Admin does not list the Cloud yet: it is being set up.

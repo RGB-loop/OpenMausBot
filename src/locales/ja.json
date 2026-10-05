@@ -66,6 +66,7 @@
   "cloudAccount.reauthEnded": "このコンピューターは OMB Cloud からサインアウトされています（Cloud ダッシュボードで削除された場合など）。ここで Cloud を使うには、もう一度サインインしてください。プランには影響しません。",
   "cloudAccount.unavailable": "現在 OMB Cloud に接続できないため、このアプリではプランを確認できません。プランに変更はありません。アプリは引き続き確認を試みます。",
   "cloudAccount.restoreRemoved": "このコンピューターの Cloud サインイン情報を読み取れなかったため、削除しました。もう一度サインインしてください。",
+  "cloudAccount.restoreWaiting": "このコンピューターに保存された Cloud サインイン情報を今は読み取れません。OpenMausBot が1分ごとに再試行します。",
   "cloudPhone.title": "スマートフォン",
   "cloudPhone.subtitle": "スマートフォンアプリをこのコンピュータではなく Cloud とペアリングすると、このコンピュータの電源が切れていても使い続けられます。",
   "cloudPhone.action": "スマートフォンで Cloud を使う",

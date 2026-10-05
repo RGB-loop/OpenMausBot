@@ -211,6 +211,7 @@
   "cloudAccount.signoutLocalOnly": "已在這台電腦上登出。Cloud 未能確認遠端撤銷；請同時在你的 Cloud 帳號中撤銷這台電腦。",
   "cloudAccount.storageFailed": "無法讀取或清除已儲存的 Cloud 登入。請解鎖系統鑰匙圈，然後登出後再重新連線。",
   "cloudAccount.restoreRemoved": "無法讀取這台電腦的 Cloud 登入，因此已將其移除。請重新登入。",
+  "cloudAccount.restoreWaiting": "目前無法讀取這台電腦已儲存的 Cloud 登入。OpenMausBot 每分鐘會再試一次。",
   "cloudAccount.signinFailed": "Cloud 登入已中止或未能完成。請在這台電腦上重新開始。",
   "cloudAccount.actionFailed": "無法完成此 Cloud 操作。請檢查網路連線後再試一次。",
   "cloudPhone.title": "你的手機",
