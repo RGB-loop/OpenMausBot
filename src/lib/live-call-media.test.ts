@@ -457,7 +457,7 @@ describe("live call media", () => {
     // in plain words, with what to do: no "WebRTC", and nothing to try again
     expect(liveMedia()).toMatchObject({
       phase: "failed",
-      notice: "Live calls need a microphone, and this window can't use one. Open OpenMausBot at its https address in an up-to-date browser.",
+      notice: "Live calls need a microphone, and this window can't use one. Open OpenMausBot at a secure https address to make the call.",
       action: null,
     });
     expect(currentCall()).toBeNull();
@@ -795,7 +795,8 @@ describe("a blocked microphone", () => {
       pageMicrophone,
     });
     await startLiveCall({ botId: "b1", threadId: "t1" });
-    expect(liveMedia()).toMatchObject({ phase: "failed", notice: "Live calls need microphone and WebRTC support, which this window does not have.", action: null });
+    expect(liveMedia()).toMatchObject({ phase: "failed", notice: "Live calls need a microphone, and this window can't use one. Open OpenMausBot at a secure https address to make the call.", action: null });
+    expect(liveMedia().notice).not.toMatch(/browser/i);
     expect(pageMicrophone).not.toHaveBeenCalled();
   });
 
