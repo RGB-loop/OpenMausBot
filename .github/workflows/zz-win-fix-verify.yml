@@ -1,0 +1,43 @@
+name: zz-win-fix-verify
+on:
+  push:
+    branches: [test/delta-win-verify-fix]
+jobs:
+  verify:
+    name: fix on windows (attempt ${{ matrix.attempt }})
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3, 4]
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare Electron test runtime
+        run: node --input-type=commonjs -e "require('electron')"
+      - name: Claude driver tests
+        shell: bash
+        run: pnpm exec vitest run server/drivers/claude.test.ts --reporter=default 2>&1 | grep -E "×|✓ .*(stopped turn's process|warm one is gone)|Tests |Error" ; exit ${PIPESTATUS[0]}
+      - name: Loop the two failing delta-context tests under load
+        shell: bash
+        run: |
+          set +e
+          pnpm exec vitest run server/delta-context.e2e.test.ts --reporter=default > load.log 2>&1 &
+          fails=0
+          for i in 1 2 3 4 5 6 7 8; do
+            echo "=== iteration $i"
+            pnpm exec vitest run server/delta-context.e2e.test.ts -t "person stops the return turn|steer written into a resume the provider then rejected" --reporter=default > "iter-$i.log" 2>&1
+            grep -E "✓|×|Tests |AssertionError|error: " "iter-$i.log" | head -8
+            grep -qE "Tests .*failed" "iter-$i.log" && fails=$((fails+1))
+          done
+          wait
+          echo "=== background full file"; grep -E "×|Tests |AssertionError" load.log | head -20
+          grep -qE "Tests .*failed" load.log && fails=$((fails+1))
+          echo "=== failed runs: $fails"
+          exit $fails
