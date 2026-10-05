@@ -19,9 +19,10 @@ import CompanionCore
 @MainActor
 final class LiveActivityCoordinator {
     private var cancellable: AnyCancellable?
-    /// One authorization reader for the coordinator's life. Making a new one
-    /// for every 400 ms sync cost about 2.6 ms of main thread each time,
-    /// the largest piece of the app's own work left under a busy fleet.
+    /// One authorization reader for the coordinator's life, rather than a new
+    /// one on every 400 ms sync. The reader itself is cheap (about 0.2 ms);
+    /// most of a sync's main-thread time under a busy fleet is ActivityKit
+    /// reading `Activity.activities`, which this does not change.
     private let authorization = ActivityAuthorizationInfo()
     /// Live Activities allowed in Settings: read once, then kept current by
     /// the reader's own update sequence, so a change there still applies.
