@@ -144,6 +144,21 @@ test("the Cloud never gets the camera, screen capture or any other capability", 
   }
 });
 
+test("the Cloud's microphone is decided by this computer's media rule, never a copy of it", () => {
+  // One rule says what counts as the microphone. The Cloud only narrows it
+  // (its own origin, the main frame, no screen capture), so a new media
+  // shape this computer accepts or refuses is accepted or refused on the Cloud too.
+  const { ask } = cloudFixture();
+  const shapes = [
+    {}, { mediaType: "audio" }, { mediaType: "video" }, { mediaTypes: ["audio"] }, { mediaTypes: ["audio", "audio"] },
+    { mediaTypes: ["video"] }, { mediaTypes: ["audio", "video"] }, { mediaTypes: ["audio"], mediaType: "video" },
+    { mediaTypes: null }, { mediaTypes: "audio" }, { mediaTypes: [""] },
+  ];
+  for (const shape of shapes) {
+    assert.equal(ask("media", onCloud(shape)), appPermissionAllowed("media", CLOUD, CLOUD, shape), JSON.stringify(shape));
+  }
+});
+
 test("a server that is not the verified Cloud never hears the microphone", () => {
   const { state, ask, check } = cloudFixture();
   const mic = { isMainFrame: true, mediaTypes: ["audio"] };
