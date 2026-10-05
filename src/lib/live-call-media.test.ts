@@ -454,7 +454,12 @@ describe("live call media", () => {
   it("explains a window without microphone support", async () => {
     resetLiveMedia();
     await startLiveCall({ botId: "b1", threadId: "t1" });
-    expect(liveMedia()).toMatchObject({ phase: "failed", notice: "Live calls need microphone and WebRTC support, which this window does not have." });
+    // in plain words, with what to do: no "WebRTC", and nothing to try again
+    expect(liveMedia()).toMatchObject({
+      phase: "failed",
+      notice: "Live calls need a microphone, and this window can't use one. Open OpenMausBot at its https address in an up-to-date browser.",
+      action: null,
+    });
     expect(currentCall()).toBeNull();
   });
 
