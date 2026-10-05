@@ -1893,7 +1893,8 @@ function navigateMainWindow(url) {
 }
 
 /** The person's Cloud address for their account, kept while a check with
- * OMB Cloud is pending or failed (cloud-home.mjs rememberedCloudHome). */
+ * OpenMausBot Cloud is pending or failed, or the sign-in has ended
+ * (cloud-home.mjs rememberedCloudHome). */
 let rememberedHome = null;
 
 async function switchEnvironment(id) {

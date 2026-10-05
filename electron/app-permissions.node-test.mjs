@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { readFileSync } from "node:fs";
 import { appPermissionAllowed, appPermissionHandlers, externalWebUrl } from "./app-permissions.mjs";
-import { createCloudAccountClient } from "./cloud-account.mjs";
+import { cloudPlanSnapshot, createCloudAccountClient } from "./cloud-account.mjs";
 import { myCloudOrigin, rememberedCloudHome } from "./cloud-home.mjs";
 
 const LOCAL_ORIGIN = "http://127.0.0.1:5199";
@@ -222,7 +222,7 @@ test("the app installs these handlers, with its one rule for My Cloud and a wait
 
 // ── My Cloud: one rule, decided once the saved sign-in has restored ──
 // The app's own wiring (main.mjs), end to end: the real Cloud sign-in client
-// restoring a saved record against a stand-in OMB Cloud, the Cloud remembered
+// restoring a saved record against a stand-in OpenMausBot Cloud, the Cloud remembered
 // for its account as main remembers it, and the handlers asking myCloudOrigin,
 // the same rule the Cloud page's Settings → Plan channels use.
 const ADMIN = "http://127.0.0.1:9";
@@ -232,13 +232,17 @@ function myCloudFixture() {
   const identity = () => ({ cloudContractVersion: 1, expiresAt: f.now + 86_400_000, device: { id: "device-1" }, account: ACCOUNT });
   f.saved = { origin: ADMIN, token: `omc_${"T".repeat(43)}`, ...identity() };
   delete f.saved.cloudContractVersion;
-  const session = () => ({ ...identity(), cloud: { state: "ready", origin: CLOUD },
+  // `f.cloud`: the machine OpenMausBot Cloud names for this account (null: none).
+  f.cloud = { state: "ready", origin: CLOUD };
+  const session = () => ({ ...identity(), cloud: f.cloud,
     entitlement: { plan: "pro", tier: "pro", status: "active", expiresAt: f.now + 30 * 86_400_000, version: 1 } });
-  // OMB Cloud answers now ("ready"), later (a promise the test releases), or not at all ("down").
+  // OpenMausBot Cloud answers now ("ready"), later (a promise the test releases),
+  // not at all ("down"), or that this computer's sign-in no longer counts ("ended").
   const fetch = async (url, { method = "GET" } = {}) => {
     if (!url.endsWith("/api/cloud/desktop/session")) return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
     if (method === "DELETE") return Response.json({ revoked: true });
     if (f.admin === "down") throw new TypeError("fetch failed");
+    if (f.admin === "ended") return new Response(JSON.stringify({ error: "invalid_token" }), { status: 401 });
     if (f.admin !== "ready") await f.admin;
     return Response.json(session());
   };
@@ -286,7 +290,7 @@ test("a Live call placed while the saved sign-in is still restoring hears the mi
 
 test("a restore that ends without this Cloud, or outlasts the wait, refuses rather than waiting on", async () => {
   const f = myCloudFixture();
-  // OMB Cloud does not answer at launch: nothing says this page is the person's Cloud.
+  // OpenMausBot Cloud does not answer at launch: nothing says this page is My Cloud.
   f.admin = "down";
   const restored = f.restore();
   const mic = f.ask("media", MIC);
@@ -299,7 +303,7 @@ test("a restore that ends without this Cloud, or outlasts the wait, refuses rath
   assert.equal(await f.ask("media", MIC).done, false);
 });
 
-test("with OMB Cloud unreachable past the verified window, the same account's Cloud keeps the microphone", async () => {
+test("with OpenMausBot Cloud unreachable past the verified window, the same account's Cloud keeps the microphone", async () => {
   const f = myCloudFixture();
   await f.restore();
   assert.equal(f.client.homeTarget()?.origin, CLOUD);
@@ -350,6 +354,59 @@ test("companion client mode has no Cloud of its own, so no Cloud page hears the 
   assert.equal(f.ask("media", MIC).value, false);
   assert.equal(f.check(), false);
   assert.equal(myCloudOrigin({ account: null, remembered: f.remembered, remoteAccess: null }), null, "no Cloud sign-in on this computer");
+});
+
+test("a check that finds no Cloud for this account ends it, for the microphone and the Plan channels alike", async () => {
+  const f = myCloudFixture();
+  await f.restore();
+  assert.equal(f.ask("media", MIC).value, true);
+  // OpenMausBot Cloud answers for this account and names no machine: the
+  // address it named before is no longer theirs, whatever serves it now.
+  f.cloud = null;
+  await f.client.refresh();
+  assert.equal(f.client.state().status, "connected");
+  assert.equal(myCloudOrigin({ account: f.client, remembered: f.remembered, remoteAccess: null }), null);
+  assert.equal(f.ask("media", MIC).value, false);
+  assert.equal(f.check(), false);
+  // A failed check after that does not bring it back.
+  f.admin = "down";
+  await f.client.refresh();
+  assert.equal(f.ask("media", MIC).value, false);
+});
+
+test("a stopped Cloud named without its address is still this account's Cloud", async () => {
+  // OpenMausBot Cloud still names the machine, so the Server menu's My Cloud
+  // keeps opening through the Cloud's own connection (cloud-home.mjs isCloudHomeEntry).
+  const f = myCloudFixture();
+  await f.restore();
+  f.cloud = { state: "stopped", origin: null };
+  await f.client.refresh();
+  assert.equal(f.client.homeTarget(), null);
+  assert.equal(f.ask("media", MIC).value, true);
+});
+
+test("after the sign-in has ended or expired, the same account's Cloud keeps the microphone until sign-out", async () => {
+  // The rule the Cloud page's Settings → Plan uses to say "sign in again on
+  // your computer" (cloudPlanSnapshot "signin"), not an error; signing out,
+  // another account or restarting the app ends it (kept in memory only).
+  const ended = myCloudFixture();
+  await ended.restore();
+  ended.admin = "ended";
+  await ended.client.refresh();
+  assert.deepEqual([ended.client.state().status, ended.client.state().message], ["reauth-required", "access-ended"]);
+  assert.equal(cloudPlanSnapshot(ended.client.state()).status, "signin");
+  assert.equal(ended.ask("media", MIC).value, true);
+  await ended.client.signOut();
+  assert.equal(ended.ask("media", MIC).value, false);
+
+  const expired = myCloudFixture();
+  await expired.restore();
+  expired.now = expired.client.state().expiresAt + 1;
+  await expired.client.refresh();
+  assert.deepEqual([expired.client.state().status, expired.client.state().message], ["reauth-required", "expired"]);
+  assert.equal(expired.ask("media", MIC).value, true);
+  await expired.client.signOut();
+  assert.equal(expired.ask("media", MIC).value, false);
 });
 
 // ── What a page is told when its microphone is refused ──

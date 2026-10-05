@@ -266,11 +266,17 @@ frame of the app's window at the exact origin of the person's Cloud
 (`electron/app-permissions.mjs`, `appPermissionHandlers`). One rule says which
 Cloud that is, for the microphone and the Cloud page's Settings → Plan alike
 (`electron/cloud-home.mjs`, `myCloudOrigin`): the machine the Cloud sign-in
-verified or, while a check is pending or has failed, the one this same account
-last verified. A call placed while a saved sign-in is still restoring, in the
-first seconds after launch, waits for it (at most 5 seconds) rather than being
-refused. Signing out of Cloud takes it away at once, and so does companion
-client mode; every other server's page stays refused. The
+verified or, failing that, the one this same account last verified in this
+app session. That last one counts while a check is pending or has failed, and
+also after the sign-in has ended or expired, when Settings → Plan on the Cloud
+says "sign in again on your computer". A check that names no machine for the
+account ends it (a stopped machine named without its address does not). A
+call placed while a saved sign-in is still restoring, in the first seconds
+after launch, waits for it (at most 5 seconds) rather than being refused.
+Signing out of OpenMausBot Cloud takes it away at once, and so do another
+account, companion client mode and restarting the app before a check succeeds
+(the last verified Cloud is kept in memory only); every other server's page
+stays refused. The
 OpenAI key for Live calls is saved on the Cloud, and the Live copy says so.
 Take-turns calls still need the Mac's on-device listening, so they stay on
 **This computer**.
