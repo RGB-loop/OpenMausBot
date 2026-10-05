@@ -458,9 +458,6 @@ export function resetOpenCodeModelCache() {
  * from the Go-only name. */
 export const resetOpenCodeGoModelCache = resetOpenCodeModelCache;
 
-/** The names live in config.ts, beside the keys the owner saves for OpenCode. */
-export { OPENCODE_PROVIDER_ENV };
-
 /** Whether OpenCode may read provider keys from the server's own
  * environment. Only when that environment is the person's own shell: not on a
  * Cloud home, a hosted team workspace or an organisation-managed desktop, and
@@ -488,23 +485,19 @@ export function setOpenCodeProviderKeyPolicy(allowed: () => boolean): void {
   providerKeysAllowed = allowed;
 }
 
-let ownProviderKeys = (): Readonly<Record<string, string>> => ({});
-
-/** The keys the owner saved for OpenCode in Settings (config.ts
- * openCodeProviderKeys). The server sets this beside the policy above. */
-export function setOpenCodeOwnProviderKeys(keys: () => Readonly<Record<string, string>>): void {
-  ownProviderKeys = keys;
-}
-
-function withholdProviderKeysWhenManaged(env: Record<string, string | undefined>): void {
+/** Where OpenCode may not read the server's own environment, a provider key
+ * reaches it only through its instance environment: a key the owner saved
+ * in Settings (config.ts injectedEnvironment), which is theirs on any
+ * server. The same name riding along in the server's env stays out. */
+function withholdProviderKeysWhenManaged(
+  env: Record<string, string | undefined>,
+  _config: unknown,
+  _instanceId: string,
+  instanceEnvironment: Readonly<Record<string, string>>,
+): void {
   if (providerKeysAllowed()) return;
-  const own = ownProviderKeys();
   for (const key of OPENCODE_PROVIDER_ENV) {
-    // A key the owner saved for OpenCode in Settings is theirs to use on any
-    // server. Only that exact value: the server's own key under the same
-    // name still stays out.
-    if (own[key] !== undefined && env[key] === own[key]) continue;
-    delete env[key];
+    if (!Object.hasOwn(instanceEnvironment, key)) delete env[key];
   }
 }
 
@@ -794,8 +787,14 @@ function allowOwnedDirectories(env: Record<string, string | undefined>, botId: s
 /** Account failures in plain words, with the fix, naming the provider that
  * refused: with provider keys and `opencode auth login` a model may be
  * OpenRouter's or Anthropic's, not Zen's. Each stays under the 160
- * characters a chat error row shows. */
-export function describeOpenCodeAccountError(code: AccountErrorCode, model?: string): string {
+ * characters a chat error row shows. Zen and Go take the key saved in
+ * Settings. On a Cloud the owner has no terminal for `opencode auth login`:
+ * another provider's key is saved under Keys for other OpenCode providers. */
+export function describeOpenCodeAccountError(
+  code: AccountErrorCode,
+  model?: string,
+  where: { cloudHome: boolean } = { cloudHome: cloudHomeConfigured() },
+): string {
   const provider = model && model.includes("/") ? model.slice(0, model.indexOf("/")) : "";
   const zen = provider === "opencode";
   const go = provider === "opencode-go";
@@ -804,8 +803,10 @@ export function describeOpenCodeAccountError(code: AccountErrorCode, model?: str
   switch (code) {
     case "invalid_credentials":
       return zen || go || !provider
-        ? "OpenCode rejected its key, or has none for this model. Fix it in Settings → API keys or with `opencode auth login`."
-        : `OpenCode's ${name} key for this model is missing or was rejected. Fix it with \`opencode auth login\`, or choose another model.`;
+        ? "OpenCode rejected its key, or has none for this model. Add or replace the OpenCode key in Settings → API keys."
+        : where.cloudHome
+          ? `OpenCode's ${name} key for this model is missing or was rejected. Save it under Keys for other OpenCode providers in Settings → API keys.`
+          : `OpenCode's ${name} key for this model is missing or was rejected. Fix it with \`opencode auth login\`, or choose another model.`;
     case "insufficient_funds":
       return zen || !provider
         ? "Your OpenCode Zen balance has run out. Add credit at opencode.ai, or choose one of Zen's free models for this bot."
@@ -841,8 +842,7 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   models: NO_MODELS,
   defaultCli: "opencode",
   nativeSource: "opencode.acp",
-  loginNote:
-    "OpenCode has no usable models — run `opencode auth login` or connect a provider in the OpenCode app",
+  loginNote: "OpenCode has no usable models. Add an OpenCode key in Settings → API keys.",
   install: {
     command: {
       darwin: "npm install -g opencode-ai",
