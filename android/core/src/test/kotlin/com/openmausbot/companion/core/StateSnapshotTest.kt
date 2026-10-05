@@ -417,7 +417,7 @@ class StateSnapshotTest {
         val next = "t${20 - kept.size}"
         val oneMore = snapshot.copy(threads = snapshot.threads + (next to live.snapshot().threads.getValue(next)))
         assertTrue(oneMore.encoded().size > capped.maxBytes)
-        assertEquals(live.bots.single().copy(messages = null, hasMore = null), snapshot.bots.single())
+        assertEquals(live.bots.single().copy(messages = null, hasMore = null), snapshot.bots.single().bot)
     }
 
     @Test
@@ -463,11 +463,11 @@ class StateSnapshotTest {
 
         assertTrue(snapshot.encoded().size <= capped.maxBytes, "encoded ${snapshot.encoded().size}")
         assertTrue(snapshot.routineRuns.isEmpty())
-        val rows = snapshot.bots.first().tasks.orEmpty().map(BotTask::threadId)
+        val rows = snapshot.bots.first().tasks.orEmpty().map(StateSnapshot.CachedTask::threadId)
         assertTrue(rows.size in 1 until 300)
         // The quietest rows went; the bot's own thread stayed.
         assertEquals((301 - rows.size..300).map { "row-$it" }, rows)
-        assertEquals(listOf("scout", "echo"), snapshot.bots.map(Bot::id))
+        assertEquals(listOf("scout", "echo"), snapshot.bots.map(StateSnapshot.CachedBot::id))
     }
 
     // MARK: - Exclusions
@@ -534,6 +534,89 @@ class StateSnapshotTest {
         assertEquals("image/png", saved.getValue("shot").mime)
         val attachment = saved.getValue("file").attachments.orEmpty().single()
         assertEquals(MessageImageAttachment(kind = "file", path = null, mime = "application/pdf", name = "report.pdf"), attachment)
+    }
+
+    @Test
+    fun `every roster field survives except the record's own transcript`() {
+        val task = BotTask(
+            threadId = "t1",
+            title = "Flights",
+            createdAt = 1.0,
+            modelSelection = ModelSelection("claude", "opus", effort = "high"),
+            activity = "Searching",
+            busy = true,
+            waitingOnTeammate = true,
+            unread = true,
+            approvalMode = "custom",
+            autoApprove = false,
+            alwaysAllow = listOf("Bash"),
+            projectId = "p1",
+            openedBy = ThreadOpener("echo", "Echo", "d1", 2.0),
+            closedBy = ThreadCloser("echo", "Echo", 3.0),
+            archivedAt = 0.0,
+            routineRunId = "run-1",
+            pinned = true,
+            updatedAt = 4.0,
+            snoozedUntil = 0.0,
+        )
+        val bot = snapshotBot("scout", tasks = listOf(task), activeLeafId = "a-2", pinned = true, section = "Travel").copy(
+            avatarUrl = "/api/attachments/scout.png",
+            avatarCrop = AvatarCrop.CIRCLE,
+            busy = true,
+            activity = "Working",
+            waitingOnTeammate = false,
+            hidden = false,
+            chiefOfStaff = true,
+            approvalMode = "ask",
+            autoApprove = false,
+            alwaysAllow = listOf("Read"),
+            computer = "maus",
+            cloudBackend = "e2b",
+            speakReplies = true,
+            voice = "ash",
+            mascotExpression = "happy",
+            mascotBody = "cursor",
+            projects = listOf(BotProject("p1", "Trips", "🧳")),
+            messages = snapshotChain("a", 2),
+            hasMore = true,
+        )
+        val room = snapshotRoom("team").copy(
+            dm = false,
+            busyBotId = "scout",
+            working = true,
+            tasks = listOf(task),
+            messages = snapshotChain("r", 2),
+            hasMore = false,
+        )
+
+        assertEquals(bot.copy(messages = null, hasMore = null), StateSnapshot.CachedBot(bot).bot)
+        assertEquals(room.copy(messages = null, hasMore = null), StateSnapshot.CachedRoom(room).room)
+        assertEquals(task, StateSnapshot.CachedTask(task).task)
+    }
+
+    @Test
+    fun `a field the wire gains is kept or left out on purpose`() {
+        // Each cached type lists every field of its wire type but these. A new
+        // wire field fails here until it is added to the cached type or, if
+        // it is heavy, secret or live, to this list.
+        val leftOut = mapOf(
+            "Message" to setOf("png"),
+            "Bot" to setOf("messages", "hasMore"),
+            "Room" to setOf("messages", "hasMore"),
+            "BotTask" to emptySet(),
+        )
+        val pairs = listOf(
+            Triple("Message", Message.serializer().descriptor, StateSnapshot.CachedMessage.serializer().descriptor),
+            Triple("Bot", Bot.serializer().descriptor, StateSnapshot.CachedBot.serializer().descriptor),
+            Triple("Room", Room.serializer().descriptor, StateSnapshot.CachedRoom.serializer().descriptor),
+            Triple("BotTask", BotTask.serializer().descriptor, StateSnapshot.CachedTask.serializer().descriptor),
+        )
+
+        pairs.forEach { (name, wire, cached) ->
+            val wireFields = (0 until wire.elementsCount).map(wire::getElementName).toSet()
+            val cachedFields = (0 until cached.elementsCount).map(cached::getElementName).toSet()
+            assertEquals(wireFields - leftOut.getValue(name), cachedFields, name)
+        }
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.openmausbot.companion.core
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import java.util.Base64
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -13,7 +14,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -31,6 +36,7 @@ class SnapshotStoreTest {
         val threads = mutableListOf<String>()
         var unreadable = false
         var beforeWrite: () -> Unit = {}
+        val written = mutableListOf<ByteArray>()
 
         override fun read(name: String): ByteArray? = synchronized(this) {
             threads += Thread.currentThread().name
@@ -43,6 +49,7 @@ class SnapshotStoreTest {
             synchronized(this) {
                 threads += Thread.currentThread().name
                 writes += name to StateSnapshot.decode(bytes)
+                written += bytes
                 blobs[name] = bytes
             }
         }
@@ -53,6 +60,22 @@ class SnapshotStoreTest {
 
         override fun deleteAll() {
             synchronized(this) { blobs.clear() }
+        }
+    }
+
+    /** A transcript that notes the thread every read of it runs on. */
+    private class RecordingTranscript(
+        private val lines: List<Message>,
+        private val threads: MutableList<String>,
+    ) : AbstractList<Message>() {
+        override val size: Int
+            get() = record { lines.size }
+
+        override fun get(index: Int): Message = record { lines[index] }
+
+        private fun <T> record(read: () -> T): T {
+            synchronized(threads) { threads += Thread.currentThread().name }
+            return read()
         }
     }
 
@@ -121,6 +144,34 @@ class SnapshotStoreTest {
 
         assertTrue(storage.blobs.getValue("mac-1").size <= 40_000)
         assertEquals(listOf("t10", "t9", "t8"), storage.writes.single().second.threads.keys.toList())
+    }
+
+    @Test
+    fun `a snapshot made by hand still carries no record transcript to disk`() = runTest {
+        val storage = MemoryStorage()
+        val store = store(storage)
+        val pixels = Base64.getEncoder().encodeToString("RECORD-PIXELS-".repeat(40).toByteArray())
+        fun shot(id: String) = Message(id = id, role = Message.Role.BOT, kind = Message.Kind.SCREEN, at = 1.0, png = pixels)
+        // A hydrated roster: every record still holds its own page of messages.
+        val bots = listOf(snapshotBot("scout").copy(messages = listOf(shot("bot-shot")), hasMore = true))
+        val rooms = listOf(snapshotRoom("team").copy(messages = listOf(shot("room-shot")), hasMore = true))
+
+        // The only way onto a snapshot is the roster type, which has no field for them.
+        store.save(
+            snapshot().copy(
+                bots = bots.map { StateSnapshot.CachedBot(it) },
+                rooms = rooms.map { StateSnapshot.CachedRoom(it) },
+            ),
+        )
+        store.flush()
+
+        val text = storage.written.single().decodeToString()
+        listOf(pixels, "bot-shot", "room-shot").forEach { assertFalse(it in text, "found $it") }
+        val roster = Json.parseToJsonElement(text).jsonObject
+        (roster.getValue("bots").jsonArray + roster.getValue("rooms").jsonArray).forEach { row ->
+            assertFalse("messages" in row.jsonObject.keys, row.toString())
+            assertFalse("hasMore" in row.jsonObject.keys, row.toString())
+        }
     }
 
     @Test
@@ -233,6 +284,43 @@ class SnapshotStoreTest {
     }
 
     @Test
+    fun `a wipe still waiting when the scope ends still happens`() = runTest {
+        val storage = MemoryStorage()
+        storage.blobs["mac-1"] = snapshot().encoded()
+        val storeScope = CoroutineScope(SupervisorJob())
+        val store = SnapshotStore(storage, storeScope, StandardTestDispatcher(testScheduler))
+        // The scope ends while the writer is busy with another computer's save.
+        storage.beforeWrite = { storeScope.cancel() }
+
+        store.save(snapshot(connectionId = "mac-2"))
+        store.wipe("mac-1")
+        store.save(snapshot(connectionId = "mac-1", text = "after"))
+        advanceUntilIdle()
+
+        assertFalse("mac-1" in storage.blobs)
+        assertEquals(listOf("mac-2"), storage.writes.map { it.first })
+    }
+
+    @Test
+    fun `a wipe after the scope ended still happens`() = runTest {
+        val storage = MemoryStorage()
+        storage.blobs["mac-1"] = snapshot().encoded()
+        storage.blobs["mac-2"] = snapshot(connectionId = "mac-2").encoded()
+        val storeScope = CoroutineScope(SupervisorJob())
+        val store = SnapshotStore(storage, storeScope, StandardTestDispatcher(testScheduler))
+        storeScope.cancel()
+        advanceUntilIdle()
+
+        store.wipe("mac-1")
+        advanceUntilIdle()
+        assertEquals(setOf("mac-2"), storage.blobs.keys)
+
+        store.wipeAll()
+        advanceUntilIdle()
+        assertTrue(storage.blobs.isEmpty())
+    }
+
+    @Test
     fun `wipeAll drops every save that was still waiting`() = runTest {
         val storage = MemoryStorage()
         val store = store(storage)
@@ -300,16 +388,25 @@ class SnapshotStoreTest {
     // MARK: - Threads
 
     @Test
-    fun `saving and loading run on the writer, never the caller`() {
+    fun `building, saving and loading run on the writer, never the caller`() {
         val storage = MemoryStorage()
+        // Building is the expensive part — it encodes, more than once near the
+        // cap — so it is the transcript reads that must happen on the writer,
+        // not just the disk.
+        val reads = mutableListOf<String>()
+        val state = state().let { it.copy(messages = it.messages.mapValues { (_, lines) -> RecordingTranscript(lines, reads) }) }
         withWriterThread(storage) { store ->
-            store.save(state(), "mac-1", "env-1", savedAt = 1)
+            store.save(state, "mac-1", "env-1", savedAt = 1)
             val loaded = runBlocking { store.load("mac-1", "env-1") }
 
             assertNotNull(loaded)
+            assertEquals(2, loaded.threads.getValue("scout-thread").messages.size)
             // Debug builds of coroutines append " @coroutine#n" to the name.
             assertEquals(2, storage.threads.size)
             assertTrue(storage.threads.all { it.startsWith(WRITER) }, storage.threads.toString())
+            val buildThreads = synchronized(reads) { reads.toList() }
+            assertTrue(buildThreads.isNotEmpty())
+            assertTrue(buildThreads.all { it.startsWith(WRITER) }, buildThreads.toString())
             assertFalse(Thread.currentThread().name.startsWith(WRITER))
         }
     }

@@ -39,9 +39,9 @@ data class StateSnapshot(
     val serverEnvironmentId: String? = null,
     /** Epoch milliseconds: the "last updated" the offline banner shows. */
     val savedAt: Long,
-    /** The roster with every transcript stripped off. */
-    val bots: List<Bot> = emptyList(),
-    val rooms: List<Room> = emptyList(),
+    /** The roster, as rows that have no room for a transcript. */
+    val bots: List<CachedBot> = emptyList(),
+    val rooms: List<CachedRoom> = emptyList(),
     /** The latest page of each opened thread, by thread id, most recently active first. */
     val threads: Map<String, CachedThread> = emptyMap(),
     val routines: List<Routine> = emptyList(),
@@ -67,6 +67,244 @@ data class StateSnapshot(
                 maxBytes = 5 * 1_024 * 1_024,
             )
         }
+    }
+
+    /**
+     * A bot as the roster keeps it: [Bot] field for field, less the record's
+     * own transcript. A hydrate leaves a page of messages on each record,
+     * screenshots and all; the only copy of a transcript the cache keeps is
+     * the bounded page in [threads]. Spelled out rather than reusing the wire
+     * type for the same reason as [CachedMessage]: a heavy field the wire
+     * gains later has to be added here on purpose, so no snapshot, however it
+     * is made, can carry one to disk.
+     */
+    @Serializable
+    data class CachedBot(
+        val id: String,
+        val threadId: String,
+        val name: String,
+        val title: String,
+        val description: String,
+        val notifications: Boolean,
+        val color: String,
+        val unread: Boolean,
+        val modelSelection: ModelSelection,
+        val createdAt: Double,
+        val avatarUrl: String? = null,
+        val avatarCrop: AvatarCrop? = null,
+        val busy: Boolean? = null,
+        val activity: String? = null,
+        val waitingOnTeammate: Boolean? = null,
+        val pinned: Boolean? = null,
+        val hidden: Boolean? = null,
+        val section: String? = null,
+        val chiefOfStaff: Boolean? = null,
+        val approvalMode: String? = null,
+        val autoApprove: Boolean? = null,
+        val alwaysAllow: List<String>? = null,
+        val computer: String? = null,
+        val cloudBackend: String? = null,
+        val speakReplies: Boolean? = null,
+        val voice: String? = null,
+        val mascotExpression: String? = null,
+        val mascotBody: String? = null,
+        val tasks: List<CachedTask>? = null,
+        val activeLeafId: String? = null,
+        val projects: List<BotProject>? = null,
+    ) {
+        constructor(bot: Bot) : this(
+            id = bot.id,
+            threadId = bot.threadId,
+            name = bot.name,
+            title = bot.title,
+            description = bot.description,
+            notifications = bot.notifications,
+            color = bot.color,
+            unread = bot.unread,
+            modelSelection = bot.modelSelection,
+            createdAt = bot.createdAt,
+            avatarUrl = bot.avatarUrl,
+            avatarCrop = bot.avatarCrop,
+            busy = bot.busy,
+            activity = bot.activity,
+            waitingOnTeammate = bot.waitingOnTeammate,
+            pinned = bot.pinned,
+            hidden = bot.hidden,
+            section = bot.section,
+            chiefOfStaff = bot.chiefOfStaff,
+            approvalMode = bot.approvalMode,
+            autoApprove = bot.autoApprove,
+            alwaysAllow = bot.alwaysAllow,
+            computer = bot.computer,
+            cloudBackend = bot.cloudBackend,
+            speakReplies = bot.speakReplies,
+            voice = bot.voice,
+            mascotExpression = bot.mascotExpression,
+            mascotBody = bot.mascotBody,
+            tasks = bot.tasks?.map(::CachedTask),
+            activeLeafId = bot.activeLeafId,
+            projects = bot.projects,
+        )
+
+        /** The record as a hydrate would leave it, with no transcript on it. */
+        val bot: Bot
+            get() = Bot(
+                id = id,
+                threadId = threadId,
+                name = name,
+                title = title,
+                description = description,
+                notifications = notifications,
+                color = color,
+                unread = unread,
+                modelSelection = modelSelection,
+                createdAt = createdAt,
+                avatarUrl = avatarUrl,
+                avatarCrop = avatarCrop,
+                busy = busy,
+                activity = activity,
+                waitingOnTeammate = waitingOnTeammate,
+                pinned = pinned,
+                hidden = hidden,
+                section = section,
+                chiefOfStaff = chiefOfStaff,
+                approvalMode = approvalMode,
+                autoApprove = autoApprove,
+                alwaysAllow = alwaysAllow,
+                computer = computer,
+                cloudBackend = cloudBackend,
+                speakReplies = speakReplies,
+                voice = voice,
+                mascotExpression = mascotExpression,
+                mascotBody = mascotBody,
+                tasks = tasks?.map(CachedTask::task),
+                activeLeafId = activeLeafId,
+                projects = projects,
+            )
+    }
+
+    /** A channel or DM as the roster keeps it: [Room] field for field, less its transcript (see [CachedBot]). */
+    @Serializable
+    data class CachedRoom(
+        val id: String,
+        val threadId: String,
+        val name: String,
+        val memberIds: List<String>,
+        val defaultResponder: GroupResponder,
+        val bulletin: String,
+        val unread: Boolean,
+        val createdAt: Double,
+        val dm: Boolean? = null,
+        val section: String? = null,
+        val busyBotId: String? = null,
+        val working: Boolean? = null,
+        val tasks: List<CachedTask>? = null,
+    ) {
+        constructor(room: Room) : this(
+            id = room.id,
+            threadId = room.threadId,
+            name = room.name,
+            memberIds = room.memberIds,
+            defaultResponder = room.defaultResponder,
+            bulletin = room.bulletin,
+            unread = room.unread,
+            createdAt = room.createdAt,
+            dm = room.dm,
+            section = room.section,
+            busyBotId = room.busyBotId,
+            working = room.working,
+            tasks = room.tasks?.map(::CachedTask),
+        )
+
+        val room: Room
+            get() = Room(
+                id = id,
+                threadId = threadId,
+                name = name,
+                memberIds = memberIds,
+                defaultResponder = defaultResponder,
+                bulletin = bulletin,
+                unread = unread,
+                createdAt = createdAt,
+                dm = dm,
+                section = section,
+                busyBotId = busyBotId,
+                working = working,
+                tasks = tasks?.map(CachedTask::task),
+            )
+    }
+
+    /** A row of a thread list: [BotTask] field for field, spelled out so a field it gains later is kept only on purpose. */
+    @Serializable
+    data class CachedTask(
+        val threadId: String,
+        val title: String,
+        val createdAt: Double,
+        val modelSelection: ModelSelection? = null,
+        val activity: String? = null,
+        val busy: Boolean? = null,
+        val waitingOnTeammate: Boolean? = null,
+        val unread: Boolean? = null,
+        val approvalMode: String? = null,
+        val autoApprove: Boolean? = null,
+        val alwaysAllow: List<String>? = null,
+        val projectId: String? = null,
+        val openedBy: ThreadOpener? = null,
+        val closedBy: ThreadCloser? = null,
+        val archivedAt: Double? = null,
+        val routineRunId: String? = null,
+        val pinned: Boolean? = null,
+        val updatedAt: Double? = null,
+        val snoozedUntil: Double? = null,
+    ) {
+        constructor(task: BotTask) : this(
+            threadId = task.threadId,
+            title = task.title,
+            createdAt = task.createdAt,
+            modelSelection = task.modelSelection,
+            activity = task.activity,
+            busy = task.busy,
+            waitingOnTeammate = task.waitingOnTeammate,
+            unread = task.unread,
+            approvalMode = task.approvalMode,
+            autoApprove = task.autoApprove,
+            alwaysAllow = task.alwaysAllow,
+            projectId = task.projectId,
+            openedBy = task.openedBy,
+            closedBy = task.closedBy,
+            archivedAt = task.archivedAt,
+            routineRunId = task.routineRunId,
+            pinned = task.pinned,
+            updatedAt = task.updatedAt,
+            snoozedUntil = task.snoozedUntil,
+        )
+
+        val task: BotTask
+            get() = BotTask(
+                threadId = threadId,
+                title = title,
+                createdAt = createdAt,
+                modelSelection = modelSelection,
+                activity = activity,
+                busy = busy,
+                waitingOnTeammate = waitingOnTeammate,
+                unread = unread,
+                approvalMode = approvalMode,
+                autoApprove = autoApprove,
+                alwaysAllow = alwaysAllow,
+                projectId = projectId,
+                openedBy = openedBy,
+                closedBy = closedBy,
+                archivedAt = archivedAt,
+                routineRunId = routineRunId,
+                pinned = pinned,
+                updatedAt = updatedAt,
+                snoozedUntil = snoozedUntil,
+            )
+
+        /** [BotTask.listStamp]: the time the thread list sorts by. */
+        internal val listStamp: Double
+            get() = updatedAt ?: createdAt
     }
 
     /** One opened thread as it last looked: its active branch, newest last. */
@@ -202,18 +440,18 @@ data class StateSnapshot(
             droppedRuns += index
         }
 
-        val owners = (bots.map(Bot::threadId) + rooms.map(Room::threadId)).toSet()
+        val owners = (bots.map(CachedBot::threadId) + rooms.map(CachedRoom::threadId)).toSet()
         val listed = (bots.flatMap { it.tasks.orEmpty() } + rooms.flatMap { it.tasks.orEmpty() })
             .filter { it.threadId !in owners }
             .sortedBy { activity[it.threadId] ?: it.listStamp }
         val droppedThreads = mutableSetOf<String>()
         for (task in listed) {
             if (total <= maxBytes) break
-            total -= cost(CompanionJson.encodeToString(BotTask.serializer(), task))
+            total -= cost(CompanionJson.encodeToString(CachedTask.serializer(), task))
             droppedThreads += task.threadId
         }
 
-        fun List<BotTask>?.keeping() = this?.filter { it.threadId !in droppedThreads }
+        fun List<CachedTask>?.keeping() = this?.filter { it.threadId !in droppedThreads }
         val shed = copy(
             routineRuns = routineRuns.filterIndexed { index, _ -> index !in droppedRuns },
             bots = if (droppedThreads.isEmpty()) bots else bots.map { it.copy(tasks = it.tasks.keeping()) },
@@ -321,9 +559,9 @@ internal fun CompanionState.encodedOfflineSnapshot(
         serverEnvironmentId = serverEnvironmentId,
         savedAt = savedAt,
         // Transcripts live in `threads`, one bounded page each; the copy a
-        // hydrate leaves on the record would be a second, unbounded one.
-        bots = bots.map { it.copy(messages = null, hasMore = null) },
-        rooms = rooms.map { it.copy(messages = null, hasMore = null) },
+        // hydrate leaves on the record has no field to land in.
+        bots = bots.map { StateSnapshot.CachedBot(it) },
+        rooms = rooms.map { StateSnapshot.CachedRoom(it) },
         routines = routines,
         routineRuns = StateSnapshot.recentRuns(routineRuns, limits.routineRuns),
     ).shedRoster(limits.maxBytes, activity)
@@ -361,8 +599,8 @@ fun CompanionState(snapshot: StateSnapshot): CompanionState {
         thread.activeLeafId?.let { activeLeafIds[threadId] = it }
     }
     return CompanionState(
-        bots = snapshot.bots,
-        rooms = snapshot.rooms,
+        bots = snapshot.bots.map(StateSnapshot.CachedBot::bot),
+        rooms = snapshot.rooms.map(StateSnapshot.CachedRoom::room),
         messages = messages,
         hasMore = hasMore,
         activeLeafIds = activeLeafIds,

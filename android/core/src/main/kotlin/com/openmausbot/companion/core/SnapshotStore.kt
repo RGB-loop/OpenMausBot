@@ -109,11 +109,16 @@ class PlainFileSnapshotStorage(private val directory: File) : SnapshotStorage {
  * takes a ticket too, so a save that was already waiting can never put a
  * forgotten computer's data back. Loads run after everything requested before
  * them.
+ *
+ * The writer lives as long as [scope]. Once the scope ends nothing more is
+ * written and every load answers with no copy, but a wipe still happens,
+ * whether it was waiting in line or asked for afterwards: forgetting a
+ * computer must not depend on the store outliving the request.
  */
 class SnapshotStore(
     private val storage: SnapshotStorage,
     scope: CoroutineScope,
-    dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private sealed interface Operation
     private class Write(val ticket: Long, val connectionId: String, val build: () -> EncodedSnapshot?) : Operation
@@ -137,7 +142,7 @@ class SnapshotStore(
         scope.launch(dispatcher) {
             for (operation in operations) {
                 if (!isActive) {
-                    abandon(operation)
+                    drain(operation)
                     continue
                 }
                 try {
@@ -151,9 +156,10 @@ class SnapshotStore(
                 }
             }
         }.invokeOnCompletion { cause ->
-            // A store whose scope ended answers every waiting load with no copy.
+            // A store whose scope ended answers every waiting load with no copy
+            // and still runs every waiting wipe.
             operations.close(cause)
-            while (true) abandon(operations.tryReceive().getOrNull() ?: break)
+            while (true) drain(operations.tryReceive().getOrNull() ?: break)
         }
     }
 
@@ -215,14 +221,21 @@ class SnapshotStore(
      */
     fun wipe(connectionId: String) {
         takeTicket(listOf(connectionId))
-        operations.trySend(Remove(connectionId))
+        remove(Remove(connectionId))
     }
 
     /** Forget every computer's copy, as sign-out does. */
     fun wipeAll() {
         val known = synchronized(lock) { newestTicket.keys.toList() }
         takeTicket(known)
-        operations.trySend(RemoveAll)
+        remove(RemoveAll)
+    }
+
+    private fun remove(operation: Operation) {
+        if (operations.trySend(operation).isSuccess) return
+        // The writer ended with its scope, so nothing can write after this;
+        // the removal runs on its own, still off the caller's thread.
+        CoroutineScope(dispatcher).launch { drain(operation) }
     }
 
     /** Returns once everything requested before it has finished — for the app going to the background, and for tests. */
@@ -281,6 +294,18 @@ class SnapshotStore(
             is Load -> operation.reply.complete(null)
             is Barrier -> operation.reply.complete(Unit)
             is Write, is Remove, RemoveAll -> Unit
+        }
+    }
+
+    /**
+     * An operation the writer will not run because its scope ended: a write
+     * is dropped and a waiter answered with nothing, but a wipe still
+     * happens. Never throws — it also runs inside a completion handler.
+     */
+    private fun drain(operation: Operation) {
+        when (operation) {
+            is Remove, RemoveAll -> runCatching { run(operation) }
+            is Write, is Load, is Barrier -> abandon(operation)
         }
     }
 
