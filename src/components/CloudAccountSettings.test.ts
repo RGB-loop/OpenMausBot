@@ -3,12 +3,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CloudAccountBridge, CloudAccountState } from "../../electron/cloud-account.mjs";
 import { setLocale } from "@/lib/i18n";
-const f = vi.hoisted(() => ({ values: [] as unknown[], index: 0, effects: [] as EffectCallback[] }));
+const f = vi.hoisted(() => ({ values: [] as unknown[], index: 0, effects: [] as EffectCallback[], platform: "darwin" as DesktopCapabilities["host"]["platform"] }));
 vi.mock("react", async original => ({ ...await original<typeof import("react")>(),
   useState: (initial: unknown) => { const index = f.index++; if (!(index in f.values)) f.values[index] = initial; return [f.values[index], (next: unknown) => { f.values[index] = next; }]; },
   useRef: (initial: unknown) => { const index = f.index++; if (!(index in f.values)) f.values[index] = { current: initial }; return f.values[index]; },
   useEffect: (effect: EffectCallback) => { f.effects.push(effect); },
 }));
+vi.mock("./DesktopCapabilities", () => ({ useDesktopCapabilities: () => ({ capabilities: { host: { platform: f.platform } }, ready: true }) }));
 import { CloudAccountSettings, CloudPlanOnCloud, cloudLinkAction, cloudPlanLabel } from "./CloudAccountSettings";
 type Node = ReactElement<{ children?: ReactNode; onClick?: () => void }>;
 function nodes(value: ReactNode): Node[] { if (!isValidElement(value)) return []; const node = value as Node; return [node, ...Children.toArray(node.props.children).flatMap(nodes)]; }
@@ -19,7 +20,7 @@ const click = (label: string) => { const button = render().nodes.find(node => no
 let bridge: CloudAccountBridge, push: (state: CloudAccountState) => void;
 const free: CloudAccountState = { status: "connected", account: { id: "fixture", email: "person@example.test" }, entitlement: { plan: "free", status: "inactive", expiresAt: null, version: 0 } };
 beforeEach(() => {
-  f.values = []; f.index = 0; f.effects = []; push = () => {};
+  f.values = []; f.index = 0; f.effects = []; f.platform = "darwin"; push = () => {};
   bridge = { state: vi.fn().mockResolvedValue({ status: "signed-out" }), begin: vi.fn().mockResolvedValue({ status: "connecting" }),
     signInAgain: vi.fn().mockResolvedValue({ status: "connecting" }),
     reopen: vi.fn().mockResolvedValue({ status: "connecting" }), cancel: vi.fn().mockResolvedValue({ status: "signed-out" }),
@@ -90,6 +91,35 @@ it("OMB Cloud out of reach: the plan last verified stays named, calmly, with no 
   push({ status: "unavailable", message: "unreachable", account: { id: "fixture", email: "person@example.test" } });
   html = render().html; expect(html).toContain("Open your Cloud dashboard"); none(html, [...BUY, ...ALARM]);
 });
+// Clearing the saved sign-in failed: Sign out again is the retry, on every
+// platform, so the message names that button and no keychain.
+it("a saved sign-in that couldn't be cleared names the Sign out button on the card", async () => {
+  for (const platform of ["darwin", "win32"] as const) {
+    f.values = []; f.platform = platform;
+    await ready({ status: "unavailable", message: "signout-storage-failed" });
+    const { html } = render();
+    all(html, ["could not be read or cleared", "Choose Sign out of OMB Cloud, then sign in again."]);
+    none(html, ["keychain"]);
+    expect(button("Sign out of OMB Cloud")).toBeTruthy();
+  }
+});
+// A saved sign-in that may only be locked is kept and read again by itself.
+// Signing out there would delete it before the app reads it, and could not
+// revoke it on the Cloud. Where a keychain can be locked, unlocking it is the
+// one step; Windows has nothing to unlock.
+const statusText = () => render().nodes.filter(node => node.type === "p" && (node.props as { role?: string }).role === "status")
+  .map(node => Children.toArray(node.props.children).filter(child => typeof child === "string").join("")).join(" ");
+it("a saved sign-in that may only be locked says the app tries again, with this computer's one step, never Sign out", async () => {
+  for (const [platform, step] of [["darwin", "Unlock your keychain"], ["linux", "Unlock your system keyring"], ["win32", "nothing you need to do"]] as const) {
+    f.values = []; f.platform = platform;
+    await ready({ status: "unavailable", message: "restore-failed" });
+    const message = statusText();
+    expect(message, platform).toContain("tries again by itself");
+    expect(message, platform).toContain(step);
+    expect(message, platform).not.toMatch(/sign out|sign in again/i);
+    if (platform === "win32") expect(message).not.toMatch(/keychain|keyring|unlock/i);
+  }
+});
 it("a sign-in that ended asks to sign in again, keeps the plan, and offers nothing to buy", async () => {
   await ready({ status: "reauth-required", message: "expired", account: { id: "fixture", email: "person@example.test" }, lastPlan: { tier: "max", active: true } });
   const { html } = render();
@@ -151,7 +181,7 @@ it("a saved sign-in that could not be read was removed: one line says so, and Si
 it("a saved sign-in that can't be read right now says the app tries again by itself, and asks for no sign-out", async () => {
   await ready({ status: "unavailable", message: "restore-failed" });
   const html = render().html;
-  expect(html).toContain("This computer&#x27;s saved Cloud sign-in can&#x27;t be read right now. OpenMausBot tries again every minute.");
+  expect(html).toContain("This computer couldn&#x27;t open its saved Cloud sign-in. Unlock your keychain, and the app tries again by itself.");
   // Signing out here would delete a sign-in that comes back by itself.
   none(html, ["could not be read or cleared", "sign out again", "Sign out of OMB Cloud, then"]);
 });
@@ -159,7 +189,7 @@ it("a sign-out that could not clear the saved sign-in still asks for it", async 
   await ready({ status: "unavailable", message: "signout-storage-failed" });
   const html = render().html;
   expect(html).toContain("could not be read or cleared");
-  none(html, ["tries again every minute"]);
+  none(html, ["tries again by itself"]);
 });
 it("setting up shows the Cloud page's steps, a slow setup and a failed setup's next try", async () => {
   const paid = { ...free, entitlement: { plan: "pro" as const, status: "active" as const, expiresAt: 1_900_000_000_000, version: 2 } };
