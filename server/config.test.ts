@@ -1050,12 +1050,17 @@ describe("OpenCode Go configuration", () => {
       opencodeGo: { providerKeys: {
         VENICE_API_KEY: "venice-secret", venice_api_key: "lower", OPENCODE_API_KEY: "shadow", OMB_CLOUD_BOAT_TOKEN: "relay",
         BOX_TOKEN: "boat", NODE_OPTIONS: "--require x", GROQ_API_KEY: "has space",
+        DEEPSEEK_API_KEY: 42, TOGETHER_API_KEY: null, FIREWORKS_API_KEY: { key: "nested" },
       } },
     });
     expect(stored.profile?.name).toBe("Ada");
     expect(openCodeProviderKeys(stored)).toEqual({ VENICE_API_KEY: "venice-secret" });
     expect(instanceConfigs({ ...stored, instances: { opencode: { driver: "opencodeGo" } } }).opencode.environment)
       .toEqual({ VENICE_API_KEY: "venice-secret" });
+    // Not a map at all: the saved keys are skipped, the OpenCode key and the rest stay.
+    const notAMap = parseStoredConfig({ profile: { name: "Ada" }, opencodeGo: { apiKey: "ocg", providerKeys: "VENICE_API_KEY=x" } });
+    expect(notAMap.profile?.name).toBe("Ada");
+    expect(notAMap.opencodeGo).toEqual({ apiKey: "ocg", providerKeys: {} });
   });
 });
 

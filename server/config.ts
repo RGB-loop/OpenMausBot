@@ -460,9 +460,8 @@ const appConfigSchema = z.object({
   /** Optional OpenCode key; persisted write-only and passed only to its child.
    * `providerKeys`: keys for OpenCode's other providers (Venice, Groq…) by the
    * environment name OpenCode reads, also write-only and only for its child.
-   * Loosely typed here so one bad hand-edited entry is skipped
-   * (openCodeProviderKeys), never the whole file; Settings changes go through
-   * mergeOpenCodeProviderKeys. */
+   * Settings changes go through mergeOpenCodeProviderKeys; the stored copy
+   * is read loosely (storedAppConfigSchema). */
   opencodeGo: z.object({ apiKey: optionalText, providerKeys: z.record(z.string(), z.string()).optional() }).optional(),
   /** Voice settings and the selected voice id. `provider` picks the
    * engine: "elevenlabs" (default; needs `key`), "fish" (needs its own
@@ -566,6 +565,15 @@ const appConfigSchema = z.object({
 });
 const storedAppConfigSchema = appConfigSchema.extend({
   browserProfiles: storedBrowserProfilesSchema.optional(),
+  /** Read loosely, like mcpServers: a hand-edited provider key that isn't
+   * text is dropped here, and a bad name or key later
+   * (openCodeProviderKeys), never the whole file. */
+  opencodeGo: z.object({
+    apiKey: optionalText,
+    providerKeys: z.record(z.string(), z.unknown()).catch({})
+      .transform((keys) => Object.fromEntries(Object.entries(keys).filter((entry): entry is [string, string] => typeof entry[1] === "string")))
+      .optional(),
+  }).optional(),
 });
 const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, cliStartup: true, customDomain: true })
   .extend({ threads: threadsPatchSchema.optional(), newBots: newBotsPatchSchema.optional() });
