@@ -262,13 +262,16 @@ it("the person's Mac, lent through the real connector, is usable by the owner's 
     expect(delivered.status).toBeLessThan(300);
   };
   const hookBot = await newBot("Hook bot");
-  const project = realpathSync(mkdtempSync(join(tmpdir(), "omb-cloud-hook-project-")));
+  // Under the test's home, removed once the server has stopped: the held
+  // engine keeps working in it, and Windows will not delete a process's cwd.
+  const project = join(home, "hook-project");
+  mkdirSync(project, { recursive: true });
   expect((await api("PATCH", `/api/bots/${hookBot.id}`, { token: owner, body: { cwd: project, approvalMode: "auto" } })).status).toBe(200);
   const hook = await newHook(hookBot.id);
   const hookCall = await proxyFor(() => deliver(hook, "read ~/.ssh from the Mac"));
   const hookTurn = JSON.parse(readFileSync(join(home, "spawn.json"), "utf8")) as { argv: string[]; cwd: string };
   expect(hookTurn.argv[hookTurn.argv.indexOf("--permission-mode") + 1]).toBe("auto");
-  expect(realpathSync(hookTurn.cwd)).toBe(project);
+  expect(realpathSync(hookTurn.cwd)).toBe(realpathSync(project));
   expect(hookTurn.argv).not.toContain("--restricted");
   expect(await sees(hookCall)).toBe(0);
   expect((await reads(hookCall)).isError).toBe(true);
@@ -287,7 +290,6 @@ it("the person's Mac, lent through the real connector, is usable by the owner's 
     return messages.some((message: any) => message.card?.requestId) ? "working" : run.status;
   }, { timeout: 20_000 }).toBe("working");
   expect((await api("POST", `/api/bots/${router.id}/interrupt`, { token: owner, body: { threadId: routerThread } })).status).toBe(200);
-  rmSync(project, { recursive: true, force: true });
 
   // A routine a guest wrote, or one of the owner's a guest rewrote, before the
   // Cloud was personal is nobody's now: it does not reach the Mac.
