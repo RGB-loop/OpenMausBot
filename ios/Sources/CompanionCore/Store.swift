@@ -99,6 +99,14 @@ public struct CompanionState: Sendable {
     /// Showing the last sync rather than the computer's live state.
     public var isCached: Bool { cachedAt != nil }
 
+    /// Whether anything on screen may be acted on: sent, answered, stopped,
+    /// run. Never while showing the cache — a saved ask may have expired or
+    /// been answered elsewhere, and a card's own `isPending` cannot know
+    /// that. This is the state's half of the gate; Session combines it with
+    /// being connected, and every composer, card, Stop and routine action
+    /// reads the combined value rather than `isPending` alone.
+    public var canAct: Bool { !isCached }
+
     // MARK: - Reading
 
     /// Named `transcript`, not `messages`: sharing a base name with the
@@ -243,6 +251,9 @@ public struct CompanionState: Sendable {
 
     /// Every unanswered approval or question, newest first. This is the
     /// screen the whole companion exists for.
+    ///
+    /// A cached state lists the asks as they last stood, so they can read
+    /// as "last known"; offering to answer one is gated on `canAct`.
     public var pendingApprovals: [(threadId: String, message: Message)] {
         var out: [(threadId: String, message: Message)] = []
         let activeThreads = Set(bots.flatMap { [$0.threadId] + ($0.tasks ?? []).map(\.threadId) } + rooms.map(\.threadId))

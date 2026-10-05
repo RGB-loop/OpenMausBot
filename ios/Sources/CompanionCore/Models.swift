@@ -69,7 +69,9 @@ public struct OptionCard: Codable, Hashable, Sendable {
     public var expired: Bool? = nil
 
     /// A card is actionable while it is unanswered and still has a request
-    /// behind it. Everything else is transcript.
+    /// behind it. Everything else is transcript. This is the card as it was
+    /// last seen; whether this phone may answer it now is
+    /// `CompanionState.canAct` too, which is false for a cached copy.
     public var isPending: Bool {
         requestId != nil && answered == nil && dismissed != true && expired != true
     }
@@ -180,6 +182,8 @@ public struct SecretRequestCardData: Codable, Hashable, Sendable {
     public var resumed: Bool?
     public var error: String?
 
+    /// Still waiting on the credential, as last seen. Offering to provide
+    /// it is also gated on `CompanionState.canAct`.
     public var isPending: Bool { provided != true && dismissed != true }
 }
 

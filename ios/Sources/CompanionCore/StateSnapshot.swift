@@ -125,12 +125,16 @@ public struct StateSnapshot: Codable, Equatable, Sendable {
             via = message.via
             reactions = message.reactions
             comm = message.comm
-            hasImage = message.hasImage
+            // The server's own rule for a slimmed screen message: the pixels
+            // stay behind `/messages/:id/image`, and the row says so, or the
+            // cached row could never fetch them.
+            hasImage = message.png != nil ? true : message.hasImage
             mime = message.mime
             attachments = message.attachments?.map { attachment in
                 // A path that carries its bytes inline is not a path.
                 var kept = attachment
-                if kept.path?.range(of: "data:", options: [.anchored, .caseInsensitive]) != nil {
+                if kept.path?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .range(of: "data:", options: [.anchored, .caseInsensitive]) != nil {
                     kept.path = nil
                 }
                 return kept
@@ -208,10 +212,19 @@ extension StateSnapshot {
 
     /// Adds cached threads most recently active first and stops at the
     /// first one that would take the file past `maxBytes`, so whatever is
-    /// left out is always the least recently active.
-    fileprivate mutating func fill(_ ordered: [(threadId: String, thread: CachedThread)], toFit maxBytes: Int) {
+    /// left out is always the least recently active. `rosterBytes` is the
+    /// encoded size before any thread is added.
+    ///
+    /// Returns the encoded file the cap was checked on — exactly the bytes
+    /// a save writes, so it never encodes the file again — or nil when the
+    /// snapshot does not encode.
+    fileprivate mutating func fill(
+        _ ordered: [(threadId: String, thread: CachedThread)],
+        toFit maxBytes: Int,
+        rosterBytes: Int
+    ) -> Data? {
         let encoder = Self.makeEncoder()
-        var total = byteCount()
+        var total = rosterBytes
         var kept = 0
         for entry in ordered {
             guard let size = try? encoder.encode(entry.thread).count else { break }
@@ -224,19 +237,24 @@ extension StateSnapshot {
         threads = Dictionary(ordered.prefix(kept).map { ($0.threadId, $0.thread) }, uniquingKeysWith: { first, _ in first })
         // The estimate ignores escaping inside keys; the encoded file is the
         // real measure.
-        while kept > 0, byteCount() > maxBytes {
+        var data = try? encoded()
+        while kept > 0, (data?.count ?? .max) > maxBytes {
             kept -= 1
             threads.removeValue(forKey: ordered[kept].threadId)
+            data = try? encoded()
         }
+        return data
     }
 
     /// Only when the roster alone outgrows the cap, which takes a thread
     /// list in the thousands: the oldest routine runs go first, then the
     /// least recently active rows of the thread list. A bot's or room's own
     /// thread is never dropped — it is the roster row itself.
-    fileprivate mutating func shedRoster(toFit maxBytes: Int, activity: [String: Double]) {
+    ///
+    /// Returns the roster's encoded size as it is left, for `fill`.
+    fileprivate mutating func shedRoster(toFit maxBytes: Int, activity: [String: Double]) -> Int {
         var total = byteCount()
-        guard total > maxBytes else { return }
+        guard total > maxBytes else { return total }
         let encoder = Self.makeEncoder()
         // Array elements cost their own bytes plus a comma, exactly.
         func cost<T: Encodable>(_ value: T) -> Int { ((try? encoder.encode(value).count) ?? 0) + 1 }
@@ -258,13 +276,16 @@ extension StateSnapshot {
             total -= cost(task)
             droppedThreads.insert(task.threadId)
         }
-        guard !droppedThreads.isEmpty else { return }
-        for index in bots.indices {
-            bots[index].tasks = bots[index].tasks?.filter { !droppedThreads.contains($0.threadId) }
+        if !droppedThreads.isEmpty {
+            for index in bots.indices {
+                bots[index].tasks = bots[index].tasks?.filter { !droppedThreads.contains($0.threadId) }
+            }
+            for index in rooms.indices {
+                rooms[index].tasks = rooms[index].tasks?.filter { !droppedThreads.contains($0.threadId) }
+            }
         }
-        for index in rooms.indices {
-            rooms[index].tasks = rooms[index].tasks?.filter { !droppedThreads.contains($0.threadId) }
-        }
+        // `total` was an estimate; measure what is left.
+        return byteCount()
     }
 
     /// The `limit` most recent runs, in the order they arrived.
@@ -296,6 +317,11 @@ extension CompanionState {
     ///
     /// Returns nil for a state that is itself a cached copy. Writing it back
     /// would restamp old data as a new sync.
+    ///
+    /// Not for the main thread: the cap is measured by encoding, up to the
+    /// whole file more than once. Call it off the main thread, or hand the
+    /// state to `SnapshotStore.save(_:connectionId:serverEnvironmentId:…)`,
+    /// which builds and writes on its own queue.
     public func offlineSnapshot(
         connectionId: String,
         serverEnvironmentId: String?,
@@ -304,6 +330,27 @@ extension CompanionState {
         routineRuns: [RoutineRun] = [],
         limits: StateSnapshot.Limits = .standard
     ) -> StateSnapshot? {
+        encodedOfflineSnapshot(
+            connectionId: connectionId,
+            serverEnvironmentId: serverEnvironmentId,
+            savedAt: savedAt,
+            routines: routines,
+            routineRuns: routineRuns,
+            limits: limits
+        )?.snapshot
+    }
+
+    /// `offlineSnapshot`, with the encoded file its cap was measured on, so
+    /// a save writes those bytes rather than encoding them again. `data` is
+    /// nil only when the snapshot does not encode.
+    func encodedOfflineSnapshot(
+        connectionId: String,
+        serverEnvironmentId: String?,
+        savedAt: Date,
+        routines: [Routine],
+        routineRuns: [RoutineRun],
+        limits: StateSnapshot.Limits
+    ) -> (snapshot: StateSnapshot, data: Data?)? {
         guard !isCached else { return nil }
         let activity = threadActivity()
         var snapshot = StateSnapshot(
@@ -329,7 +376,7 @@ extension CompanionState {
             routines: routines,
             routineRuns: StateSnapshot.recentRuns(routineRuns, limit: limits.routineRuns)
         )
-        snapshot.shedRoster(toFit: limits.maxBytes, activity: activity)
+        let rosterBytes = snapshot.shedRoster(toFit: limits.maxBytes, activity: activity)
 
         // Opened means a page was fetched: a live tail alone is not a page,
         // and showing it as the thread would hide everything above it.
@@ -339,8 +386,8 @@ extension CompanionState {
             .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
             .prefix(max(0, limits.threads))
             .map { (threadId: $0.key, thread: cachedThread($0.key, messageLimit: limits.messagesPerThread)) }
-        snapshot.fill(opened, toFit: limits.maxBytes)
-        return snapshot
+        let data = snapshot.fill(opened, toFit: limits.maxBytes, rosterBytes: rosterBytes)
+        return (snapshot, data)
     }
 
     /// A display-only state rebuilt from a snapshot, laid out the way a

@@ -84,6 +84,8 @@ final class StateSnapshotTests: XCTestCase {
         // hydrate leaves on each record.
         XCTAssertEqual(rebuilt.bots.map(\.id), state.bots.map(\.id))
         XCTAssertTrue(rebuilt.bots.allSatisfy { $0.messages == nil && $0.hasMore == nil })
+        XCTAssertTrue(state.rooms.contains { $0.messages?.isEmpty == false }, "The fixture's rooms carry a transcript copy.")
+        XCTAssertTrue(rebuilt.rooms.allSatisfy { $0.messages == nil && $0.hasMore == nil })
         XCTAssertEqual(rebuilt.bots.map { $0.tasks ?? [] }, state.bots.map { $0.tasks ?? [] })
         XCTAssertEqual(rebuilt.unreadCount, state.unreadCount)
         let live = state.updates(detail: .full)
@@ -91,7 +93,12 @@ final class StateSnapshotTests: XCTestCase {
         XCTAssertEqual(cached.map(\.id), live.map(\.id))
         XCTAssertEqual(cached.map(\.kind), live.map(\.kind))
         XCTAssertEqual(cached.map(\.card), live.map(\.card), "A saved ask still reads as one.")
+        // Listed as last known, never answerable: offering to answer is
+        // gated on `canAct`, which a cached state never grants.
+        XCTAssertFalse(state.pendingApprovals.isEmpty)
         XCTAssertEqual(rebuilt.pendingApprovals.map(\.message.id), state.pendingApprovals.map(\.message.id))
+        XCTAssertTrue(state.canAct)
+        XCTAssertFalse(rebuilt.canAct)
         for threadId in state.messages.keys where state.hasLoadedPage(forThread: threadId) {
             XCTAssertEqual(rebuilt.visibleTranscript(forThread: threadId), state.visibleTranscript(forThread: threadId))
         }
@@ -159,6 +166,16 @@ final class StateSnapshotTests: XCTestCase {
         XCTAssertEqual(Set(snapshot.threads.keys), Set((6 - kept..<6).map { "t\($0)" }))
         // Each kept thread is whole; the cap never cuts into a page.
         XCTAssertTrue(snapshot.threads.values.allSatisfy { $0.messages.count == 1 })
+
+        // A save writes the very bytes the cap was measured on.
+        let measured = try XCTUnwrap(state.encodedOfflineSnapshot(
+            connectionId: "computer-1", serverEnvironmentId: nil, savedAt: savedAt,
+            routines: [], routineRuns: [], limits: limits
+        ))
+        XCTAssertEqual(measured.snapshot, snapshot)
+        let data = try XCTUnwrap(measured.data)
+        XCTAssertLessThanOrEqual(data.count, limits.maxBytes)
+        XCTAssertEqual(try StateSnapshot.decoded(from: data), snapshot)
     }
 
     func testTheStandardCapHoldsAFiveMegabyteFileThatRoundTrips() throws {
@@ -238,20 +255,36 @@ final class StateSnapshotTests: XCTestCase {
     // MARK: - What is never kept
 
     func testNothingSecretHeavyOrInFlightReachesTheFile() throws {
-        // Everything the connection carries besides its id stays off disk,
-        // and the device token lives only in Keychain.
-        let token = "omb_sess_TOKEN-SENTINEL"
-        let connection = Connection(
-            id: "computer-1", name: "Mac", host: "host-sentinel.local", port: 8787,
-            secretPublicKey: "PUBLICKEY-SENTINEL", companionDeviceId: "DEVICE-SENTINEL",
-            serverEnvironmentId: "env-1", serverScopes: ["admin"]
-        )
+        // No credential is checked for here because none can arrive:
+        // `offlineSnapshot` takes a connection's id and server identity and
+        // nothing else, and the state holds no token. The sentinels below sit
+        // on the paths that do reach the builder.
         let screenshot = Data("SCREENSHOT-SENTINEL".utf8).base64EncodedString()
         let inlineBytes = Data("ATTACHMENT-SENTINEL".utf8).base64EncodedString()
+        let paddedBytes = Data("PADDED-SENTINEL".utf8).base64EncodedString()
         let frame = Data("FRAME-SENTINEL".utf8).base64EncodedString()
+        // A hydrate leaves the transcript on each roster record too, inline
+        // screenshots and all; the snapshot keeps only its own bounded page.
+        let botRecordShot = Data("BOT-RECORD-SENTINEL".utf8).base64EncodedString()
+        let roomRecordShot = Data("ROOM-RECORD-SENTINEL".utf8).base64EncodedString()
+
+        var scout = bot("scout", threadId: "main")
+        var botRecordScreen = message("bot-record-screen", at: 1, role: .bot, kind: .screen)
+        botRecordScreen.png = botRecordShot
+        scout.messages = [botRecordScreen]
+        scout.hasMore = true
+        var room = Room(
+            id: "room", threadId: "room-main", name: "Standup", memberIds: ["scout"],
+            defaultResponder: GroupResponder(kind: "all"), bulletin: "", unread: false, createdAt: 0
+        )
+        var roomRecordScreen = message("room-record-screen", at: 1, role: .bot, kind: .screen)
+        roomRecordScreen.png = roomRecordShot
+        room.messages = [roomRecordScreen]
+        room.hasMore = true
 
         var state = CompanionState()
-        state.bots = [bot("scout", threadId: "main")]
+        state.bots = [scout]
+        state.rooms = [room]
         var screen = message("screen", at: 2, role: .bot, kind: .screen)
         screen.png = screenshot
         screen.mime = "image/png"
@@ -259,6 +292,7 @@ final class StateSnapshotTests: XCTestCase {
         reply.attachments = [
             MessageImageAttachment(kind: "file", path: "report-1.pdf", mime: "application/pdf", name: "Q3 report.pdf"),
             MessageImageAttachment(kind: "image", path: "data:image/png;base64,\(inlineBytes)", mime: "image/png"),
+            MessageImageAttachment(kind: "image", path: " \nDATA:image/png;base64,\(paddedBytes)", mime: "image/png"),
         ]
         state.merge(page([message("ask", at: 1), screen, reply]), intoThread: "main")
         state.cursor = "CURSOR-SENTINEL:42"
@@ -276,12 +310,12 @@ final class StateSnapshotTests: XCTestCase {
         )]
 
         let snapshot = try XCTUnwrap(state.offlineSnapshot(
-            connectionId: connection.id, serverEnvironmentId: connection.serverEnvironmentId, savedAt: savedAt
+            connectionId: "computer-1", serverEnvironmentId: "env-1", savedAt: savedAt
         ))
         let text = try XCTUnwrap(String(data: try snapshot.encoded(), encoding: .utf8))
         for sentinel in [
-            token, "host-sentinel", "PUBLICKEY-SENTINEL", "DEVICE-SENTINEL",
-            screenshot, inlineBytes, frame, "SENTINEL:42", "CALL-SENTINEL", "VOICE-SENTINEL",
+            screenshot, inlineBytes, paddedBytes, frame, botRecordShot, roomRecordShot,
+            "SENTINEL:42", "CALL-SENTINEL", "VOICE-SENTINEL",
             "STREAMING-SENTINEL", "REASONING-SENTINEL", "EDIT-SENTINEL", "QUEUE-SENTINEL", "HELD-SENTINEL",
             "NOTIFY-SENTINEL", "\"png\"", "cursor", "liveCall",
         ] {
@@ -296,9 +330,10 @@ final class StateSnapshotTests: XCTestCase {
         let cachedScreen = try XCTUnwrap(transcript.first { $0.id == "screen" })
         XCTAssertNil(cachedScreen.png)
         XCTAssertEqual(cachedScreen.mime, "image/png")
+        XCTAssertEqual(cachedScreen.hasImage, true, "The pixels are still on the computer, behind /messages/:id/image.")
         let attachments = try XCTUnwrap(transcript.first { $0.id == "reply" }?.attachments)
-        XCTAssertEqual(attachments.map(\.kind), ["file", "image"])
-        XCTAssertEqual(attachments.map(\.path), ["report-1.pdf", nil])
+        XCTAssertEqual(attachments.map(\.kind), ["file", "image", "image"])
+        XCTAssertEqual(attachments.map(\.path), ["report-1.pdf", nil, nil])
         XCTAssertEqual(rebuilt.transcript(forThread: "main").first { $0.id == "reply" }?.attachedFiles.map(\.name), ["Q3 report.pdf"])
         XCTAssertNil(rebuilt.cursor)
         XCTAssertNil(rebuilt.liveCall)
@@ -308,6 +343,8 @@ final class StateSnapshotTests: XCTestCase {
         XCTAssertTrue(rebuilt.pendingEdits.isEmpty)
         XCTAssertTrue(rebuilt.pendingQueued.isEmpty)
         XCTAssertTrue(rebuilt.notifications.isEmpty)
+        XCTAssertTrue(rebuilt.bots.allSatisfy { $0.messages == nil && $0.hasMore == nil })
+        XCTAssertTrue(rebuilt.rooms.allSatisfy { $0.messages == nil && $0.hasMore == nil })
     }
 
     // MARK: - Cached, then live
@@ -322,6 +359,14 @@ final class StateSnapshotTests: XCTestCase {
         XCTAssertNil(cached.cursor)
         cached.advance(to: 7)
         XCTAssertNil(cached.cursor, "Only a cold hydrate's cursor can start the stream.")
+    }
+
+    func testCanActIsFalseWhileShowingTheCacheAndTrueAfterHydrate() throws {
+        XCTAssertTrue(CompanionState().canAct, "First run, no cache: today's behaviour.")
+        var state = CompanionState(snapshot: try liveSnapshot())
+        XCTAssertFalse(state.canAct, "Nothing on a cached copy can be sent, answered, stopped or run.")
+        state.hydrate(try fixtureFleet("bots-paged"))
+        XCTAssertTrue(state.canAct)
     }
 
     func testHydrateReplacesTheCachedStateWholesaleAndMakesItLiveAgain() throws {

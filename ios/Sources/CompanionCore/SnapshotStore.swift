@@ -130,14 +130,15 @@ public final class SnapshotStore: @unchecked Sendable {
     // MARK: - Saving
 
     /// Write `snapshot` soon, unless a newer save or a wipe for the same
-    /// computer arrives first.
+    /// computer arrives first. It is encoded on the store's queue.
     public func save(_ snapshot: StateSnapshot) {
-        enqueue(connectionId: snapshot.connectionId) { snapshot }
+        enqueue(connectionId: snapshot.connectionId) { try? snapshot.encoded() }
     }
 
     /// Build and write the snapshot of `state` on the store's queue, so the
-    /// caller pays for a value copy and nothing else. A cached state builds
-    /// nothing and so writes nothing.
+    /// caller pays for a value copy and nothing else. The bytes written are
+    /// the ones the cap was measured on, not a second encoding. A cached
+    /// state builds nothing and so writes nothing.
     public func save(
         _ state: CompanionState,
         connectionId: String,
@@ -148,23 +149,24 @@ public final class SnapshotStore: @unchecked Sendable {
         limits: StateSnapshot.Limits = .standard
     ) {
         enqueue(connectionId: connectionId) {
-            state.offlineSnapshot(
+            state.encodedOfflineSnapshot(
                 connectionId: connectionId,
                 serverEnvironmentId: serverEnvironmentId,
                 savedAt: savedAt,
                 routines: routines,
                 routineRuns: routineRuns,
                 limits: limits
-            )
+            )?.data
         }
     }
 
-    private func enqueue(connectionId: String, _ build: @escaping @Sendable () -> StateSnapshot?) {
+    /// `encode` runs on the queue and returns the file for `connectionId`,
+    /// or nil to write nothing.
+    private func enqueue(connectionId: String, _ encode: @escaping @Sendable () -> Data?) {
         let ticket = takeTicket(for: [connectionId])
         queue.async { [self] in
             guard isNewest(ticket, for: connectionId),
-                  let snapshot = build(), snapshot.connectionId == connectionId,
-                  let data = try? snapshot.encoded(),
+                  let data = encode(),
                   // Building can take a moment; a newer request may have
                   // arrived meanwhile, and its write is the one that counts.
                   isNewest(ticket, for: connectionId)
