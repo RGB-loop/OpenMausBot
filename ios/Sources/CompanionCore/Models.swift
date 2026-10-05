@@ -67,6 +67,17 @@ public struct OptionCard: Codable, Hashable, Sendable {
     /// Terminal: the proposal went stale while open. The computer clears
     /// its options and nothing can answer it; a fresh proposal is needed.
     public var expired: Bool? = nil
+    /// `"permission"` or `"question"` on provider asks; absent elsewhere and
+    /// on cards from older computers.
+    public var requestType: String? = nil
+    /// Catalog key for `held` when it is one of the computer's fixed notes
+    /// ("why this asked"); absent when `held` is free text such as an error.
+    public var heldCode: String? = nil
+    /// Present on "Send on your behalf?" cards: an outbound app action the
+    /// computer held for a person. See ApprovalCard.swift.
+    public var outboundRequest: OutboundRequest? = nil
+    /// Present on "Remember this for the team?" cards.
+    public var teamMemoryRequest: TeamMemoryRequest? = nil
 
     /// A card is actionable while it is unanswered and still has a request
     /// behind it. Everything else is transcript.

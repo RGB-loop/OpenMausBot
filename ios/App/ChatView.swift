@@ -2587,6 +2587,9 @@ struct CardView: View {
     let message: Message
     @EnvironmentObject private var session: Session
     @State private var answering = false
+    /// The full request behind a short card. Collapsed until asked for, and
+    /// again whenever the card is drawn afresh.
+    @State private var showingDetails = false
 
     /// The option this card offers that means "go ahead".
     ///
@@ -2618,16 +2621,33 @@ struct CardView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(tint)
                 }
-                Text(card.title)
+                headline(card)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Color.primary)
                     .fixedSize(horizontal: false, vertical: true)
-                if !card.subtitle.isEmpty {
-                    Text(card.subtitle)
-                        .font(.system(size: 15))
-                        .foregroundStyle(Color.secondary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
+                if card.presentation == .standard {
+                    // Proposals are reviewed in full before anyone confirms them.
+                    if !card.subtitle.isEmpty {
+                        Text(card.subtitle)
+                            .font(.system(size: 15))
+                            .foregroundStyle(Color.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    // An approval leads with one line; the request itself,
+                    // raw arguments and all, waits under Details.
+                    if !card.summaryLine.isEmpty {
+                        Text(card.summaryLine)
+                            .font(.system(size: 15))
+                            .foregroundStyle(Color.secondary)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("approval-summary")
+                    }
+                    if card.hasDetails {
+                        details(card.subtitle)
+                    }
                 }
 
                 if let skill = card.skillRequest {
@@ -2666,7 +2686,7 @@ struct CardView: View {
                     }
                 }
 
-                if let held = card.held {
+                if card.showsHeldNote, let held = card.held {
                     Label(held, systemImage: "exclamationmark.shield")
                         .font(.system(size: 13))
                         .foregroundStyle(.orange)
@@ -2727,10 +2747,16 @@ struct CardView: View {
                         .frame(maxWidth: .infinity)
                         .disabled(answering)
                     }
-                } else if let answered = card.answered {
-                    Label(answered, systemImage: "checkmark.circle")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Color.secondary)
+                } else if let outcome = card.outcome {
+                    Label {
+                        outcomeText(outcome)
+                    } icon: {
+                        Image(systemName: Self.outcomeSymbol(outcome))
+                    }
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.secondary)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("approval-outcome")
                 } else if card.expired == true {
                     Label("Expired — ask for a fresh proposal", systemImage: "clock.badge.xmark")
                         .font(.system(size: 14))
@@ -2748,6 +2774,74 @@ struct CardView: View {
                     .strokeBorder(card.isPending ? tint : .clear, lineWidth: 1.5)
             }
         }
+    }
+
+    /// "Send to Linear?" for a held send to one app, the generic question
+    /// for several, and the computer's own title for every other card.
+    private func headline(_ card: OptionCard) -> Text {
+        guard card.presentation == .outbound else { return Text(verbatim: card.title) }
+        if let app = card.outboundApp { return Text("Send to \(app)?") }
+        return Text("Send on your behalf?")
+    }
+
+    /// Long requests scroll inside a capped box; short ones just show.
+    private static let detailsScrollThreshold = 480
+
+    private func details(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { showingDetails.toggle() }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Details")
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .rotationEffect(.degrees(showingDetails ? 90 : 0))
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("approval-details-toggle")
+            .accessibilityAddTraits(showingDetails ? .isSelected : [])
+
+            if showingDetails {
+                let request = Text(verbatim: text)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Color.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Group {
+                    if text.count > Self.detailsScrollThreshold {
+                        ScrollView(.vertical) { request }
+                            .frame(height: 220)
+                    } else {
+                        request.fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(10)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                .accessibilityIdentifier("approval-details")
+            }
+        }
+    }
+
+    private func outcomeText(_ outcome: OptionCard.Outcome) -> Text {
+        switch outcome {
+        case .allowed: return Text("Allowed")
+        case .denied: return Text("Denied")
+        case .unavailable: return Text("No longer available")
+        case .remembered: return Text("Remembered")
+        case .skipped: return Text("Skipped")
+        case let .answered(text): return text.isEmpty ? Text("Answered") : Text(verbatim: text)
+        case let .chose(option, _): return Text(verbatim: option)
+        case let .other(value): return Text(verbatim: value)
+        }
+    }
+
+    private static func outcomeSymbol(_ outcome: OptionCard.Outcome) -> String {
+        outcome.isPositive ? "checkmark.circle" : "xmark.circle"
     }
 }
 
