@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { CloudAccountState } from "../../electron/cloud-account.mjs";
-import { buyOfferAllowed, cloudNoticeKind, cloudPlanAction, cloudPlanView } from "./cloud-plan";
+import { buyOfferAllowed, CLOUD_PLAN_ACTION_LABEL, cloudNoticeKind, cloudPlanAction, cloudPlanView } from "./cloud-plan";
 
 const account = { id: "a", email: "person@example.test" };
 const free: CloudAccountState = { status: "connected", account, entitlement: { plan: "free", status: "inactive", expiresAt: null, version: 1 } };
@@ -32,7 +32,10 @@ it("Settings has one next action for every state", () => {
     [free, "choose-plan"],
     [paid(), "manage"],
     [paid({ checking: true }), "manage"],
-    [paid({ machine: { status: "ready", origin } }), "manage"],
+    // Paid, with My Cloud ready: opening it is the next step; Manage is a quiet link.
+    [paid({ machine: { status: "ready", origin } }), "open-my-cloud"],
+    [paid({ machine: { status: "ready", origin }, checking: true }), "open-my-cloud"],
+    [paid({ machine: { status: "provisioning" } }), "manage"],
     [{ ...free, machine: { status: "payment-problem", origin } }, "update-payment"],
     [{ ...free, machine: { status: "stopped", origin } }, "plan-page"],
     [{ ...free, entitlement: { plan: "pro", status: "inactive", expiresAt: null, version: 3 } }, "plan-page"],
@@ -54,9 +57,13 @@ it("on This computer, a paid plan with My Cloud ready points there; an ended or 
   const notice = (state: CloudAccountState | null) => cloudNoticeKind(cloudPlanView(state), state);
   expect(notice(paid({ machine: { status: "ready", origin } }))).toBe("my-cloud");
   expect(notice(paid({ machine: { status: "ready", origin }, checking: true }))).toBe("my-cloud");
-  expect(notice(removed)).toBe("sign-in-again");
+  // A removed sign-in says nothing of a plan: this computer can't tell whether there is one.
+  expect(notice(removed)).toBe("removed");
+  // An ended sign-in names My Cloud and the plan only when this computer last saw an active one.
   expect(notice({ status: "reauth-required", message: "expired", lastPlan: { tier: "max", active: true } })).toBe("sign-in-again");
-  expect(notice({ status: "reauth-required", message: "access-ended" })).toBe("sign-in-again");
+  expect(notice({ status: "reauth-required", message: "access-ended", lastPlan: { active: true } })).toBe("sign-in-again");
+  expect(notice({ status: "reauth-required", message: "access-ended" })).toBeNull();
+  expect(notice({ status: "reauth-required", message: "expired", lastPlan: { tier: "max", active: false } })).toBeNull();
   // My Cloud not ready yet (Settings shows its setup), and every other state: nothing here.
   for (const state of [
     null, { status: "signed-out" }, { status: "signed-out", message: "restoring" }, free, paid(), paid({ machine: { status: "provisioning" } }),
@@ -64,4 +71,11 @@ it("on This computer, a paid plan with My Cloud ready points there; an ended or 
     { status: "unavailable", message: "unreachable", lastPlan: { tier: "max", active: true } }, { status: "unavailable", message: "restore-failed" },
     { status: "connecting" },
   ] as Array<CloudAccountState | null>) expect(notice(state), JSON.stringify(state)).toBeNull();
+});
+
+// The card and Settings name the same step in the same words.
+it("labels each action once, for Settings and the card alike", () => {
+  expect(CLOUD_PLAN_ACTION_LABEL).toMatchObject({
+    "open-my-cloud": "cloudHome.connect", "sign-in": "cloudAccount.signIn", "sign-in-again": "cloudAccount.signInAgain", "plan-page": "cloudAccount.dashboard",
+  });
 });

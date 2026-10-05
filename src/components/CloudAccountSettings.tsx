@@ -3,7 +3,7 @@ import type { CloudAccountBridge, CloudAccountState, CloudPlanBridge, CloudPlanS
 import type { CloudMachine } from "../../electron/cloud-home.mjs";
 import { CloudMoveSettings } from "./CloudMove";
 import { activeLocale, t } from "@/lib/i18n";
-import { cloudPlanAction, cloudPlanLabel, cloudPlanLine, cloudPlanView, type CloudPlanAction, type CloudPlanView } from "@/lib/cloud-plan";
+import { CLOUD_PLAN_ACTION_LABEL, cloudPlanAction, cloudPlanLabel, cloudPlanLine, cloudPlanStep, cloudPlanView, type CloudPlanView } from "@/lib/cloud-plan";
 import type { LocaleKey } from "@/locales";
 import { Card } from "./SettingsPrimitives";
 import { CloudLending } from "./CloudLending";
@@ -23,6 +23,8 @@ const SETUP_STEPS = [
   ["starting", "cloudHome.step.starting"], ["checking", "cloudHome.step.checking"],
 ] as const satisfies ReadonlyArray<readonly [string, LocaleKey]>;
 
+/** Ways out and second steps beside the one next action: links, not buttons. */
+const QUIET = "py-1 text-[12px] text-ink-secondary underline underline-offset-2 hover:text-ink";
 const time = (value: number) => new Intl.DateTimeFormat(activeLocale(), { timeStyle: "short" }).format(new Date(value));
 const day = (value: number) => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium" }).format(new Date(value));
 
@@ -37,10 +39,12 @@ function setupSteps(machine: CloudMachine) {
   </ol>;
 }
 
-/** The person's Cloud machine: where it stands, and one way in. Status and
+/** The person's Cloud machine: where it stands, and a way in. Status and
  * address come only from the verified native snapshot; the pairing code
- * never reaches this page. A render helper (no hooks), part of the card. */
-function cloudHomeCard({ machine, busy, failed, onConnect, lending }: { machine: CloudMachine; busy: boolean; failed: boolean; onConnect: () => void; lending?: CloudAccountBridge["lending"] }) {
+ * never reaches this page. When opening My Cloud is already the section's one
+ * next action (a paid plan, Ready), the account card offers it; otherwise a
+ * Ready Cloud's way in is a quiet link here. A render helper (no hooks). */
+function cloudHomeCard({ machine, busy, failed, onConnect, offered, lending }: { machine: CloudMachine; busy: boolean; failed: boolean; onConnect: () => void; offered: boolean; lending?: CloudAccountBridge["lending"] }) {
   const connectable = machine.status === "ready";
   const text = machine.status === "failed" && machine.retryAt ? t("cloudHome.failedRetry", { time: time(machine.retryAt) })
     : machine.status === "provisioning" && machine.setup?.slow ? t("cloudHome.slow") : t(MACHINE_TEXT[machine.status]);
@@ -49,7 +53,7 @@ function cloudHomeCard({ machine, busy, failed, onConnect, lending }: { machine:
       <p role="status" className={machine.status === "ready" ? "text-[14px] text-ink" : "text-[13px] text-ink-secondary"}>{text}</p>
       {machine.status === "provisioning" && setupSteps(machine)}
       {connectable && <>
-        <button type="button" disabled={busy} className="ui-button" onClick={onConnect}>{t("cloudHome.connect")}</button>
+        {!offered && <button type="button" disabled={busy} className={QUIET} onClick={onConnect}>{t("cloudHome.connect")}</button>}
         <p className="text-[12px] text-ink-secondary">{t("cloudHome.connectHelp")}</p>
       </>}
       {failed && <p role="alert" className="text-[13px] text-danger">{t("cloudHome.connectFailed")}</p>}
@@ -61,14 +65,15 @@ function cloudHomeCard({ machine, busy, failed, onConnect, lending }: { machine:
 
 /** A paid plan's Cloud on the phone: the phone app paired with the Cloud
  * rather than this computer keeps working when this computer is off. One
- * click opens the Cloud in this window on its phone pairing; when the Cloud
- * cannot be opened (not Ready yet, or opening failed), the two steps
- * instead. A render helper (no hooks), part of the view. */
+ * quiet link (the section's next step is Open My Cloud) opens the Cloud in
+ * this window on its phone pairing; when the Cloud cannot be opened (not
+ * Ready yet, or opening failed), the two steps instead. A render helper (no
+ * hooks), part of the view. */
 function cloudPhoneCard({ ready, busy, failed, onUse }: { ready: boolean; busy: boolean; failed: boolean; onUse: () => void }) {
   return <Card title={t("cloudPhone.title")} subtitle={t("cloudPhone.subtitle")}>
     <div data-cloud-phone={ready ? "open" : "steps"} className="flex flex-col items-start gap-3">
       {ready && <>
-        <button type="button" disabled={busy} className="ui-button" onClick={onUse}>{t("cloudPhone.action")}</button>
+        <button type="button" disabled={busy} className={QUIET} onClick={onUse}>{t("cloudPhone.action")}</button>
         <p className="text-[12px] text-ink-secondary">{t("cloudPhone.help")}</p>
       </>}
       {failed && <p role="alert" className="text-[13px] text-danger">{t("cloudPhone.failed")}</p>}
@@ -121,19 +126,6 @@ function accountMessage(account: CloudAccountState | null, view: CloudPlanView, 
   return null;
 }
 
-/** Each state's one next action, by its label (lib/cloud-plan cloudPlanAction):
- * never "choose a plan" to someone who has one. */
-const ACTION_LABEL: Record<CloudPlanAction, LocaleKey> = {
-  "sign-in": "cloudAccount.signIn",
-  "sign-in-again": "cloudAccount.signInAgain",
-  reopen: "organization.reopen",
-  "choose-plan": "cloudAccount.upgrade",
-  manage: "cloudAccount.manage",
-  "update-payment": "cloudAccount.updatePayment",
-  "plan-page": "cloudAccount.dashboard",
-  "sign-out": "cloudAccount.signOut",
-};
-
 /** On the person's own Cloud, open in this app's window: the plan, read only,
  * Manage in the browser, and back to this computer. When this app cannot
  * vouch for this Cloud (its state is refused), it says where the plan is
@@ -176,7 +168,7 @@ function cloudPlanInBrowser(planPage: string) {
   return <Card title={t("settings.section.cloudAccount")}>
     <div data-cloud-plan="browser" className="flex flex-col items-start gap-3">
       <p className="text-[13px] text-ink-secondary">{t("cloudAccount.planPageLine")}</p>
-      <a href={planPage} target="_blank" rel="noreferrer" className="ui-button">{t("cloudAccount.openPlanPage")}</a>
+      <a href={planPage} target="_blank" rel="noreferrer" className="ui-button">{t("cloudAccount.dashboard")}</a>
     </div>
   </Card>;
 }
@@ -257,22 +249,18 @@ export function CloudAccountSettings({ linkRequest = 0, cloudHome = false, planP
   // Status comes only from the server-verified native snapshot; checkout never sets it.
   const message = accountMessage(account, view, platform);
   const line = cloudPlanLine(view);
-  // The state's one next action. Signing out asks first.
+  // The state's one next action (lib/cloud-plan): never "choose a plan" to
+  // someone who has one. Signing out asks first; opening My Cloud says so
+  // in its own card if it fails.
   const action = cloudPlanAction(view, account);
-  const run: Record<CloudPlanAction, () => void> = {
-    "sign-in": () => void perform(() => bridge.begin()),
-    "sign-in-again": () => void perform(() => bridge.signInAgain()),
-    reopen: () => void perform(() => bridge.reopen()),
-    "choose-plan": () => void perform(() => bridge.openDashboard()),
-    manage: () => void perform(() => bridge.openDashboard()),
-    "update-payment": () => void perform(() => bridge.openDashboard()),
-    "plan-page": () => void perform(() => bridge.openDashboard()),
-    "sign-out": () => setConfirm(true),
+  const run = () => {
+    if (action === "sign-out") setConfirm(true);
+    else if (action === "open-my-cloud") connectHome();
+    else if (action) void perform(() => cloudPlanStep(action, bridge));
   };
   // A paid plan's Cloud before the Admin lists it is being set up.
   const machine: CloudMachine | undefined = account?.status === "connected" ? account.machine ?? (view.kind === "paid" ? { status: "provisioning" } : undefined) : undefined;
   const enrollment = account?.status === "connecting" ? account.enrollment : undefined;
-  const quiet = "py-1 text-[12px] text-ink-secondary underline underline-offset-2 hover:text-ink";
   // Asking before signing out, only while there is a sign-in to remove.
   const confirming = confirm && Boolean(signed);
   return <>
@@ -292,14 +280,15 @@ export function CloudAccountSettings({ linkRequest = 0, cloudHome = false, planP
         {signed && line && <p role="status" data-cloud-plan={view.kind} className="text-[15px] font-medium text-ink">{line}
           {view.kind === "paid" && view.checking && <span className="ms-2 text-[12px] font-normal text-ink-secondary">{t("cloudAccount.checking")}</span>}</p>}
         {signed && view.kind === "free" && <p className="text-[13px] text-ink-secondary">{t("cloudAccount.purchaseHelp")}</p>}
-        {action && !confirming && <button type="button" disabled={busy} className="ui-button" onClick={run[action]}>{t(ACTION_LABEL[action])}</button>}
-        {/* Ways out, not next steps: quiet links. */}
-        {account?.status === "connecting" && <button type="button" disabled={busy} className={quiet} onClick={() => void perform(() => bridge.cancel())}>{t("organization.cancel")}</button>}
+        {action && !confirming && <button type="button" disabled={busy} className="ui-button" onClick={run}>{t(CLOUD_PLAN_ACTION_LABEL[action])}</button>}
+        {/* Ways out and second steps, not next steps: quiet links. */}
+        {action === "open-my-cloud" && !confirming && <button type="button" disabled={busy} className={QUIET} onClick={() => void perform(() => bridge.openDashboard())}>{t("cloudAccount.manage")}</button>}
+        {account?.status === "connecting" && <button type="button" disabled={busy} className={QUIET} onClick={() => void perform(() => bridge.cancel())}>{t("organization.cancel")}</button>}
         {/* A plan bought with another email sits on that account. */}
         {signed && view.kind === "free" && !confirming && <p className="text-[12px] text-ink-secondary">{t("cloudAccount.otherEmail")}{" "}
           <button type="button" disabled={busy} className="underline hover:text-ink" onClick={() => setConfirm(true)}>{t("cloudAccount.useOtherEmail")}</button></p>}
         {signed && action !== "sign-out" && account.message !== "restore-failed" && !confirming
-          && <button type="button" disabled={busy} className={quiet} onClick={() => setConfirm(true)}>{t("cloudAccount.signOut")}</button>}
+          && <button type="button" disabled={busy} className={QUIET} onClick={() => setConfirm(true)}>{t("cloudAccount.signOut")}</button>}
         {confirming && <div role="group" aria-label={t("cloudAccount.signoutTitle")} className="rounded-lg border border-hairline/40 p-3">
           <p className="text-[13px] text-ink-secondary">{t("cloudAccount.signoutHelp")}</p><div className="mt-3 flex flex-wrap gap-2">
             <button type="button" autoFocus disabled={busy} className="ui-button" onClick={() => setConfirm(false)}>{t("cloudAccount.keep")}</button>
@@ -310,7 +299,7 @@ export function CloudAccountSettings({ linkRequest = 0, cloudHome = false, planP
         {!account && error && <button type="button" disabled={busy} className="ui-button" onClick={() => void perform(() => bridge.state())}>{t("cloudAccount.tryAgain")}</button>}
       </div>
     </Card>
-    {machine && cloudHomeCard({ machine, busy, failed: homeFailed, onConnect: connectHome, lending: bridge.lending })}
+    {machine && cloudHomeCard({ machine, busy, failed: homeFailed, onConnect: connectHome, offered: action === "open-my-cloud", lending: bridge.lending })}
     {signed && view.kind === "paid" && cloudPhoneCard({ ready: machine?.status === "ready", busy, failed: phoneFailed, onUse: openOnPhone })}
     {machine?.status === "ready" && <CloudMoveSettings destination="cloud" />}
   </>;

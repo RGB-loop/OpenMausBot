@@ -7,6 +7,7 @@ vi.mock("react", async original => ({ ...await original<typeof import("react")>(
 vi.mock("../lib/session", async original => ({ ...await original<typeof import("../lib/session")>(), pairWithCode: f.pair, readSessionState: vi.fn().mockResolvedValue({ kind: "unauthenticated", error: "" }) }));
 vi.mock("../components/DesktopWorkspaceSwitcher", () => ({ DesktopWorkspaceSwitcher: () => null }));
 import { PairPage, pairIntro, pairsAutomatically } from "./PairPage";
+import en from "../locales/en.json";
 
 const code = "ABCD-EFGH-JK23";
 const render = (initialCode: string | null) => { f.effects = []; return renderToStaticMarkup(createElement(PairPage, { initialCode })); };
@@ -52,7 +53,8 @@ it("a browser keeps the code in the form for the person to confirm", () => {
 
 it("an OMB Cloud says where its connection starts, never 'the code shown on the server'", () => {
   const cloud = pairIntro({ mode: "code", sent: false, email: "", cloudHome: true });
-  expect(cloud).toContain("Connect to my Cloud in the OpenMausBot app");
+  // It names the app's own button, as it is labelled.
+  expect(cloud).toContain(`choose ${en["cloudHome.connect"]} in the OpenMausBot app`);
   expect(cloud).toContain("Settings → OMB Cloud");
   expect(cloud).not.toContain("shown on the server");
   expect(pairIntro({ mode: "code", sent: false, email: "", cloudHome: false })).toContain("shown on the server");

@@ -5,9 +5,9 @@
 // cloud computer, or until the person hides it. A line under the title says
 // what My Cloud is for. Each step's state is read from the Cloud or this app
 // (lib/cloud-setup), never ticked by hand, and each action opens what already
-// exists: the engine sign-in, Copy this computer here, a bot's Works on and
-// Computer panel, the chat's composer, the lending switch. No dialogs, and no
-// action starts a computer or sends a message. Desktop and self-hosted
+// exists: the engine sign-in, Copy this computer here, a bot's Works on, the
+// chat's composer, the lending switch. No dialogs, and no action starts a
+// computer or sends a message. Desktop and self-hosted
 // installs never see it; they keep the welcome flow, and an empty one gets
 // the same Copy this computer here card.
 import { useEffect, useState } from "react";
@@ -17,6 +17,7 @@ import { engineReady } from "@/components/EngineLibrary";
 import { cn } from "@/lib/cn";
 import { CLOUD_SETUP_HIDDEN, CLOUD_SETUP_MOVE_SKIPPED, cloudSetupItems, cloudSetupStage, type CloudSetupItem, type CloudSetupStep } from "@/lib/cloud-setup";
 import { appendComposerDraft, getDraft } from "@/lib/drafts";
+import { boatCapableEngine } from "@/lib/remote-desktop";
 import { t } from "@/lib/i18n";
 import { hintSeenPatch, type WelcomeViewer } from "@/lib/onboarding";
 import type { LocaleKey } from "@/locales";
@@ -60,11 +61,17 @@ export function CloudSetup({ viewer }: { viewer: WelcomeViewer | null }) {
   const record = state.config?.onboarding;
   // Not now on the move shows as skipped at once, before the Cloud answers.
   const onboarding = moveSkipped && record ? { ...record, hintsSeen: [...record.hintsSeen, CLOUD_SETUP_MOVE_SKIPPED] } : record;
+  const visible = state.bots.filter((candidate) => !candidate.hidden);
+  const selectedBot = visible.find((candidate) => candidate.id === state.selectedId) ?? visible[0];
+  // A bot can be given a cloud computer only when its own AI can use one (the
+  // server's rule, shared/cloud-computer.ts); any other would fail every turn.
+  const canUseComputer = (candidate: Bot) => Boolean(boatCapableEngine(state.instances, candidate.modelSelection.instanceId));
+  const computerBots = visible.filter(canUseComputer);
   const facts = {
     viewer, connected: state.connected, enginesKnown: state.instances.length > 0,
     engineReady: state.instances.some(engineReady), onboarding,
-    // The plan's included cloud computers; a Cloud without them has no computer step.
-    cloudComputers: state.config?.box?.included === true,
+    // The plan's included cloud computers, and a bot that can use one.
+    cloudComputers: state.config?.box?.included === true && computerBots.length > 0,
   };
   const stage = hidden ? "hidden" : cloudSetupStage(facts);
   const shown = stage === "shown";
@@ -96,10 +103,13 @@ export function CloudSetup({ viewer }: { viewer: WelcomeViewer | null }) {
     if (moveBridge && moveItem?.status === "todo") void moveBridge.dismiss().catch(() => {});
     remember(CLOUD_SETUP_HIDDEN);
   };
-  const visible = state.bots.filter((candidate) => !candidate.hidden);
-  const selectedBot = visible.find((candidate) => candidate.id === state.selectedId) ?? visible[0];
-  // The bot already given a cloud computer, else the one this step would give one to.
-  const cloudBot = visible.find((candidate) => candidate.computer === "cloud");
+  // The bot already given the plan's cloud computer (not a VPS, which the
+  // step does not count), else the one this step would give one to: the
+  // selected bot when it can use one, else the first that can.
+  const cloudBot = computerBots.find((candidate) => candidate.computer === "cloud" && candidate.cloudBackend !== "vps");
+  const giveBot = computerBots.find((candidate) => candidate.id === selectedBot?.id) ?? computerBots[0];
+  // The daily example runs every day: never on a bot that works on its cloud computer.
+  const scheduleBot = [selectedBot, ...visible].find((candidate) => candidate && candidate.computer !== "cloud");
   // Puts the example in the bot's composer and selects its chat. Never sends:
   // the person reads it and presses Send.
   const draft = (bot: Bot | undefined, example: string) => {
@@ -108,12 +118,12 @@ export function CloudSetup({ viewer }: { viewer: WelcomeViewer | null }) {
     const draftId = `bot:${bot.id}:${bot.threadId}`;
     if (!draftHas(draftId, example)) appendComposerDraft(draftId, example);
   };
-  // Works on: Cloud computer, then its Computer panel. Nothing is created or
-  // woken here; the computer starts when a task needs it.
+  // Works on: Cloud computer, and nothing more. Nothing is created or woken
+  // here, and the Computer panel is not opened: with Cloud chosen, opening it
+  // starts the computer. The computer starts when a task needs it.
   const giveComputer = (bot: Bot) => {
     dispatch({ type: "select", id: bot.id });
-    dispatch({ type: "updateBot", botId: bot.id, patch: { computer: "cloud" } });
-    dispatch({ type: "toggleComputer", open: true });
+    dispatch({ type: "updateBot", botId: bot.id, patch: bot.cloudBackend === "vps" ? { computer: "cloud", cloudBackend: "box" } : { computer: "cloud" } });
   };
   const hint = (text: string) => <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{text}</p>;
   const example = (text: string) => <p className="mt-1.5 rounded-lg bg-inset px-2.5 py-2 text-[12.5px] leading-relaxed text-ink">{text}</p>;
@@ -140,16 +150,16 @@ export function CloudSetup({ viewer }: { viewer: WelcomeViewer | null }) {
         {example(t("cloudSetup.computer.example"))}
         {facts.engineReady && action(t("cloudSetup.try.action"), () => draft(cloudBot, t("cloudSetup.computer.example")))}
       </>;
-      if (!selectedBot) return null;
+      if (!giveBot) return null;
       return <>
-        {hint(t("cloudSetup.computer.hint", { name: selectedBot.name }))}
-        {action(t("cloudSetup.computer.action", { name: selectedBot.name }), () => giveComputer(selectedBot))}
+        {hint(t("cloudSetup.computer.hint", { name: giveBot.name }))}
+        {action(t("cloudSetup.computer.action", { name: giveBot.name }), () => giveComputer(giveBot))}
       </>;
     }
     if (id === "try") return <>
       {hint(t("cloudSetup.try.hint"))}
       {example(t("cloudSetup.try.example"))}
-      {facts.engineReady && action(t("cloudSetup.try.action"), () => draft(selectedBot, t("cloudSetup.try.example")))}
+      {facts.engineReady && scheduleBot && action(t("cloudSetup.try.action"), () => draft(scheduleBot, t("cloudSetup.try.example")))}
     </>;
     return <>
       {hint(t("cloudSetup.lend.hint"))}

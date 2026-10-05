@@ -5,8 +5,9 @@
 // owner set: after buying, nothing unexpected or contradictory, never an
 // offer to buy to someone who pays (or may pay: an unknown state is not
 // "free"), and every state has one message and one next step.
-import type { CloudAccountState } from "../../electron/cloud-account.mjs";
+import type { CloudAccountBridge, CloudAccountState } from "../../electron/cloud-account.mjs";
 import { t } from "@/lib/i18n";
+import type { LocaleKey } from "@/locales";
 
 const PLAN_LABEL: Record<string, string> = { personal: "Personal", pro: "Pro", max: "Max" };
 /** A paid plan's product name. No tier is an Admin that sells only Pro; a
@@ -73,12 +74,13 @@ export function cloudPlanLine(view: CloudPlanView): string | null {
   }
 }
 
-/** The one next action Settings → OpenMausBot Cloud offers in each state, or
- * null where there is nothing to press (still loading, or a saved sign-in the
- * app reads again by itself). No Refresh: the app checks with OpenMausBot
- * Cloud by itself, every minute. Sign out (and Cancel, while signing in) stay
- * as quiet links: ways out, not next steps. */
-export type CloudPlanAction = "sign-in" | "sign-in-again" | "reopen" | "choose-plan" | "manage" | "update-payment" | "plan-page" | "sign-out";
+/** The one next action Settings → OpenMausBot Cloud (and This computer's
+ * card, cloudNoticeKind) offers in each state, or null where there is nothing
+ * to press (still loading, or a saved sign-in the app reads again by itself).
+ * No Refresh: the app checks with OpenMausBot Cloud by itself, every minute.
+ * Sign out (and Cancel, while signing in) stay as quiet links: ways out, not
+ * next steps; so does Manage beside Open My Cloud. */
+export type CloudPlanAction = "sign-in" | "sign-in-again" | "reopen" | "choose-plan" | "open-my-cloud" | "manage" | "update-payment" | "plan-page" | "sign-out";
 export function cloudPlanAction(view: CloudPlanView, account: CloudAccountState | null | undefined): CloudPlanAction | null {
   if (!account) return null;
   // Clearing the saved sign-in failed: signing out again is the retry its message names.
@@ -90,7 +92,7 @@ export function cloudPlanAction(view: CloudPlanView, account: CloudAccountState 
     case "connecting": return "reopen";
     case "reauth": return "sign-in-again";
     case "free": return "choose-plan";
-    case "paid": return "manage";
+    case "paid": return account.machine?.status === "ready" ? "open-my-cloud" : "manage";
     case "unverified": return view.label ? "manage" : "plan-page";
     case "attention": return account.machine?.status === "payment-problem" ? "update-payment" : "plan-page";
     case "purchase": return "plan-page";
@@ -98,14 +100,45 @@ export function cloudPlanAction(view: CloudPlanView, account: CloudAccountState 
   }
 }
 
+/** Each action's label, the same wherever it is offered: Settings and This
+ * computer's card never name one step two ways. */
+export const CLOUD_PLAN_ACTION_LABEL: Record<CloudPlanAction, LocaleKey> = {
+  "sign-in": "cloudAccount.signIn",
+  "sign-in-again": "cloudAccount.signInAgain",
+  reopen: "organization.reopen",
+  "choose-plan": "cloudAccount.upgrade",
+  "open-my-cloud": "cloudHome.connect",
+  manage: "cloudAccount.manage",
+  "update-payment": "cloudAccount.updatePayment",
+  "plan-page": "cloudAccount.dashboard",
+  "sign-out": "cloudAccount.signOut",
+};
+
+/** What each action asks of the desktop's Cloud account bridge. Sign out is
+ * not here: it asks first. */
+export function cloudPlanStep(action: Exclude<CloudPlanAction, "sign-out">, bridge: CloudAccountBridge): Promise<CloudAccountState> {
+  switch (action) {
+    case "sign-in": return bridge.begin();
+    case "sign-in-again": return bridge.signInAgain();
+    case "reopen": return bridge.reopen();
+    case "open-my-cloud": return bridge.connectHome();
+    default: return bridge.openDashboard();
+  }
+}
+
 /** The one card This computer's window shows about My Cloud, bottom left, or
- * null: a paid plan whose My Cloud is ready says the always-on bots are
- * there; a sign-in that ended, or one this computer could not read and
- * removed, asks to sign in again. An offer to buy is the Pro introduction's,
- * shown only where buyOfferAllowed; My Cloud still being set up is shown in
- * Settings. */
-export function cloudNoticeKind(view: CloudPlanView, account: CloudAccountState | null | undefined): "my-cloud" | "sign-in-again" | null {
+ * null. Its action is the state's cloudPlanAction, as in Settings.
+ * - "my-cloud": a paid plan whose My Cloud is ready; the always-on bots are there.
+ * - "sign-in-again": this computer's sign-in ended, and it last saw an active
+ *   plan, so the card can say the plan and My Cloud are unaffected.
+ * - "removed": a saved sign-in this computer could not read and removed. It
+ *   cannot tell whether there is a plan, so the card claims none.
+ * An offer to buy is the Pro introduction's, shown only where
+ * buyOfferAllowed; My Cloud still being set up is shown in Settings. */
+export type CloudNoticeKind = "my-cloud" | "sign-in-again" | "removed";
+export function cloudNoticeKind(view: CloudPlanView, account: CloudAccountState | null | undefined): CloudNoticeKind | null {
   if (view.kind === "paid" && account?.machine?.status === "ready") return "my-cloud";
-  if (view.kind === "removed" || view.kind === "reauth") return "sign-in-again";
+  if (view.kind === "reauth" && account?.lastPlan?.active === true) return "sign-in-again";
+  if (view.kind === "removed") return "removed";
   return null;
 }

@@ -10,6 +10,7 @@
 // Claude CLI.
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createServer, type Server } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -29,9 +30,13 @@ const gateway = {
   OMB_HOSTED_MODEL_TOKEN: token,
   OMB_HOSTED_MODELS: JSON.stringify({ anthropic: [], openai: ["gpt-fixture"], openrouter: ["anthropic/claude-fixture"] }),
 };
+// The Admin's relay for the plan's cloud computers, played by a local stub
+// (the only address this machine can reach): it creates one ready computer.
+const relay = { base: "", requests: [] as Array<{ method: string; path: string; auth: string }>, boxes: [] as Array<{ id: string; name: string; state: string }> };
+let relayServer: Server;
 // Cloud Pro's included Boat computers, voice and decisions (included-services.ts).
 const included = {
-  OMB_CLOUD_BOAT_URL: "https://cloud.example.test/api/cloud/services/boat/api/box/v1",
+  OMB_CLOUD_BOAT_URL: "",
   OMB_CLOUD_BOAT_TOKEN: `box_omb_${randomBytes(24).toString("base64url")}`,
   OMB_CLOUD_VOICE_URL: "https://cloud.example.test/api/cloud/services/voice/v1",
   OMB_CLOUD_VOICE_TOKEN: `omb_voice_${randomBytes(24).toString("base64url")}`,
@@ -67,6 +72,32 @@ async function api(method: string, path: string, options: { body?: unknown; remo
 }
 
 beforeAll(async () => {
+  relayServer = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://relay.test");
+    let raw = "";
+    req.on("data", (chunk) => { raw += chunk; });
+    req.on("end", () => {
+      relay.requests.push({ method: req.method ?? "GET", path: url.pathname, auth: String(req.headers.authorization ?? "") });
+      const send = (status: number, payload: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(payload)); };
+      if (req.headers.authorization !== `Bearer ${included.OMB_CLOUD_BOAT_TOKEN}`) return send(401, { ok: false, code: "unauthorized" });
+      const path = url.pathname.replace(/^\/relay\/api\/box\/v1/, "");
+      if (path === "/boxes" && req.method === "GET") return send(200, { ok: true, boxes: relay.boxes, pageInfo: { nextCursor: null } });
+      if (path === "/boxes" && req.method === "POST") {
+        const box = { id: "bx_23456789", name: "", state: "running" };
+        relay.boxes.push(box);
+        return send(201, { ok: true, box });
+      }
+      const one = /^\/boxes\/([^/]+)(\/desktop)?$/.exec(path);
+      const box = one ? relay.boxes.find((candidate) => candidate.id === one[1]) : undefined;
+      if (box && one![2] && req.method === "POST") return send(200, { ok: true, desktopUrl: "https://desktop.relay.test/bx_23456789" });
+      if (box && req.method === "PATCH") { Object.assign(box, JSON.parse(raw || "{}")); return send(200, { ok: true, box }); }
+      if (box && req.method === "GET") return send(200, { ok: true, box });
+      send(404, { ok: false, code: "not_found", message: "Not found" });
+    });
+  });
+  await new Promise<void>((resolve) => relayServer.listen(0, "127.0.0.1", resolve));
+  relay.base = `http://127.0.0.1:${(relayServer.address() as { port: number }).port}`;
+  included.OMB_CLOUD_BOAT_URL = `${relay.base}/relay/api/box/v1`;
   home = mkdtempSync(join(tmpdir(), "omb-cloud-home-server-"));
   const dataDir = join(home, ".openmausbot");
   mkdirSync(dataDir, { recursive: true });
@@ -105,7 +136,9 @@ let port = 0;
  * every update or restart, and pair one of the owner's devices with it. */
 async function start() {
   const dataDir = join(home, ".openmausbot");
-  const offlinePrelude = `data:text/javascript,${encodeURIComponent('globalThis.fetch = async () => new Response("offline fixture", { status: 503 });')}`;
+  // Offline but for the relay stub.
+  const offlinePrelude = `data:text/javascript,${encodeURIComponent(`const reach = globalThis.fetch, relay = ${JSON.stringify(relay.base)};
+globalThis.fetch = async (input, init) => String(input?.url ?? input).startsWith(relay) ? reach(input, init) : new Response("offline fixture", { status: 503 });`)}`;
   child = spawn(process.execPath, ["--import", offlinePrelude, join(SERVER_DIR, "index.ts")], {
     cwd: join(SERVER_DIR, ".."),
     env: {
@@ -147,6 +180,7 @@ async function ownerPairing(): Promise<string> {
 
 afterAll(async () => {
   if (child) await waitForExit(child, { signal: "SIGTERM" });
+  if (relayServer) await new Promise<void>((resolve) => relayServer.close(() => resolve()));
   if (home) await removeTempDir(home);
 });
 
@@ -372,6 +406,31 @@ it("records when a bot's turn first finished here, once, in the Cloud's own sett
   expect(await first()).toBe(recorded);
 });
 
+// J4's record half: the first turn that finishes OK holding a cloud computer
+// ticks Set up My Cloud's "Give a bot a cloud computer", once.
+it("records when a turn first finished with a cloud computer, through the plan's relay", async () => {
+  const created = await api("POST", "/api/bots", { body: {
+    name: "Screen fixture", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
+  } });
+  expect(created.status, JSON.stringify(created.body)).toBe(201);
+  const botId = created.body.bot.id as string;
+  expect((await api("PATCH", `/api/bots/${botId}`, { body: { computer: "cloud" } })).status).toBe(200);
+  expect((await api("GET", "/api/config")).body.onboarding).not.toHaveProperty("firstCloudComputerAt");
+  expect((await api("POST", `/api/bots/${botId}/messages`, { body: { text: "Open a web browser on your cloud computer" } })).status).toBe(202);
+  const recorded = async () => (await api("GET", "/api/config")).body.onboarding?.firstCloudComputerAt as string | undefined;
+  await expect.poll(recorded, { timeout: 30_000 }).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  // The turn held the plan's computer, made through the relay with the plan's token only.
+  expect(relay.requests.some((request) => request.method === "POST" && request.path === "/relay/api/box/v1/boxes")).toBe(true);
+  expect(relay.requests.every((request) => request.auth === `Bearer ${included.OMB_CLOUD_BOAT_TOKEN}`)).toBe(true);
+  const at = await recorded();
+  expect(JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8")).onboarding.firstCloudComputerAt).toBe(at);
+  // The first turn's time stays as it was.
+  expect((await api("GET", "/api/config")).body.onboarding.firstTurnAt < at!).toBe(true);
+  const busy = async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string; busy?: boolean }) => bot.id === botId)?.busy === true;
+  await expect.poll(busy, { timeout: 15_000 }).toBe(false);
+  expect((await api("PATCH", `/api/bots/${botId}`, { body: { computer: null } })).status).toBe(200);
+}, 60_000);
+
 it("offers its bots the browser and cloud computers only, and tells them they cannot see the person's computer", async () => {
   // The browser is on with no welcome to turn it on; the app is told this is
   // a Cloud home, so it lists no this computer and no Local VM either.
@@ -388,8 +447,10 @@ it("offers its bots the browser and cloud computers only, and tells them they ca
   try {
     expect((await api("POST", `/api/bots/${botId}/messages`, { body: { text: "list the files on my desktop" } })).status).toBe(202);
     const dump = join(home, "spawn-hang.json");
-    await expect.poll(() => existsSync(dump), { timeout: 15_000 }).toBe(true);
-    const { systemPrompt, mcpConfig } = JSON.parse(readFileSync(dump, "utf8"));
+    // The fake CLI writes its record in place: read it once it is whole.
+    const whole = () => { try { return JSON.parse(readFileSync(dump, "utf8")) as { systemPrompt: string; mcpConfig: any }; } catch { return null; } };
+    await expect.poll(whole, { timeout: 15_000 }).not.toBeNull();
+    const { systemPrompt, mcpConfig } = whole()!;
     // Its engine mounts the team tools, and a Cloud home always offers lending,
     // so the bot is told how to reach a lent Mac, and what to say without one.
     expect(systemPrompt).toContain(cloudHomePrompt(true));
@@ -431,12 +492,23 @@ it("J8: a bot copied in set to This computer or a Local VM works on Auto after t
     } });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     copied[computer] = created.body.bot.id;
-    expect((await api("PATCH", `/api/bots/${created.body.bot.id}`, { body: { computer } })).status).toBe(200);
   }
   const pinned = (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string }) => bot.id === copied.local);
-  expect((await api("PATCH", `/api/bots/${copied.local}/tasks/${pinned.threadId}`, { body: { surface: "vm" } })).status).toBe(200);
 
+  // The copy lands while the Cloud is stopped, as Copy this computer here
+  // installs it: bots and a chat set to places this machine does not offer.
   await waitForExit(child, { signal: "SIGTERM" });
+  const botsFile = join(home, ".openmausbot", "bots.json");
+  const records = JSON.parse(readFileSync(botsFile, "utf8")) as Array<{ id: string; computer?: string; tasks?: Array<{ threadId: string; surface?: string; surfaceSource?: string }> }>;
+  for (const record of records) {
+    if (record.id === copied.local) {
+      record.computer = "local";
+      const task = record.tasks?.find((candidate) => candidate.threadId === pinned.threadId);
+      Object.assign(task!, { surface: "vm", surfaceSource: "user" });
+    }
+    if (record.id === copied.vm) record.computer = "vm";
+  }
+  writeFileSync(botsFile, JSON.stringify(records));
   await start();
 
   const bots = (await api("GET", "/api/bots?messages=0")).body.bots as Array<{ id: string; threadId: string; computer?: string; tasks?: Array<{ threadId: string; surface?: string }> }>;
@@ -455,3 +527,30 @@ it("J8: a bot copied in set to This computer or a Local VM works on Auto after t
   expect(messages.filter((message) => message.tool?.ok === false)).toEqual([]);
   expect(JSON.stringify(messages)).not.toMatch(/isn't a place|can't use a Local VM|Works on|has no This computer/);
 }, 60_000);
+
+// While it runs, nothing can set either place again: a bot's Works on and a
+// conversation's place are refused in plain words, so no bot ends up refused
+// on every message until the next restart.
+it("refuses This computer or a Local VM as a bot's Works on or a conversation's place", async () => {
+  const created = await api("POST", "/api/bots", { body: {
+    name: "Place fixture", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
+  } });
+  expect(created.status, JSON.stringify(created.body)).toBe(201);
+  const botId = created.body.bot.id as string;
+  const threadId = (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string }) => bot.id === botId).threadId as string;
+  for (const place of ["local", "vm"] as const) {
+    const works = await api("PATCH", `/api/bots/${botId}`, { body: { computer: place } });
+    expect(works.status, JSON.stringify(works.body)).toBe(409);
+    expect(works.body.error).toBe(CLOUD_HOME_UNOFFERED_PLACE);
+    const chat = await api("PATCH", `/api/bots/${botId}/tasks/${threadId}`, { body: { surface: place } });
+    expect(chat.status, JSON.stringify(chat.body)).toBe(409);
+    expect(chat.body.error).toBe(CLOUD_HOME_UNOFFERED_PLACE);
+  }
+  const bot = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === botId);
+  expect(bot).not.toHaveProperty("computer");
+  expect(bot.tasks.find((task: { threadId: string }) => task.threadId === threadId)).not.toHaveProperty("surface");
+  // The places it offers are still saved.
+  expect((await api("PATCH", `/api/bots/${botId}`, { body: { computer: "cloud" } })).status).toBe(200);
+  expect((await api("PATCH", `/api/bots/${botId}/tasks/${threadId}`, { body: { surface: "browser" } })).status).toBe(200);
+  expect((await api("PATCH", `/api/bots/${botId}`, { body: { computer: null } })).status).toBe(200);
+});

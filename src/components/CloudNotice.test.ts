@@ -15,7 +15,7 @@ vi.mock("react", async original => ({ ...await original<typeof import("react")>(
 }));
 vi.mock("@/state/store", () => ({ useStore: () => ({ state: f.state, dispatch: (action: unknown) => f.dispatched.push(action) }), api: vi.fn() }));
 vi.mock("@/lib/updater", () => ({ useUpdaterState: () => f.updater }));
-import { CLOUD_NOTICE_DISMISSED, CloudNotice } from "./CloudNotice";
+import { CLOUD_NOTICE_DISMISSED, CLOUD_NOTICE_SIGN_IN_DISMISSED, CloudNotice } from "./CloudNotice";
 import { proOfferAvailable } from "./ProIntroduction";
 import { api } from "@/state/store";
 
@@ -59,7 +59,9 @@ it("J12: a paid plan on This computer gets one card pointing to My Cloud, and Op
   await show(myCloudReady);
   const { html } = render();
   expect(html).toContain("Your always-on bots are on My Cloud");
-  expect(html).toContain("Bots on this computer stop when it sleeps or the app is closed. Bots on My Cloud keep working, and can use cloud computers.");
+  // Cloud computers work for bots on This computer too (D4): the card says only what differs.
+  expect(html).toContain("Bots on this computer stop when it sleeps or the app is closed. Bots on My Cloud keep working.");
+  expect(html).not.toMatch(/cloud computer/i);
   expect(render().nodes.filter(node => node.type === "button").map(text).filter(Boolean)).toEqual(["Open My Cloud"]);
   button("Open My Cloud")!.props.onClick!(); await flush();
   expect(bridge.connectHome).toHaveBeenCalledExactlyOnceWith();
@@ -89,27 +91,56 @@ it("J12: Not now hides the My Cloud card for good, kept in this computer's setti
   expect(render().html).toBe("");
 });
 
-it("J12: a removed or ended sign-in gets Sign in again instead of silence, and no offer to buy", async () => {
+it("J12: a removed sign-in asks to sign in again, claims no plan, and offers nothing to buy", async () => {
+  // Many desktops that never paid hit this after the sign-in bug (#2305/#2311).
   await show({ status: "signed-out", message: "restore-removed" });
   const { html } = render();
-  expect(html).toContain("Sign in again to reach My Cloud");
-  expect(html).toContain("Your plan and your bots there are not affected.");
+  expect(html).toContain("This computer was signed out of OpenMausBot Cloud");
+  expect(html).toContain("Its saved sign-in couldn&#x27;t be read, so it was removed.");
+  expect(html).not.toMatch(/plan|My Cloud|bots/i);
   expect(proOfferAvailable({ status: "signed-out", message: "restore-removed" })).toBe(false);
-  button("Sign in again")!.props.onClick!(); await flush();
+  // The same step, in the same words, as Settings → OpenMausBot Cloud.
+  expect(render().nodes.filter(node => node.type === "button").map(text).filter(Boolean)).toEqual(["Sign in to OpenMausBot Cloud"]);
+  button("Sign in to OpenMausBot Cloud")!.props.onClick!(); await flush();
   expect(bridge.begin).toHaveBeenCalledExactlyOnceWith();
-  // A sign-in that ended is forgotten and started again.
-  f.values = []; await show({ status: "reauth-required", message: "expired", lastPlan: { tier: "max", active: true } });
+  expect(bridge.signInAgain).not.toHaveBeenCalled();
+});
+
+it("J12: an ended sign-in of a paid plan asks to sign in again to reach My Cloud; without a known plan, nothing shows", async () => {
+  await show({ status: "reauth-required", message: "expired", lastPlan: { tier: "max", active: true } });
   expect(render().html).toContain("Sign in again to reach My Cloud");
+  expect(render().html).toContain("Your plan and your bots there are not affected.");
   button("Sign in again")!.props.onClick!(); await flush();
   expect(bridge.signInAgain).toHaveBeenCalledExactlyOnceWith();
+  expect(bridge.begin).not.toHaveBeenCalled();
   // Signing in is under way: the card steps aside.
   expect(render().html).toBe("");
-  // The browser was closed without finishing: Not now hides it for now; it
-  // comes back next time the app opens.
+  // The browser was closed without finishing: the card is back.
   push({ status: "reauth-required", message: "expired", lastPlan: { tier: "max", active: true } });
-  button("Not now")!.props.onClick!();
+  expect(render().html).toContain("Sign in again to reach My Cloud");
+  // No plan this computer knows of: no claim about a plan or bots there.
+  for (const state of [{ status: "reauth-required", message: "access-ended" }, { status: "reauth-required", message: "expired", lastPlan: { active: false } }] as CloudAccountState[]) {
+    f.values = []; await show(state);
+    expect(render().html, JSON.stringify(state)).toBe("");
+  }
+});
+
+it("J12: Not now on Sign in again is kept too, so it does not come back on every launch", async () => {
+  const ended: CloudAccountState = { status: "reauth-required", message: "expired", lastPlan: { tier: "max", active: true } };
+  await show(ended);
+  button("Not now")!.props.onClick!(); await flush();
   expect(render().html).toBe("");
-  expect(api).not.toHaveBeenCalled();
+  expect(api).toHaveBeenCalledWith("/api/config", { method: "PUT", body: JSON.stringify({ onboarding: { hintsSeen: [CLOUD_NOTICE_SIGN_IN_DISMISSED] } }) });
+  // The next launch: the record, or this browser's storage alone, keeps it hidden.
+  f.values = []; f.state.config.onboarding = { ...f.state.config.onboarding, hintsSeen: [CLOUD_NOTICE_SIGN_IN_DISMISSED] };
+  await show(ended);
+  expect(render().html).toBe("");
+  f.values = []; f.state.config.onboarding = { ...f.state.config.onboarding, hintsSeen: [] };
+  await show({ status: "signed-out", message: "restore-removed" });
+  expect(render().html).toBe("");
+  // It is its own choice: the My Cloud card still shows once My Cloud is ready.
+  f.values = []; await show(myCloudReady);
+  expect(render().html).toContain("Your always-on bots are on My Cloud");
 });
 
 it("J12: signed out or free, this card says nothing: the existing offer to buy is the one card there", async () => {

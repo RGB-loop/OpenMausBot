@@ -111,11 +111,12 @@ export function withoutIgnoredCloudKeys(env: NodeJS.ProcessEnv): NodeJS.ProcessE
 // lists exactly what the server accepts.
 export { cloudHomeOffersPlace } from "../shared/cloud-home.ts";
 
-/** The last guard at claim time (index.ts computerPlaceRefusal): a Cloud
- * home never uses a place it does not offer. No bot or conversation there
- * keeps one (Store.settleUnofferedPlaces moves them to Auto at startup, which
- * is also when a copy from a desktop is installed), so a person does not meet
- * this; a bot that asks select_computer for one does. */
+/** A Cloud home never uses a place it does not offer. Store.settleUnofferedPlaces
+ * moves any bot or conversation set to one to Auto at startup (which is also
+ * when a copy from a desktop is installed); while it runs, setting a bot's
+ * Works on or a conversation's place to one, or a bot asking select_computer
+ * for one, is refused with this (409), and it stays the last guard at claim
+ * time (index.ts computerPlaceRefusal). */
 export const CLOUD_HOME_UNOFFERED_PLACE = "My Cloud has no This computer or Local VM. Its bots use the built-in browser and cloud computers.";
 
 /** What a turn is told when Cloud is chosen but no Boat account is set up (no

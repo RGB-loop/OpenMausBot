@@ -19,7 +19,7 @@ This page is the OpenMausBot half of a contract with three parties:
   the app, holds the machine's signing secret, and answers the desktop's Cloud
   session;
 - **the desktop app**: signs in to Cloud, lists the machine under Servers,
-  and offers **Connect to my Cloud**.
+  and offers **Open My Cloud**.
 
 Contract version: `1` (`cloudContractVersion` on the wire).
 
@@ -30,7 +30,7 @@ Contract version: `1` (`cloudContractVersion` on the wire).
    existing device sign-in). A **Your Cloud** card says **Setting up** until
    the machine is up.
 3. When it is ready, the machine appears under **Servers** as **My Cloud**, and
-   the card offers **Connect to my Cloud**. One click opens the machine in the
+   the card offers **Open My Cloud**. One click opens the machine in the
    app window, signed in. There is no second confirmation.
 4. The first thing the Cloud shows is its engine sign-in
    (`src/components/CloudEngineSignIn.tsx`), with three choices:
@@ -77,7 +77,7 @@ How it fits together (`src/lib/phone-pairing.ts`):
   there. A failed switch opens Settings → OMB Cloud.
 - **Use your Cloud on your phone** shows for a paid plan. With a Ready Cloud it
   calls `cloud-account:connectHomeForPhone`, which takes no arguments and
-  connects as **Connect to my Cloud** does, adding the one fixed request
+  connects as **Open My Cloud** does, adding the one fixed request
   `?desktop-settings=phone` (on `/pair` too, which carries it on once paired).
   The Cloud's page opens Settings on its phone pairing. It never makes a code
   by itself. Before the Cloud is Ready, or if opening it failed, the card
@@ -189,30 +189,42 @@ Signed out of Cloud, the app makes no Cloud request and nothing on this page
 runs.
 
 The account card above it has one message and one next action for each state,
-from `cloudPlanView` (`src/lib/cloud-plan.ts` `cloudPlanAction`): Sign in, Open
-the sign-in page again, Sign in again, Choose a plan, Manage, Update payment or
-the Cloud dashboard, and Sign out only where clearing the saved sign-in failed.
-A saved sign-in that may only be locked has none: the app reads it again by
-itself. There is no Refresh; the app checks every minute. Sign out (and Cancel
-while signing in) stay as quiet links.
+from `cloudPlanView` (`src/lib/cloud-plan.ts` `cloudPlanAction`, labelled by
+`CLOUD_PLAN_ACTION_LABEL`): Sign in, Open the sign-in page again, Sign in
+again, Choose a plan, **Open My Cloud** (a paid plan whose My Cloud is Ready),
+Manage, Update payment or **Open your Plan page**, and Sign out only where
+clearing the saved sign-in failed. A saved sign-in that may only be locked has
+none: the app reads it again by itself. There is no Refresh; the app checks
+every minute. Everything else in the section is a quiet link: Sign out (and
+Cancel while signing in), **Manage Cloud subscription** beside Open My Cloud,
+the **Your Cloud** card's own way in when opening My Cloud is not already the
+next action, and **Use your Cloud on your phone**.
 
 ### This computer and My Cloud
 
 On This computer's own window (`src/components/CloudNotice.tsx`, the slot at
 the bottom left where the offer to buy sits for someone who may buy), one card
-says where the always-on bots are, chosen by `cloudNoticeKind`:
+says where the always-on bots are, chosen by `cloudNoticeKind`. Its one action
+is the state's `cloudPlanAction`, with the same label and bridge call as in
+Settings:
 
 - A paid plan whose My Cloud is ready: **Your always-on bots are on My Cloud**,
   "Bots on this computer stop when it sleeps or the app is closed. Bots on My
-  Cloud keep working, and can use cloud computers.", and **Open My Cloud**
-  (the same connection as **Connect to my Cloud**). If it does not open: "My
-  Cloud didn't open. Try again in a minute." Its close button, **Not now**, is
-  kept in this computer's onboarding record.
-- A sign-in that ended, or a saved sign-in this computer could not read and
-  removed (`restore-removed`): **Sign in again to reach My Cloud**, "Your plan
-  and your bots there are not affected.", and **Sign in again**. A removed
-  sign-in is never offered a plan (`cloudPlanView` kind `removed`). **Not now**
-  hides it until the app opens again.
+  Cloud keep working.", and **Open My Cloud** (`connectHome`). If it does not
+  open: "My Cloud didn't open. Try again in a minute."
+- A sign-in that ended, where this computer last saw an active plan
+  (`lastPlan.active`): **Sign in again to reach My Cloud**, "Your plan and your
+  bots there are not affected.", and **Sign in again**. Without a known active
+  plan an ended sign-in shows nothing here; Settings still says it.
+- A saved sign-in this computer could not read and removed (`restore-removed`):
+  **This computer was signed out of OpenMausBot Cloud**, "Its saved sign-in
+  couldn't be read, so it was removed.", and **Sign in to OpenMausBot Cloud**.
+  This computer can't tell whether there is a plan, so the card claims none,
+  and it is never offered a plan either (`cloudPlanView` kind `removed`).
+
+Each card's close button, **Not now**, is kept in this computer's onboarding
+record (`cloud-notice-my-cloud-dismissed`, and `cloud-notice-sign-in-dismissed`
+for both sign-in cards), so it does not come back on every launch.
 
 Every other state shows nothing here. A server open in the window, My Cloud
 included, and a browser never show it: only This computer's page has the Cloud
@@ -240,10 +252,13 @@ Cloud or the app, never from a box the person ticks:
    which the Cloud keeps (`cloud-setup-move-skipped` in its onboarding record)
    and which also hides the one-time card.
 3. **Give a bot a cloud computer**: only where the plan's cloud computers are
-   on for this Cloud (`config.box.included`). **Give {bot} a cloud computer**
-   (the selected bot) sets that bot's Works on to Cloud computer and opens its
-   Computer panel. It starts nothing: no computer is created or woken, and no
-   message is sent. Once a bot works on its cloud computer, the step shows an
+   on for this Cloud (`config.box.included`) and a bot runs on an AI that can
+   use one (`canWorkOnCloud`, shared/cloud-computer.ts). **Give {bot} a cloud
+   computer** (the selected bot, or the first whose AI can use one) sets that
+   bot's Works on to Cloud computer, and nothing more. It does not open the
+   Computer panel, which with Cloud chosen starts the computer. It starts
+   nothing: no computer is created or woken, and no message is sent. Once a
+   bot works on its cloud computer, the step shows an
    example ("Open a web browser on your cloud computer, go to wikipedia.org…";
    no particular browser is named) and **Try it** puts it in that bot's
    composer, unsent. Done when a turn first finishes with a cloud computer
@@ -251,7 +266,10 @@ Cloud or the app, never from a box the person ticks:
    `onboarding.firstCloudComputerAt` once, by the same rule as `firstTurnAt`
    below.
 4. **Try something that runs while you're away**: one example, a daily
-   routine. **Try it** puts it in the chat's composer, unsent. Done when a bot's
+   routine. **Try it** puts it in the composer of the selected bot, or of
+   another bot that is not on its cloud computer, unsent: a daily job never
+   goes to a bot on its cloud computer, which would start it every day. With
+   every bot on its cloud computer there is no **Try it**. Done when a bot's
    turn first finishes on the Cloud: the server records `onboarding.firstTurnAt`
    once, on a Cloud home only, for a turn that finished (not a failed or
    stopped one) in a bot's conversation or a room. The onboarding record never
@@ -266,12 +284,13 @@ Cloud or the app, never from a box the person ticks:
 **Hide setup** is the only dismiss. The Cloud keeps it (`cloud-setup-2-hidden`
 in its onboarding record), so it holds on every device and after browser
 storage is cleared, and it is the move's **Not now** too. The id is new with
-step 3: a checklist hidden before (`cloud-setup-hidden`) comes back once, open
-at that step. The card also goes away by itself once steps 1 and 4 are done
-and, where step 3 is listed, step 3 too, so a subscriber whose first turns
-finished without a cloud computer sees the card again, open at step 3. Nothing
-asks for confirmation. After the card, the one-time Copy this computer here
-card behaves as on any other server.
+step 3: where step 3 is listed, a checklist hidden before
+(`cloud-setup-hidden`) comes back once, open at that step; elsewhere nothing
+was added and the old id still hides it. The card also goes away by itself
+once steps 1 and 4 are done and, where step 3 is listed, step 3 too, so a
+subscriber whose first turns finished without a cloud computer sees the card
+again, open at step 3. Nothing asks for confirmation. After the card, the
+one-time Copy this computer here card behaves as on any other server.
 
 While a window shows a Cloud home, the sidebar's server switcher reads **My
 Cloud · always on**; in a browser, a plain label says the same.
@@ -291,10 +310,12 @@ Cloud use this Mac**, below), through the shared-computer tools.
 - A bot set to either, and a conversation pinned to either, works on Auto
   from the Cloud's next start (`Store.settleUnofferedPlaces`). That start is
   when a copy from a desktop is installed, so copied bots arrive on Auto, and
-  bots already on a Cloud from before are fixed the first time it runs. Nothing
-  is refused for it later; the claim-time guard that remains
-  (`CLOUD_HOME_UNOFFERED_PLACE`) is what a bot reads if it asks
-  `select_computer` for either.
+  bots already on a Cloud from before are fixed the first time it runs.
+- While it runs, nothing sets either again: a bot's Works on
+  (`PATCH /api/bots/:id`) and a conversation's place
+  (`PATCH /api/bots/:id/tasks/:threadId`) are refused with 409 and
+  `CLOUD_HOME_UNOFFERED_PLACE`, as is `select_computer` asking for either. The
+  same claim-time guard stays for anything else that names either place.
 - Every turn's system prompt says the bot runs in the cloud. Asked about the
   person's own computer, a bot with the shared-computer tools checks for a lent
   Mac and, finding none, says so and how to lend one; a bot without them says
@@ -340,7 +361,7 @@ decides everything from its own verified state (`electron/cloud-entry.mjs`).
      the browser approval page with the code filled in
      (`/cloud/desktop?code=…`);
    - signed in and the Cloud is **Ready**: it connects to **My Cloud**,
-     exactly like **Connect to my Cloud**;
+     exactly like **Open My Cloud**;
    - after that sign-in completes, or when the Cloud becomes **Ready** while
      the view is still open, it connects then;
    - anything else: the card shows the status and the person decides.
@@ -446,7 +467,7 @@ computer sharing exactly as before: off unless a maintainer sets
 ### What the person sees
 
 In **Settings → OMB Cloud**, the **Your Cloud** card has a **Let my Cloud use
-this Mac** switch under **Connect to my Cloud** (it is part of connecting, not
+this Mac** switch under **Open My Cloud** (it is part of connecting, not
 a dialog). Turning it on shows what can be lent; each change applies at once,
 with no confirmation. The switch and the chosen scopes are the consent.
 
@@ -462,7 +483,7 @@ with no confirmation. The switch and the chosen scopes are the consent.
   computer control set up first.
 - **No terminal.** The shell grant of maintainer sharing is never offered here.
 
-The switch can be turned on before the first **Connect to my Cloud**; lending
+The switch can be turned on before the first **Open My Cloud**; lending
 starts once this Mac is signed in to the Cloud. Lending runs while the app is
 open: quitting it (or the Mac sleeping) only pauses lending, and it resumes
 when the app runs again with the switch still on. Below the choices, **Activity
@@ -967,7 +988,7 @@ sign-in. Nobody signed in with a paid plan, in payment trouble, with a payment
 being linked, or whose state is unknown is offered a plan anywhere in the app.
 
 In the Server menu, **My Cloud** goes through the same connection as
-**Connect to my Cloud** (no pairing code to type); when it cannot, the app
+**Open My Cloud** (no pairing code to type); when it cannot, the app
 opens **Settings → OMB Cloud**, which says the next step. In the desktop app a
 `/pair#code=` link connects without a second click; a browser still asks. On a
 Cloud home the pairing page says where its connection starts (the environment
@@ -977,7 +998,7 @@ On the person's own Cloud, open in the app's window, **Settings → OMB Cloud**
 shows the plan read only (`cloud-plan:*`: its name and whether it is active,
 **Manage in your browser** and **Switch to this computer**). In a browser on
 that Cloud the same section is one line, "Your plan, payments and use are on
-the Plan page.", and one link, **Open the Plan page** (`config.cloudPlanPage`,
+the Plan page.", and one link, **Open your Plan page** (`config.cloudPlanPage`,
 the Admin's `/cloud`). It is listed only on an OMB Cloud home
 (`config.cloudHome`), never on another server open in the window or a browser. Main answers it for the Cloud this account verified, or last verified
 while a check is failing or the sign-in has ended, so that page says
@@ -985,7 +1006,7 @@ while a check is failing or the sign-in has ended, so that page says
 app cannot vouch for the Cloud it only says the plan is managed in the app on
 the computer.
 
-**Connect to my Cloud** first asks the machine whether this app is already
+**Open My Cloud** first asks the machine whether this app is already
 signed in there (`GET <origin>/api/auth/session` with its cookie). If not, it
 calls `POST /api/cloud/desktop/pairing` (same device token) and expects
 `{"cloudContractVersion":1,"origin":…,"code":…,"expiresAt":…}` for the same

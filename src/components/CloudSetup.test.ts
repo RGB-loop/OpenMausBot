@@ -43,8 +43,12 @@ const statuses = () => Object.fromEntries(render().nodes.filter(node => node.pro
 /** Run what the component asked for on mount (main's snapshot, the lent-computer check). */
 async function mount() { render(); for (const effect of f.effects) effect(); await flush(); }
 
-const ready = { instanceId: "claude", snapshot: { state: "available", authenticated: true } };
-const signedOut = { instanceId: "claude", snapshot: { state: "available", authenticated: false } };
+// Claude mounts computer tools, signed in or not (shared/cloud-computer.ts).
+const ready = { instanceId: "claude", snapshot: { state: "available", authenticated: true }, capabilities: { computerMcp: true } };
+const signedOut = { instanceId: "claude", snapshot: { state: "available", authenticated: false }, capabilities: { computerMcp: true } };
+/** An API-key engine without computer tools (for example Grok through openai-chat). */
+const noComputer = { instanceId: "grok", snapshot: { state: "available", authenticated: true }, capabilities: {} };
+const onClaude = { instanceId: "claude", model: "m" }, onGrok = { instanceId: "grok", model: "g" };
 const local = { bots: 4, rooms: 1, chats: 37, bytes: 1.5 * 1024 ** 3, files: 900 };
 const emptyCloud = { contents: { bots: 1, rooms: 0, chats: 0 }, empty: true, freeBytes: 9 * 1024 ** 3, previous: null, heldBytes: 0 };
 const CLOUD = { id: "cloud", name: "My Cloud", origin: "https://omb-u-1a2b3c4d5e6f.fly.dev", kind: "cloud" as const };
@@ -57,7 +61,7 @@ beforeEach(() => {
   f.dispatch = action => { dispatched.push(action); };
   f.state = {
     connected: true, instances: [signedOut], activeView: "chat", selectedId: "b1",
-    bots: [{ id: "b1", threadId: "t1", name: "Maus" }],
+    bots: [{ id: "b1", threadId: "t1", name: "Maus", modelSelection: onClaude }],
     config: { cloudHome: true, onboarding: { ...EMPTY_ONBOARDING } },
   };
   bridge = {
@@ -284,15 +288,16 @@ it("J10: a subscriber whose first turn finished without a cloud computer, who hi
   expect(button("Give Maus a cloud computer")).toBeTruthy();
 });
 
-it("J10: Give Maus a cloud computer sets its Works on to Cloud computer and opens its Computer panel, and starts nothing", async () => {
+it("J10: Give Maus a cloud computer sets its Works on to Cloud computer, and starts nothing", async () => {
   offeredInBrowser({ firstTurnAt });
   await mount();
   vi.mocked(api).mockClear();
   button("Give Maus a cloud computer")!.props.onClick!(); await flush();
+  // Not the Computer panel either: opening it with Cloud chosen starts the
+  // computer (CloudSetup.journey.test.ts follows the click through the store).
   expect(dispatched).toEqual([
     { type: "select", id: "b1" },
     { type: "updateBot", botId: "b1", patch: { computer: "cloud" } },
-    { type: "toggleComputer", open: true },
   ]);
   // No provision, wake or message: the computer starts when a task needs it.
   expect(writes()).toEqual([]);
@@ -303,7 +308,7 @@ it("J10: Give Maus a cloud computer sets its Works on to Cloud computer and open
 
 it("J10: once a bot works on its cloud computer, Try it drafts the example in its chat and does not send it", async () => {
   offeredInBrowser({ firstTurnAt });
-  f.state.bots = [{ id: "b0", threadId: "t0", name: "Scout" }, { id: "b1", threadId: "t1", name: "Maus", computer: "cloud" }];
+  f.state.bots = [{ id: "b0", threadId: "t0", name: "Scout", modelSelection: onClaude }, { id: "b1", threadId: "t1", name: "Maus", modelSelection: onClaude, computer: "cloud" }];
   f.state.selectedId = "b0";
   await mount();
   const { html } = render();
@@ -344,4 +349,70 @@ it("Hide setup is kept under its new id", async () => {
   button("Hide setup")!.props.onClick!(); await flush();
   expect(CLOUD_SETUP_HIDDEN).toBe("cloud-setup-2-hidden");
   expect(api).toHaveBeenCalledWith("/api/config", { method: "PUT", body: JSON.stringify({ onboarding: { hintsSeen: [CLOUD_SETUP_HIDDEN] } }) });
+});
+
+it("J10: a bot whose AI can't use a computer is never given one; the step offers one that can", async () => {
+  offeredInBrowser({ firstTurnAt });
+  f.state.instances = [ready, noComputer];
+  f.state.bots = [{ id: "b0", threadId: "t0", name: "Scout", modelSelection: onGrok }, { id: "b1", threadId: "t1", name: "Maus", modelSelection: onClaude }];
+  f.state.selectedId = "b0";
+  await mount();
+  expect(button("Give Scout a cloud computer")).toBeUndefined();
+  button("Give Maus a cloud computer")!.props.onClick!();
+  expect(dispatched).toEqual([
+    { type: "select", id: "b1" },
+    { type: "updateBot", botId: "b1", patch: { computer: "cloud" } },
+  ]);
+  // A bot set to Cloud computer on such an AI is not one to try it with.
+  f.state.bots = [{ ...f.state.bots[0], computer: "cloud" }, f.state.bots[1]];
+  expect(render().html).not.toContain("Scout now works on its cloud computer");
+  expect(button("Give Maus a cloud computer")).toBeTruthy();
+});
+
+it("J10: where no bot's AI can use a computer, the step is left out and setup can finish without it", async () => {
+  offeredInBrowser({ firstTurnAt });
+  f.state.instances = [noComputer];
+  f.state.bots = [{ id: "b0", threadId: "t0", name: "Scout", modelSelection: onGrok }];
+  f.state.selectedId = "b0";
+  await mount();
+  expect(render().html).toBe("");
+  expect(dispatched).toEqual([]);
+});
+
+it("J10: in order, the scheduled example goes to a bot that is not on its cloud computer", async () => {
+  offeredInBrowser();
+  await mount();
+  button("Give Maus a cloud computer")!.props.onClick!();
+  // The Cloud answers: Maus works on its cloud computer now.
+  f.state.bots = [{ ...f.state.bots[0], computer: "cloud" }];
+  dispatched = [];
+  expand("Try something that runs while you're away");
+  expect(render().html).toContain("Every morning at 8, check the top stories on Hacker News");
+  // Every bot works on its cloud computer: no one-click daily job for it.
+  expect(button("Try it")).toBeUndefined();
+  // With another bot, Try it drafts the daily job there.
+  f.state.bots = [...f.state.bots, { id: "b2", threadId: "t2", name: "Scout", modelSelection: onClaude }];
+  button("Try it")!.props.onClick!();
+  expect(dispatched).toEqual([{ type: "select", id: "b2" }]);
+  expect(appendComposerDraft).toHaveBeenCalledExactlyOnceWith("bot:b2:t2", "Every morning at 8, check the top stories on Hacker News and send me a short summary.");
+});
+
+it("where this Cloud offers no cloud computers, the old Hide setup still hides the checklist", async () => {
+  offeredInBrowser({ hintsSeen: ["cloud-setup-hidden"] });
+  f.state.config.box = { configured: true };
+  await mount();
+  expect(render().html).toBe("");
+});
+
+it("J10: a bot whose cloud computer is a VPS is given the plan's cloud computer, which is what the step counts", async () => {
+  offeredInBrowser({ firstTurnAt });
+  f.state.bots = [{ id: "b1", threadId: "t1", name: "Maus", modelSelection: onClaude, computer: "cloud", cloudBackend: "vps" }];
+  await mount();
+  // On a VPS it does not count as given one: the step still offers the plan's.
+  expect(render().html).not.toContain("Maus now works on its cloud computer");
+  button("Give Maus a cloud computer")!.props.onClick!();
+  expect(dispatched).toEqual([
+    { type: "select", id: "b1" },
+    { type: "updateBot", botId: "b1", patch: { computer: "cloud", cloudBackend: "box" } },
+  ]);
 });

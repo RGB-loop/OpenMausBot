@@ -58,11 +58,11 @@ if (process.versions.electron && process.argv.includes(flag)) {
       if (await evaluate(`(() => { const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(text)}); if(!b || b.disabled)return false; b.click(); return true; })()`)) return;
       await new Promise(resolve => setTimeout(resolve, 25));
     } throw new Error(`Button unavailable: ${text}`); };
-    await win.loadURL(preview); await wait("Sign in to OMB Cloud"); assert.equal(begins, 0);
+    await win.loadURL(preview); await wait("Sign in to OpenMausBot Cloud"); assert.equal(begins, 0);
     assert.equal(await evaluate("typeof window.ogb.cloudAccount.connection"), "undefined");
-    await click("Sign in to OMB Cloud"); await wait("Security details"); assert.equal(browsers[0], `${origin}/cloud/desktop?code=ABCDE-FGHJK`);
-    await click("Cancel sign-in"); await wait("Sign in to OMB Cloud"); assert.equal(saved, null);
-    await click("Sign in to OMB Cloud"); await wait("Security details"); approved = true;
+    await click("Sign in to OpenMausBot Cloud"); await wait("Security details"); assert.equal(browsers[0], `${origin}/cloud/desktop?code=ABCDE-FGHJK`);
+    await click("Cancel sign-in"); await wait("Sign in to OpenMausBot Cloud"); assert.equal(saved, null);
+    await click("Sign in to OpenMausBot Cloud"); await wait("Security details"); approved = true;
     await wait("Free account"); assert.equal(saved.token, token);
     assert.ok(!(await evaluate("(async () => JSON.stringify(await window.ogb.cloudAccount.state()))()")).includes(token));
     await click("Choose a Cloud plan in your browser"); await new Promise(resolve => setTimeout(resolve, 50)); assert.equal(browsers.at(-1), `${origin}/cloud`);
@@ -80,7 +80,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
     revoked = true; await click("Refresh"); await wait("Cloud access expired or was revoked");
     assert.equal(await evaluate("document.body.innerText.includes('Pro active')"), false);
     await click("Sign out of OMB Cloud"); await wait("does not cancel your subscription"); await click("Sign out of OMB Cloud");
-    await wait("Sign in to OMB Cloud");
+    await wait("Sign in to OpenMausBot Cloud");
     for (let count = 0; count < 80 && revokes !== 1; count++) await new Promise(resolve => setTimeout(resolve, 25));
     assert.equal(saved, null); assert.equal(revokes, 1);
     await win.loadURL(`${origin}/`); assert.equal(await evaluate("typeof window.ogb?.cloudAccount"), "undefined"); assert.equal(await evaluate("typeof require"), "undefined");

@@ -109,4 +109,10 @@ describe("Give a bot a cloud computer", () => {
     expect(cloudSetupStage(offered({ engineReady: true, onboarding: record({ firstTurnAt, hintsSeen: ["cloud-setup-hidden"] }) }))).toBe("shown");
     expect(cloudSetupStage(offered({ onboarding: record({ hintsSeen: [CLOUD_SETUP_HIDDEN] }) }))).toBe("hidden");
   });
+
+  it("where the checklist gained no step (no cloud computers offered), the old Hide setup still hides it", () => {
+    for (const hintsSeen of [["cloud-setup-hidden"], [CLOUD_SETUP_HIDDEN]]) {
+      expect(cloudSetupStage(facts({ onboarding: record({ hintsSeen }) })), hintsSeen[0]).toBe("hidden");
+    }
+  });
 });

@@ -11,8 +11,11 @@ import { hintSeen, type OnboardingStatus, type WelcomeViewer } from "@/lib/onboa
 
 /** "Hide setup", in the Cloud's own onboarding record (server config). The
  * checklist gained "Give a bot a cloud computer", so a checklist hidden before
- * that ("cloud-setup-hidden") comes back once, open at the new step. */
+ * that (CLOUD_SETUP_HIDDEN_BEFORE_COMPUTERS) comes back once, open at the new
+ * step, wherever that step is offered. Elsewhere nothing was added, and the
+ * old id still hides it. */
 export const CLOUD_SETUP_HIDDEN = "cloud-setup-2-hidden";
+const CLOUD_SETUP_HIDDEN_BEFORE_COMPUTERS = "cloud-setup-hidden";
 /** "Not now" on the move, from the checklist. */
 export const CLOUD_SETUP_MOVE_SKIPPED = "cloud-setup-move-skipped";
 
@@ -27,9 +30,10 @@ export interface CloudSetupFacts {
   enginesKnown: boolean;
   /** Some engine on the Cloud can run a bot. */
   engineReady: boolean;
-  /** This Cloud offers cloud computers (its config reports a Boat account,
-   * the plan's included one or the person's own). Without them the computer
-   * step is left out and setup ends without it. */
+  /** The step "Give a bot a cloud computer" is offered: this Cloud has the
+   * plan's included cloud computers (config.box.included), and a bot here
+   * runs on an AI that can use one. Without that the step is left out and
+   * setup ends without it. */
   cloudComputers: boolean;
   /** The Cloud's onboarding record; undefined until its config arrives. */
   onboarding: OnboardingStatus | undefined;
@@ -52,6 +56,7 @@ export function cloudSetupStage(facts: Omit<CloudSetupFacts, "move" | "lend">): 
   if (!facts.viewer?.cloudHome || !facts.viewer.canSave) return "none";
   if (!facts.connected || !facts.enginesKnown || !facts.onboarding) return "waiting";
   if (hintSeen(facts.onboarding, CLOUD_SETUP_HIDDEN)) return "hidden";
+  if (!facts.cloudComputers && hintSeen(facts.onboarding, CLOUD_SETUP_HIDDEN_BEFORE_COMPUTERS)) return "hidden";
   const computerDone = !facts.cloudComputers || Boolean(facts.onboarding.firstCloudComputerAt);
   if (facts.engineReady && facts.onboarding.firstTurnAt && computerDone) return "done";
   return "shown";

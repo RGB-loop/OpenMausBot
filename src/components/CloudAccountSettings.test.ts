@@ -33,7 +33,7 @@ async function ready(state: CloudAccountState = { status: "signed-out" }) { vi.m
 it("loads optional account state without enrollment/network and delegates sign-in without arguments", async () => {
   await ready(); expect(bridge.begin).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
   expect(render().html).toContain("Free local use"); expect(render().html).toContain("separate from organization sign-in");
-  click("Sign in to OMB Cloud"); await flush(); expect(bridge.begin).toHaveBeenCalledExactlyOnceWith();
+  click("Sign in to OpenMausBot Cloud"); await flush(); expect(bridge.begin).toHaveBeenCalledExactlyOnceWith();
 });
 it("checkout opens the dashboard but only a verified native update displays Pro; unavailable/revoked states remove it", async () => {
   await ready(free); click("Choose a Cloud plan in your browser"); await flush(); expect(bridge.openDashboard).toHaveBeenCalledExactlyOnceWith();
@@ -58,7 +58,7 @@ it("sign-out requires confirmation and preserves local and organization wording"
   await ready(free); click("Sign out of OMB Cloud"); expect(bridge.signOut).not.toHaveBeenCalled();
   expect(render().html).toContain("does not cancel your subscription"); click("Keep signed in"); expect(bridge.signOut).not.toHaveBeenCalled();
   click("Sign out of OMB Cloud"); click("Sign out of OMB Cloud"); await flush(); expect(bridge.signOut).toHaveBeenCalledExactlyOnceWith();
-  expect(render().html).toContain("Sign in to OMB Cloud"); expect(fetch).not.toHaveBeenCalled();
+  expect(render().html).toContain("Sign in to OpenMausBot Cloud"); expect(fetch).not.toHaveBeenCalled();
 });
 it("never accesses account bridge from remote companion pages", async () => {
   vi.stubGlobal("window", { ogb: { cloudAccount: bridge, remoteClient: { active: true } } }); render(); f.effects[0](); await flush();
@@ -75,11 +75,11 @@ const BUY = ["Choose a Cloud plan", "Get Pro", "Free account"];
 const ALARM = ["cannot currently be verified", "unavailable until", "expired or was revoked"];
 const button = (label: string) => render().nodes.find(node => node.type === "button" && node.props.children === label);
 
-it("a failed re-check keeps the plan, Cloud and Connect, and only says it is checking", async () => {
+it("a failed re-check keeps the plan, Cloud and Open My Cloud, and only says it is checking", async () => {
   const machine = { status: "ready" as const, origin: "https://home-7f3k2.fly.dev" };
   await ready({ ...free, entitlement: { plan: "pro", tier: "max", status: "active", expiresAt: 1_900_000_000_000, version: 3 }, machine, checking: true });
   const { html } = render();
-  all(html, ["Max active · verified by OMB Cloud", "Checking with OMB Cloud…", "Connect to my Cloud", "Manage Cloud subscription"]);
+  all(html, ["Max active · verified by OMB Cloud", "Checking with OMB Cloud…", "Open My Cloud", "Manage Cloud subscription"]);
   none(html, [...BUY, ...ALARM]);
 });
 it("OMB Cloud out of reach: the plan last verified stays named, calmly, with no offer to buy", async () => {
@@ -89,7 +89,7 @@ it("OMB Cloud out of reach: the plan last verified stays named, calmly, with no 
   none(html, [...BUY, ...ALARM]);
   // With no plan known, still no offer: only the dashboard.
   push({ status: "unavailable", message: "unreachable", account: { id: "fixture", email: "person@example.test" } });
-  html = render().html; expect(html).toContain("Open your Cloud dashboard"); none(html, [...BUY, ...ALARM]);
+  html = render().html; expect(html).toContain("Open your Plan page"); none(html, [...BUY, ...ALARM]);
 });
 // Clearing the saved sign-in failed: Sign out again is the retry, on every
 // platform, so the message names that button and no keychain.
@@ -137,7 +137,7 @@ it("a payment problem or a stopped Cloud is never 'Free account' with a plan to 
   let html = render().html;
   all(html, ["OMB Cloud · not active right now", "problem with your payment", "Update payment in your browser"]); none(html, BUY);
   push({ ...free, machine: { status: "stopped", origin } });
-  html = render().html; all(html, ["Subscribe again in your Cloud dashboard", "Open your Cloud dashboard"]); none(html, BUY);
+  html = render().html; all(html, ["Subscribe again in your Cloud dashboard", "Open your Plan page"]); none(html, BUY);
   // The Cloud's card says why; the account card does not say it twice.
   expect(html).not.toContain("shows why and how to fix it");
   push({ ...free, entitlement: { plan: "pro", tier: "pro", status: "inactive", expiresAt: null, version: 4 } });
@@ -146,7 +146,7 @@ it("a payment problem or a stopped Cloud is never 'Free account' with a plan to 
 it("a payment being linked says so, with its date, and asks nobody to pay again", async () => {
   await ready({ ...free, purchase: { state: "confirming", tier: "personal", paidAt: Date.UTC(2026, 9, 2, 12) } });
   const html = render().html;
-  all(html, ["Personal · payment received", "Received Oct 2, 2026", "no need to pay again", "Open your Cloud dashboard"]); none(html, BUY);
+  all(html, ["Personal · payment received", "Received Oct 2, 2026", "no need to pay again", "Open your Plan page"]); none(html, BUY);
   push({ ...free, purchase: { state: "held" } });
   all(render().html, ["OMB Cloud · payment received", "linking your payment"]); none(render().html, BUY);
 });
@@ -162,12 +162,12 @@ it("shows the sign-in code plainly, with how long it works", async () => {
   all(html, ["Check that your browser shows this code:", "ABCDE-FGHJK", "The code works until"]);
   expect(html).not.toContain("<details"); expect(html).not.toContain("Security details");
   push({ status: "signed-out", message: "enrollment-expired" });
-  all(render().html, ["The sign-in code expired", "Sign in to OMB Cloud"]);
+  all(render().html, ["The sign-in code expired", "Sign in to OpenMausBot Cloud"]);
 });
 it("while a saved sign-in is read, nothing is offered and the Cloud link waits", async () => {
   await ready({ status: "signed-out", message: "restoring" });
   const html = render().html;
-  expect(html).toContain("Loading Cloud account"); none(html, ["Sign in to OMB Cloud", "could not be completed"]);
+  expect(html).toContain("Loading Cloud account"); none(html, ["Sign in to OpenMausBot Cloud", "could not be completed"]);
   expect(cloudLinkAction({ status: "signed-out", message: "restoring" }, { arrived: true, connected: false })).toBeNull();
   render({ linkRequest: 1 }); f.effects[1](); await flush(); expect(bridge.begin).not.toHaveBeenCalled();
 });
@@ -176,7 +176,7 @@ it("a saved sign-in that could not be read was removed: one line says so, and Si
   const html = render().html;
   expect(html).toContain("Cloud sign-in couldn&#x27;t be read, so it was removed. Sign in again.");
   none(html, ["could not be completed", "Unlock your system keychain"]);
-  expect(button("Sign in to OMB Cloud")).toBeTruthy();
+  expect(button("Sign in to OpenMausBot Cloud")).toBeTruthy();
 });
 it("setting up shows the Cloud page's steps, a slow setup and a failed setup's next try", async () => {
   const paid = { ...free, entitlement: { plan: "pro" as const, status: "active" as const, expiresAt: 1_900_000_000_000, version: 2 } };
@@ -223,8 +223,8 @@ const origin = "https://home-7f3k2.fly.dev";
 it("stays exactly as before when the account has no Cloud machine", async () => {
   await ready(free);
   expect(render().html).not.toContain("Your Cloud");
-  expect(render().html).not.toContain("Connect to my Cloud");
-  push(pro); expect(render().html).not.toContain("Connect to my Cloud");
+  expect(render().html).not.toContain("Open My Cloud");
+  push(pro); expect(render().html).not.toContain("Open My Cloud");
 });
 it.each([
   ["provisioning", "Setting up your Cloud", false],
@@ -237,7 +237,7 @@ it.each([
   const html = render().html;
   expect(html).toContain(`data-cloud-home="${status}"`);
   expect(html).toContain(text);
-  expect(html.includes("Connect to my Cloud")).toBe(connectable);
+  expect(html.includes("Open My Cloud")).toBe(connectable);
   expect(html).not.toContain("Could not complete this Cloud action");
 });
 it("promises no included AI: the person signs in with their own account there", async () => {
@@ -248,7 +248,7 @@ it("promises no included AI: the person signs in with their own account there", 
 });
 it("connects with one click, sending nothing from the page", async () => {
   await ready({ ...pro, machine: { status: "ready", origin } });
-  click("Connect to my Cloud"); await flush();
+  click("Open My Cloud"); await flush();
   expect(bridge.connectHome).toHaveBeenCalledExactlyOnceWith();
 });
 it("reports a failed connection as its own message", async () => {
@@ -256,7 +256,7 @@ it("reports a failed connection as its own message", async () => {
   const state = { ...pro, machine: { status: "ready" as const, origin } };
   vi.mocked(bridge.state).mockResolvedValue(state);
   await ready(state);
-  click("Connect to my Cloud"); await flush();
+  click("Open My Cloud"); await flush();
   expect(render().html).toContain("Could not connect to your Cloud");
   expect(render().html).not.toContain("Could not complete this Cloud action");
 });
@@ -301,7 +301,7 @@ it("only shows the status of a Cloud that is not Ready, and a later sign-out sta
     expect(render().html).toContain(`data-cloud-home="${machine.status}"`);
   }
   push({ status: "signed-out" }); linked(); await flush();
-  expect(render().html).toContain("Sign in to OMB Cloud");
+  expect(render().html).toContain("Sign in to OpenMausBot Cloud");
   expect(bridge.connectHome).not.toHaveBeenCalled();
   expect(bridge.begin).not.toHaveBeenCalled();
 });
@@ -311,7 +311,7 @@ it("a normal visit never signs in or connects by itself", async () => {
   expect(bridge.begin).not.toHaveBeenCalled();
   push(readyCloud); visit(); await flush();
   expect(bridge.connectHome).not.toHaveBeenCalled();
-  expect(render().html).toContain("Connect to my Cloud");
+  expect(render().html).toContain("Open My Cloud");
 });
 it("a failed automatic connection waits for the next link; a normal visit in between stops it", async () => {
   vi.mocked(bridge.connectHome).mockRejectedValueOnce(new Error("offline"));
@@ -425,15 +425,16 @@ const primary = () => {
 it("shows one next action in every state, and no Refresh", async () => {
   const machine = { status: "ready" as const, origin };
   for (const [state, action] of [
-    [{ status: "signed-out" }, "Sign in to OMB Cloud"],
-    [{ status: "signed-out", message: "restore-removed" }, "Sign in to OMB Cloud"],
+    [{ status: "signed-out" }, "Sign in to OpenMausBot Cloud"],
+    [{ status: "signed-out", message: "restore-removed" }, "Sign in to OpenMausBot Cloud"],
     [{ status: "connecting", enrollment: { userCode: "ABCDE-FGHJK", expiresAt: Date.UTC(2026, 9, 2, 12, 15) } }, "Open the sign-in page again"],
     [free, "Choose a Cloud plan in your browser"],
-    [{ ...pro, machine }, "Manage Cloud subscription"],
-    [{ ...pro, machine, checking: true }, "Manage Cloud subscription"],
+    [{ ...pro, machine }, "Open My Cloud"],
+    [{ ...pro, machine, checking: true }, "Open My Cloud"],
+    [{ ...pro, machine: { status: "provisioning" } }, "Manage Cloud subscription"],
     [{ ...free, machine: { status: "payment-problem", origin } }, "Update payment in your browser"],
-    [{ ...free, machine: { status: "stopped", origin } }, "Open your Cloud dashboard"],
-    [{ ...free, purchase: { state: "confirming", tier: "personal" } }, "Open your Cloud dashboard"],
+    [{ ...free, machine: { status: "stopped", origin } }, "Open your Plan page"],
+    [{ ...free, purchase: { state: "confirming", tier: "personal" } }, "Open your Plan page"],
     [{ status: "unavailable", message: "unreachable", lastPlan: { tier: "personal", active: true } }, "Manage Cloud subscription"],
     [{ status: "reauth-required", message: "expired", lastPlan: { tier: "max", active: true } }, "Sign in again"],
     [{ status: "unavailable", message: "signout-storage-failed" }, "Sign out of OMB Cloud"],
@@ -465,9 +466,29 @@ it("in a browser on My Cloud, shows one link to the Plan page, and nothing that 
   const links = tree.filter(node => node.type === "a");
   expect(links).toHaveLength(1);
   expect(links[0]!.props).toMatchObject({ href: planPage, target: "_blank", rel: "noreferrer" });
-  expect(Children.toArray(links[0]!.props.children).join("")).toBe("Open the Plan page");
+  // The same words as the desktop's button to the same page.
+  expect(Children.toArray(links[0]!.props.children).join("")).toBe("Open your Plan page");
   expect(tree.filter(node => node.type === "button")).toEqual([]);
   expect(html).not.toContain("local desktop app");
   // Any other server in a browser has no plan of this person's.
   expect(render({ cloudHome: false, planPage }).html).not.toContain("Plan page");
+});
+
+// The whole section, not only the account card: a paid plan with My Cloud
+// ready has one next step there, Open My Cloud. Managing the plan and the
+// phone are quiet links beside it.
+it("a paid plan with My Cloud ready has one next step in the whole section: Open My Cloud", async () => {
+  vi.mocked(bridge.connectHome).mockResolvedValue(readyCloud);
+  await ready(readyCloud);
+  const all = render().nodes.filter(node => node.type === "button");
+  const primary = all.filter(node => String((node.props as { className?: string }).className ?? "").split(" ").includes("ui-button"));
+  expect(primary.map(node => Children.toArray(node.props.children).join(""))).toEqual(["Open My Cloud"]);
+  const labelled = (label: string) => all.filter(node => Children.toArray(node.props.children).join("") === label);
+  // Offered once, not again in My Cloud's own card.
+  expect(labelled("Open My Cloud")).toHaveLength(1);
+  for (const label of ["Manage Cloud subscription", PHONE]) expect(labelled(label), label).toHaveLength(1);
+  click("Open My Cloud"); await flush();
+  expect(bridge.connectHome).toHaveBeenCalledExactlyOnceWith();
+  click("Manage Cloud subscription"); await flush();
+  expect(bridge.openDashboard).toHaveBeenCalledExactlyOnceWith();
 });

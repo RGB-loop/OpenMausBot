@@ -2052,9 +2052,9 @@ const managedPolicy = new ManagedDesktopPolicy({ onChange: () => {
 } });
 /** A computer kind this server will not use, refused before anything is
  * prepared: a Cloud home never offers this computer or a Local VM
- * (shared/cloud-home.ts; no bot or conversation there keeps either, see
- * store.settleUnofferedPlaces at startup), and an enrolled organisation may
- * disallow any kind. */
+ * (shared/cloud-home.ts; no bot or conversation there keeps either: see
+ * store.settleUnofferedPlaces at startup, and the refused writes), and an
+ * enrolled organisation may disallow any kind. */
 function computerPlaceRefusal(kind: ComputerKind): { message: string; code: "cloud_home" | "managed_policy" } | undefined {
   if (CLOUD_HOME && !cloudHomeOffersPlace(kind === "thisComputer" ? "local" : kind === "localVm" ? "vm" : "cloud")) {
     return { message: CLOUD_HOME_UNOFFERED_PLACE, code: "cloud_home" };
@@ -20834,6 +20834,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         } else {
           return json(res, 400, { error: "computer must be null (Auto), cloud, vm, local, browser, or off" });
         }
+        // A Cloud home offers no This computer and no Local VM (startup moves
+        // any copied in to Auto); nothing sets either again while it runs.
+        const place = parseSurface(requestedComputer);
+        if (CLOUD_HOME && place && !cloudHomeOffersPlace(place)) return json(res, 409, { error: CLOUD_HOME_UNOFFERED_PLACE });
       }
       if (normalizedSelection) patch.modelSelection = normalizedSelection;
       // one pinned message per thread; null/"" clears. The id is not
@@ -22566,6 +22570,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           patch.surface = undefined;
           patch.surfaceSource = undefined;
         } else if (parseSurface(body.surface)) {
+          // Not a place a Cloud home offers (see the bot's Works on above).
+          if (CLOUD_HOME && !cloudHomeOffersPlace(parseSurface(body.surface)!)) return json(res, 409, { error: CLOUD_HOME_UNOFFERED_PLACE });
           patch.surface = parseSurface(body.surface);
           patch.surfaceSource = "user";
         } else return json(res, 400, { error: "surface must be cloud, vm, local, browser, or null to follow the bot" });
