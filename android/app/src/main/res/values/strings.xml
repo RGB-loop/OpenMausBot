@@ -155,6 +155,17 @@
     <string name="mobile_not_now_e4571490">Not now</string>
     <string name="mobile_ok_9ce3bd42">OK</string>
     <string name="mobile_old_proposal_hint">This proposal was created by an older build and cannot be safely enabled. Deny it and ask the bot to create it again.</string>
+    <string name="mobile_card_waiting_on_you">%1$s is waiting on you</string>
+    <string name="mobile_card_send_to_app">Send to %1$s?</string>
+    <string name="mobile_card_send_on_your_behalf">Send on your behalf?</string>
+    <string name="mobile_card_details">Details</string>
+    <string name="mobile_card_allowed">Allowed</string>
+    <string name="mobile_card_denied">Denied</string>
+    <string name="mobile_card_no_longer_available">No longer available</string>
+    <string name="mobile_card_remembered">Remembered</string>
+    <string name="mobile_card_skipped">Skipped</string>
+    <string name="mobile_card_answered">Answered</string>
+    <string name="mobile_card_expired">Expired — ask for a fresh proposal</string>
     <string name="mobile_on_this_network_4c9f524a">On this network</string>
     <string name="mobile_on_your_computer_9a621537">On your computer</string>
     <string name="mobile_one_time_6fea9e4d">One time</string>

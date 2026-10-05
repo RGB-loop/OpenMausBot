@@ -39,6 +39,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.draw.rotate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -104,6 +106,14 @@ import com.openmausbot.companion.core.routineExecutionRef
 import com.openmausbot.companion.core.TranscriptCard
 import com.openmausbot.companion.core.TranscriptCards
 import com.openmausbot.companion.core.webhookContent
+import com.openmausbot.companion.core.CardOutcome
+import com.openmausbot.companion.core.CardPresentation
+import com.openmausbot.companion.core.hasDetails
+import com.openmausbot.companion.core.outboundApp
+import com.openmausbot.companion.core.outcome
+import com.openmausbot.companion.core.presentation
+import com.openmausbot.companion.core.showsHeldNote
+import com.openmausbot.companion.core.summaryLine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -1198,7 +1208,10 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
     val session = LocalCompanion.current.session
     val scope = rememberCoroutineScope()
     var answering by remember(message.id) { mutableStateOf(false) }
+    // The full request behind a short card, collapsed until asked for.
+    var showingDetails by remember(message.id) { mutableStateOf(false) }
     val skillRequest = card.skillRequest
+    val presentation = card.presentation
 
     Column(
         modifier = Modifier
@@ -1218,14 +1231,47 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(card.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-        // The detail of what is being approved is the thing worth copying.
-        SelectionContainer {
-            Text(card.subtitle, fontSize = 15.sp, color = secondaryTint)
+        if (card.isPending) {
+            Text(
+                stringResource(R.string.mobile_card_waiting_on_you, chat.name),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        // "Send to Linear?" for a held send to one app, the generic question
+        // for several, and the computer's own title for every other card.
+        val headline = when {
+            presentation != CardPresentation.OUTBOUND -> card.title
+            card.outboundApp != null -> stringResource(R.string.mobile_card_send_to_app, card.outboundApp.orEmpty())
+            else -> stringResource(R.string.mobile_card_send_on_your_behalf)
+        }
+        Text(headline, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        if (presentation == CardPresentation.STANDARD) {
+            // Proposals are reviewed in full; the detail is the thing worth copying.
+            SelectionContainer {
+                Text(card.subtitle, fontSize = 15.sp, color = secondaryTint)
+            }
+        } else {
+            // An approval leads with one line; the request itself, raw
+            // arguments and all, waits under Details.
+            val summary = card.summaryLine
+            if (summary.isNotEmpty()) {
+                Text(
+                    summary,
+                    fontSize = 15.sp,
+                    color = secondaryTint,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (card.hasDetails) {
+                CardDetails(card.subtitle, showingDetails) { showingDetails = !showingDetails }
+            }
         }
 
-        card.held?.let {
-            Text(it, fontSize = 13.sp, color = Color(MausPalette.argb("orange")))
+        if (card.showsHeldNote) {
+            Text(card.held.orEmpty(), fontSize = 13.sp, color = Color(MausPalette.argb("orange")))
         }
 
         skillRequest?.let { skill ->
@@ -1348,22 +1394,75 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
                 }
             }
         } else {
-            val answered = card.answered
-            if (answered != null) {
+            val outcome = card.outcome
+            if (outcome != null) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.Check,
+                        imageVector = if (outcome.isPositive) Icons.Filled.Check else Icons.Filled.Close,
                         contentDescription = null,
                         tint = secondaryTint,
                         modifier = Modifier.size(16.dp),
                     )
-                    Text(answered, fontSize = 14.sp, color = secondaryTint)
+                    Text(outcomeText(outcome), fontSize = 14.sp, color = secondaryTint)
                 }
             } else if (card.expired == true) {
-                Text("Expired — ask for a fresh proposal", fontSize = 14.sp, color = secondaryTint)
+                Text(stringResource(R.string.mobile_card_expired), fontSize = 14.sp, color = secondaryTint)
+            }
+        }
+    }
+}
+
+/** What a settled card says happened, in words rather than the stored verdict. */
+@Composable
+private fun outcomeText(outcome: CardOutcome): String = when (outcome) {
+    CardOutcome.Allowed -> stringResource(R.string.mobile_card_allowed)
+    CardOutcome.Denied -> stringResource(R.string.mobile_card_denied)
+    CardOutcome.Unavailable -> stringResource(R.string.mobile_card_no_longer_available)
+    CardOutcome.Remembered -> stringResource(R.string.mobile_card_remembered)
+    CardOutcome.Skipped -> stringResource(R.string.mobile_card_skipped)
+    is CardOutcome.Answered -> outcome.text.ifEmpty { stringResource(R.string.mobile_card_answered) }
+    is CardOutcome.Chose -> outcome.option
+    is CardOutcome.Other -> outcome.value
+}
+
+/** Long requests scroll inside a capped box; the text stays selectable. */
+@Composable
+private fun CardDetails(text: String, expanded: Boolean, toggle: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.clickable(onClick = toggle),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.mobile_card_details),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = secondaryTint,
+            )
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = secondaryTint,
+                modifier = Modifier.size(16.dp).rotate(if (expanded) 90f else 0f),
+            )
+        }
+        if (expanded) {
+            SelectionContainer {
+                Text(
+                    text,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 220.dp)
+                        .background(secondaryTint.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                        .verticalScroll(rememberScrollState())
+                        .padding(10.dp),
+                )
             }
         }
     }

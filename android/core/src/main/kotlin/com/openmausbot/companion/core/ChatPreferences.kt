@@ -141,14 +141,14 @@ internal fun previewText(message: Message): String = when (message.kind) {
         ?: message.text?.takeIf { it.isNotEmpty() }
         // A bot that only sent a file says so by its name.
         ?: message.attachedFiles.firstOrNull()?.name.orEmpty()
-    // a pending card's question is the preview; the roster row already says
-    // "waiting on you" beside it
+    // a pending card's question is the preview, in its short form; the roster
+    // row already says "waiting on you" beside it
     Message.Kind.OPTIONS -> {
         val card = message.card
         when {
             card == null -> ""
-            card.isPending && card.subtitle.isNotEmpty() -> card.subtitle
-            else -> card.title
+            card.isPending -> card.previewLine
+            else -> card.headline
         }
     }
     Message.Kind.ACTIVITY -> message.tool?.label.orEmpty()
