@@ -13,6 +13,9 @@ import type { AppState, Bot, InstanceInfo } from "@/state/store";
 const fixture = vi.hoisted(() => ({
   boatState: null as string | null,
   posts: [] as string[],
+  /** Looks at this conversation's computer (GET), each a relay call. */
+  looks: 0,
+  advanced: true,
 }));
 vi.mock("./DesktopCapabilities", async (importOriginal) => ({
   ...await importOriginal<typeof import("./DesktopCapabilities")>(),
@@ -28,7 +31,7 @@ vi.mock("./DesktopCapabilities", async (importOriginal) => ({
     },
   }),
 }));
-vi.mock("@/lib/interface-mode", () => ({ useAdvancedMode: () => true, setAdvancedMode: () => {} }));
+vi.mock("@/lib/interface-mode", () => ({ useAdvancedMode: () => fixture.advanced, setAdvancedMode: () => {} }));
 vi.mock("./CloudScreenPreview", () => ({
   CloudScreenPreview: () => createElement("div", { "data-live-screen": "" }),
 }));
@@ -47,6 +50,7 @@ vi.mock("@/state/store", async (importOriginal) => ({
     if (path.startsWith("/api/bots/scout/computer/screenshot")) return { png: "FRAME", format: "jpeg" };
     if (path.startsWith("/api/bots/scout/computer/control")) return { held: false, helpReason: null };
     if (path.startsWith("/api/bots/scout/computer?")) {
+      fixture.looks++;
       return { surface: "cloud", backend: "box", configured: true,
         box: fixture.boatState ? { boxId: "bx_23456789", state: fixture.boatState } : null };
     }
@@ -92,6 +96,7 @@ const open = async (bot: Bot) => {
   await settle();
 };
 const text = () => document.body.textContent ?? "";
+const spinning = () => document.querySelector(".animate-spin") !== null;
 const button = (label: string) => [...document.querySelectorAll("button")].find((candidate) => candidate.textContent?.trim() === label);
 
 beforeAll(() => {
@@ -103,6 +108,9 @@ afterEach(() => {
   document.body.innerHTML = "";
   fixture.posts.length = 0;
   fixture.boatState = null;
+  fixture.looks = 0;
+  fixture.advanced = true;
+  vi.useRealTimers();
 });
 
 describe("Computer panel on Cloud computer", () => {
@@ -151,6 +159,39 @@ describe("Computer panel on Cloud computer", () => {
     await open(makeBot(moved));
     expect(text()).toContain("Scout's cloud computer is asleep. It wakes in a few seconds when Scout needs it.");
     expect(button("Wake it now")).toBeUndefined();
+    expect(fixture.posts).toEqual([]);
+  });
+
+  it("in Simple mode too: opening it creates nothing, and starting it now is the person's button", async () => {
+    fixture.advanced = false;
+    await open(makeBot({ computer: "cloud" }));
+    expect(text()).toContain("Scout gets its own cloud computer the first time a task needs one. The first start takes about a minute.");
+    expect(fixture.posts).toEqual([]);
+    flushSync(() => button("Start it now")!.click());
+    await settle();
+    expect(fixture.posts.filter((path) => !path.endsWith("/screenshot"))).toEqual(["/api/bots/scout/computer/provision"]);
+  });
+
+  it("a conversation moved to a sleeping cloud computer: no spinner or 'using it' while the bot only chats, and no polling once it stops", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const moved = (busy: boolean) => makeBot({ busy, tasks: [{ threadId: "thread", title: "Thread", createdAt: 1, approvalMode: "ask", surface: "cloud", surfaceAuto: true }] } as Partial<Bot>);
+    fixture.boatState = "archived";
+    await open(moved(true));
+    // The turn has not used the computer, so nothing is starting.
+    expect(text()).toContain("Scout's cloud computer is asleep. It wakes in a few seconds when Scout needs it.");
+    expect(text()).not.toContain("Your bot is using this computer right now");
+    expect(spinning()).toBe(false);
+
+    // The turn ends: the panel settles on what it found and stops looking.
+    await open(moved(false));
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settle();
+    expect(text()).toContain("Scout's cloud computer is asleep.");
+    const looks = fixture.looks;
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+    expect(fixture.looks).toBe(looks);
+    expect(spinning()).toBe(false);
     expect(fixture.posts).toEqual([]);
   });
 

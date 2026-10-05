@@ -39,6 +39,9 @@ describe("a cloud computer starts only when the bot uses it", () => {
   const rows: Row[] = [];
   /** Looks a waking computer still answers "resuming" to. */
   const wakeLooks = { left: 0 };
+  /** The relay refuses every create the way the Admin does once a plan's
+   * hours are used up. */
+  const refuse = { creates: false };
   const requests: Request[] = [];
   /** Boat ids in Boat's own alphabet, one per computer created. */
   const boxId = (n: number) => `bx_${"23456789abcdefgh"[n]}3456789`;
@@ -79,6 +82,20 @@ describe("a cloud computer starts only when the bot uses it", () => {
     async () => (await task(botId))?.messages.findLast((message: any) => message.tool?.name?.startsWith("error:")),
     Boolean,
   );
+  /** A conversation's failed-turn rows (a room's or a routine's thread). */
+  const errorRows = async (threadId: string) =>
+    (await apiOk("GET", `/api/threads/${threadId}/messages?limit=60`)).messages
+      .filter((message: any) => message.tool?.name?.startsWith("error:"));
+  /** select_computer, as the agents tools call it for this turn. */
+  const selectComputer = (sent: any, surface?: string) => {
+    const agents = sent.mcpConfig.mcpServers.agents;
+    const upstream = agents.env.OMB_GATE_UPSTREAM ? JSON.parse(agents.env.OMB_GATE_UPSTREAM).env : agents.env;
+    return fetch(`${base}/api/internal/computer/select`, {
+      method: surface ? "POST" : "GET",
+      headers: { authorization: `Bearer ${upstream.OMB_COMMS_TOKEN}`, "content-type": "application/json" },
+      ...(surface ? { body: JSON.stringify({ surface }) } : {}),
+    }).then(response => response.json() as Promise<any>);
+  };
   /** The turn's launch files, once the fake CLI has read them. */
   const dump = (): Promise<any> => until((): any => {
     if (!existsSync(dumpFile)) return null;
@@ -133,6 +150,7 @@ describe("a cloud computer starts only when the bot uses it", () => {
         const body = raw ? JSON.parse(raw) : {};
         if (path === "/boxes" && req.method === "GET") return send(200, { ok: true, boxes: rows, pageInfo: { nextCursor: null } });
         if (path === "/boxes" && req.method === "POST") {
+          if (refuse.creates) return send(402, { ok: false, code: "hours_used", message: "This month's 50 cloud computer hours are used up." });
           const row = { id: boxId(rows.length), state: "provisioning" };
           rows.push(row);
           return send(201, { ok: true, box: row });
@@ -179,6 +197,12 @@ describe("a cloud computer starts only when the bot uses it", () => {
       claude: {
         driver: "claudeAgent", config: { cli: FAKE_CLAUDE },
         environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_DUMP: dumpFile, FAKE_CLAUDE_SLOW_FINISH_GATE: finishFile },
+      },
+      // The same CLI, whose every turn first takes one screenshot through
+      // the cloud computer's tools, as a model's first computer call does.
+      uses: {
+        driver: "claudeAgent", config: { cli: FAKE_CLAUDE },
+        environment: { FAKE_CLAUDE_USES_CLOUD_COMPUTER: "1" },
       },
       // The same CLI, signed out: what a Cloud with no AI sign-in yet runs.
       "claude-out": {
@@ -308,11 +332,11 @@ describe("a cloud computer starts only when the bot uses it", () => {
   }, 30_000);
 
   it("a tool selection without the computer is refused before any relay call, and select_computer does not offer it", async () => {
-    const bot = await cloudBot("No hands", { toolScope: { deny: ["mcp:computer:*"] } });
+    const bot = await cloudBot("Scribe", { toolScope: { deny: ["mcp:computer:*"] } });
     const before = requests.length;
     await apiOk("POST", `/api/bots/${bot.id}/messages`, { text: "hi" });
     const row = await failedRow(bot.id);
-    expect(row.tool.name).toBe("error: This bot's Tool selection leaves out the computer. Allow it in Access settings, or set Works on to Auto.");
+    expect(row.tool.name).toBe("error: Scribe's Tool selection leaves out the computer. Allow it in Scribe's Access settings.");
     await idle(bot.id);
     expect(requests.slice(before)).toEqual([]);
 
@@ -325,10 +349,83 @@ describe("a cloud computer starts only when the bot uses it", () => {
       headers: { authorization: `Bearer ${upstream.OMB_COMMS_TOKEN}` },
     }).then(response => response.json() as Promise<any>);
     expect(selection.options.find((option: { surface: string }) => option.surface === "cloud")).toMatchObject({
-      available: false, reason: "This bot's Tool selection leaves out the computer.",
+      available: false, reason: "Scribe's Tool selection leaves out the computer. Allow it in Scribe's Access settings.",
     });
     await finish(bot.id);
     expect(requests.slice(before)).toEqual([]);
     await apiOk("DELETE", `/api/bots/${bot.id}`);
   }, 30_000);
+
+  it("select_computer counts the cloud computer this turn mounted as chosen before it starts: no restart, no pin", async () => {
+    const bot = await cloudBot("Selector");
+    const before = creates();
+    const sent = await startTurn(bot.id, "Check the weather site on your desktop");
+    expect((await selectComputer(sent)).current).toBe("cloud");
+    // Already this turn's computer: it starts on its first call, so there is
+    // nothing to switch to and no turn to end.
+    expect(await selectComputer(sent, "cloud")).toMatchObject({ status: "ready", surface: "cloud" });
+    expect(await selectComputer(sent, "auto")).toMatchObject({ status: "ready", surface: "cloud" });
+    rmSync(dumpFile, { force: true });
+    await finish(bot.id);
+    await new Promise(resolve => setTimeout(resolve, 750));
+    // No continuation turn launched, and the conversation was not pinned.
+    expect(existsSync(dumpFile)).toBe(false);
+    expect((await task(bot.id))?.busy).toBe(false);
+    const thread = (await task(bot.id))?.tasks.find((candidate: any) => candidate.threadId === bot.threadId);
+    expect(thread?.surface).toBeUndefined();
+    expect(creates()).toBe(before);
+    await apiOk("DELETE", `/api/bots/${bot.id}`);
+  }, 30_000);
+
+  it("a room member whose cloud computer can't start says why in the room, once, under its own name", async () => {
+    refuse.creates = true;
+    try {
+      const bot = await cloudBot("Roomie", { modelSelection: { instanceId: "uses", model: "claude-sonnet-5" } });
+      const { group } = await apiOk("POST", "/api/groups", { name: "Refused room", memberIds: [bot.id] });
+      await apiOk("PATCH", `/api/groups/${group.id}/setup`, { action: "skip" });
+      await apiOk("POST", `/api/groups/${group.id}/messages`, { text: "take a screenshot of your desktop" });
+      await until(() => errorRows(group.threadId), rows => rows.length > 0, 30_000);
+      await idle(bot.id);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const rows = await errorRows(group.threadId);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].from).toMatchObject({ botId: bot.id, name: "Roomie" });
+      expect(rows[0].tool.name).toMatch(/^error: This month's 50 cloud computer hours are used up\. /);
+      await apiOk("DELETE", `/api/groups/${group.id}`);
+      await apiOk("DELETE", `/api/bots/${bot.id}`);
+    } finally {
+      refuse.creates = false;
+    }
+  }, 45_000);
+
+  it("a cloud routine whose computer can't start records that cause on its run", async () => {
+    refuse.creates = true;
+    try {
+      const { bot } = await apiOk("POST", "/api/bots", { name: "Runner" });
+      await apiOk("PATCH", `/api/bots/${bot.id}`, { modelSelection: { instanceId: "uses", model: "claude-sonnet-5" }, browser: false });
+      const { routine } = await apiOk("POST", "/api/routines", {
+        name: "Cloud check", botId: bot.id, prompt: "Screenshot the desktop.", runOn: "cloud", enabled: false,
+        schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() + 3_600_000 },
+      });
+      const { run } = await apiOk("POST", `/api/routines/${routine.id}/run`, {});
+      const finished = await until(
+        async () => (await apiOk("GET", "/api/routines")).runs.find((candidate: any) => candidate.id === run.id),
+        (candidate: any) => Boolean(candidate) && !["queued", "running", "waiting"].includes(candidate.status),
+        45_000,
+      );
+      const rows = await errorRows(finished.threadId);
+      expect(rows).toHaveLength(1);
+      // The receipt, the routine card and the notification read the run's
+      // error: the same words as the row, never "interrupted".
+      expect(finished.status).toBe("failed");
+      expect(`error: ${finished.error}`).toBe(rows[0].tool.name);
+      expect(finished.error).toMatch(/^This month's 50 cloud computer hours are used up\. Change where this routine runs\.$/);
+      // The run's thread settles once the interrupt that ended it lands.
+      await until(() => task(bot.id), current => current?.busy === false && current.tasks.every((entry: any) => !entry.busy));
+      await apiOk("DELETE", `/api/routines/${routine.id}`);
+      await apiOk("DELETE", `/api/bots/${bot.id}`);
+    } finally {
+      refuse.creates = false;
+    }
+  }, 60_000);
 });

@@ -230,21 +230,21 @@ describe("cloudPlaceDriverError", () => {
 });
 
 describe("computerToolsError", () => {
-  it("refuses a Tool selection without the computer, with the setting that changes it", () => {
+  it("refuses a Tool selection without the computer with one action: the setting that changes it", () => {
     const claude = { driverKind: "claudeAgent", computerMcp: true };
-    expect(computerToolsError(claude, { deny: ["mcp:computer:*"] })).toBe(
-      "This bot's Tool selection leaves out the computer. Allow it in Access settings, or set Works on to Auto.");
-    expect(computerToolsError(claude, { allow: ["native:*"] }, "pin")).toBe(
-      "This bot's Tool selection leaves out the computer. Allow it in Access settings, or clear this conversation's place in the composer.");
-    expect(computerToolsError(claude, { allow: ["native:*"] }, "routine")).toMatch(/change where this routine runs\.$/);
+    const line = "Scout's Tool selection leaves out the computer. Allow it in Scout's Access settings.";
+    expect(computerToolsError(claude, { deny: ["mcp:computer:*"] }, "Scout")).toBe(line);
+    // The same one action whatever chose the place: never a second one, and
+    // never "Set Works on to Auto".
+    expect(computerToolsError(claude, { allow: ["native:*"] }, "Scout")).toBe(line);
   });
 
   it("lets every selection that keeps a computer tool through, and the Computer engine always", () => {
     const claude = { driverKind: "claudeAgent", computerMcp: true };
-    expect(computerToolsError(claude, undefined)).toBeNull();
-    expect(computerToolsError(claude, { allow: ["native:*", "mcp:computer:screenshot"] })).toBeNull();
-    expect(computerToolsError(claude, { deny: ["mcp:computer:exec"] })).toBeNull();
-    expect(computerToolsError({ driverKind: "boxAgent" }, { allow: [] })).toBeNull();
+    expect(computerToolsError(claude, undefined, "Scout")).toBeNull();
+    expect(computerToolsError(claude, { allow: ["native:*", "mcp:computer:screenshot"] }, "Scout")).toBeNull();
+    expect(computerToolsError(claude, { deny: ["mcp:computer:exec"] }, "Scout")).toBeNull();
+    expect(computerToolsError({ driverKind: "boxAgent" }, { allow: [] }, "Scout")).toBeNull();
   });
 });
 

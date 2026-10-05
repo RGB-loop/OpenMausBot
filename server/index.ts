@@ -105,6 +105,8 @@ import {
 import { fitsOnOneLine, parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
 import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
+import { roomTurnEnd, type RoomClaimEnd } from "./room-turn-end.ts";
+import { pickComputer } from "./computer-selection.ts";
 import * as boat from "./boat.ts";
 import { cloudComputerRpc } from "./cloud-computer-tools.ts";
 import { TeamComputers, teamComputerAssignment, teamComputerCreate, teamComputerOwner, type TeamComputerRecord } from "./team-computers.ts";
@@ -521,7 +523,7 @@ import { autoLocalVmAttachable, type ContainerComputerStatus } from "./container
 import { lazyClaimWaitMs, startAutoVmClaim, type AutoVmClaimSlot, type AutoVmClaimTable } from "./auto-vm-claims.ts";
 import { computerFreeAfterText, computerParkedText, computerStoppedWaitingText, computerWaitingText, type ComputerHolder } from "./computer-wait.ts";
 import { modelContextWindow } from "./model-context-window.ts";
-import { cloudPlaceDriverError, computerToolsError, parseSurface, placeFailureMessage, PlaceUnavailableError, placeUnavailable, resolveSurface, surfaceLabel, surfaceOfComputerKind, surfacePrompt, TOOLS_LEAVE_OUT_COMPUTER, type PlaceSource, type Surface } from "./surface.ts";
+import { cloudPlaceDriverError, computerToolsError, parseSurface, placeFailureMessage, PlaceUnavailableError, placeUnavailable, resolveSurface, surfaceLabel, surfaceOfComputerKind, surfacePrompt, type PlaceSource, type Surface } from "./surface.ts";
 import {
   PendingTurnCancellations,
   ProviderTurnGenerationRegistry,
@@ -6661,8 +6663,12 @@ async function mountHostComputer(owner: TurnOwner, botId: string, providerSuppor
  * is claimed on the first computer call, through the computer-control gate
  * (the Local VM's seam, #1361), never at mount: turns that never touch the
  * computer tools run side by side. `start` may provision or start the
- * container; without it the VPS is only inspected. The caller has already
- * recorded the thread with vpsThreadStarted and ends it on a problem. */
+ * container; without it the VPS is only inspected. Unlike the bot's cloud
+ * computer (mountBotBoat), the start stays here, at dispatch: the VPS tools
+ * are a bridge that execs into the running container as soon as the engine
+ * launches it (runMcpBridge), and a self-hosted container uses no plan
+ * hours. The caller has already recorded the thread with vpsThreadStarted
+ * and ends it on a problem. */
 async function mountBotVps(
   bot: BotRecord,
   owner: TurnOwner,
@@ -6700,9 +6706,17 @@ async function mountBotVps(
 /** How long one computer call waits on a cloud computer that is being
  * created or woken before it is told to look again. Under the 60 seconds an
  * engine may give one tool call (Codex's default); a call that runs out finds
- * the start still going and waits again, inside the start's own budget. */
-const CLOUD_COMPUTER_START_WAIT_MS = 45_000;
-const CLOUD_COMPUTER_STARTING = "The cloud computer is still starting, or another conversation is using it. This call was not performed. Take a fresh screenshot in a moment.";
+ * the start still going and waits again, inside the start's own budget.
+ * OMB_CLOUD_COMPUTER_START_WAIT_MS shortens it for tests. */
+const CLOUD_COMPUTER_START_WAIT_MS = Math.max(1_000, Number(process.env.OMB_CLOUD_COMPUTER_START_WAIT_MS) || 45_000);
+/** How long the start itself may take once this turn has the computer to
+ * itself: above a slow first start (about a minute; Boat's own ready wait is
+ * 90 seconds). Past it the start has failed, and the turn says so and ends,
+ * instead of every call answering "still starting" until the watchdog.
+ * OMB_CLOUD_COMPUTER_START_BUDGET_MS shortens it for tests. */
+const CLOUD_COMPUTER_START_BUDGET_MS = Math.max(1_000, Number(process.env.OMB_CLOUD_COMPUTER_START_BUDGET_MS) || 150_000);
+const CLOUD_COMPUTER_STARTING = "The cloud computer is still starting. This call was not performed. Take a fresh screenshot in a moment.";
+const CLOUD_COMPUTER_DID_NOT_START = "the cloud computer didn't start in time";
 
 /** The bot's own Boat as a computer its engine uses, mounted like the VPS
  * (mountBotVps): the tools mount now, and the Boat is created or woken by
@@ -6719,12 +6733,19 @@ function mountBotBoat(
   const slot: AutoVmClaimSlot = {
     owner,
     lazy: true,
+    startsComputer: true,
     label: "the cloud computer",
     graceMs: CLOUD_COMPUTER_START_WAIT_MS,
-    pendingReason: CLOUD_COMPUTER_STARTING,
+    // Until this turn has the computer to itself another conversation does,
+    // and a call is told so (the gate's contention text); from then on the
+    // claim is starting it.
     onRejected: opts.onRejected,
     claim: async () => {
-      const attached = await attachBotBoat(bot, owner, { explicitCloud: true, remoteAgent: false });
+      const attached = await attachBotBoat(bot, owner, {
+        explicitCloud: true,
+        remoteAgent: false,
+        start: { budgetMs: CLOUD_COMPUTER_START_BUDGET_MS, onSeated: () => { slot.pendingReason = CLOUD_COMPUTER_STARTING; } },
+      });
       if (!attached) throw new Error("the cloud computer could not be created or reached");
       slot.boxId = attached.boxId;
       opts.onClaimed(attached.capture);
@@ -6750,25 +6771,54 @@ function claimedBoatId(capability: InternalCapability): string | undefined {
 async function attachBotBoat(
   bot: BotRecord,
   owner: TurnOwner,
-  opts: { explicitCloud: boolean; remoteAgent: boolean },
+  opts: {
+    explicitCloud: boolean;
+    remoteAgent: boolean;
+    /** A lazily mounted start (mountBotBoat): told once this turn has the
+     * Boat to itself, then given `budgetMs` to find, create or wake it. */
+    start?: { budgetMs: number; onSeated: () => void };
+  },
 ) {
   // Explicit cloud turns can provision/wake the same bot's Boat. Claim before
   // any network await so setup itself cannot race another turn.
   if (opts.explicitCloud) await bindTurnComputer(owner, `computer:box-bot:${bot.id}`, true);
+  opts.start?.onSeated();
+  const starting = startBotBoat(bot, opts.explicitCloud);
+  const machine = opts.start ? await withinBudget(starting, opts.start.budgetMs, CLOUD_COMPUTER_DID_NOT_START) : await starting;
+  if (!machine) return null;
+  await bindTurnComputer(owner, `computer:box:${machine.id}`, opts.remoteAgent);
+  return {
+    boxId: machine.id as string,
+    capture: () => boat.screenshotBoat(cfg, bot.id, machine.id),
+  };
+}
+
+/** `work`, or a rejection with `message` once `ms` pass first. The work is
+ * not cancelled: it ends on its own requests' deadlines, and the race has
+ * already handled a rejection it brings later. */
+function withinBudget<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); });
+  return Promise.race([work, expired]).finally(() => clearTimeout(timer));
+}
+
+/** Find the bot's Boat, creating or waking it when the turn may: the Boat
+ * once it can be attached, or null. */
+async function startBotBoat(bot: BotRecord, explicitCloud: boolean) {
   let b: Awaited<ReturnType<typeof boat.findBoat>> | null;
   try {
     b = await boat.findBoat(cfg, bot.id);
   } catch (error) {
     // Auto may fall through when an optional provider is offline, but a
     // durable deletion fence must never be mistaken for "no computer".
-    if (opts.explicitCloud || (error as { status?: number })?.status === 409) throw error;
+    if (explicitCloud || (error as { status?: number })?.status === 409) throw error;
     b = null;
   }
-  const lifecycleOf = (explicitCloud: boolean) => boat.boatTurnLifecycleAction({
-    explicitCloud,
+  const lifecycleOf = (explicit: boolean) => boat.boatTurnLifecycleAction({
+    explicitCloud: explicit,
     state: typeof b?.state === "string" ? b.state : null,
   });
-  let lifecycle = lifecycleOf(opts.explicitCloud);
+  let lifecycle = lifecycleOf(explicitCloud);
   if (lifecycle === "provision") {
     broadcast({ kind: "computer", botId: bot.id, state: "provisioning", place: "cloud" });
     await boat.provisionBoat(cfg, bot.id, bot.name);
@@ -6783,13 +6833,7 @@ async function attachBotBoat(
     b = (await boat.readyBoat(cfg, bot.id)) ?? b;
     lifecycle = lifecycleOf(true);
   }
-  if (!b || lifecycle !== "attach") return null;
-  const machine = b;
-  await bindTurnComputer(owner, `computer:box:${machine.id}`, opts.remoteAgent);
-  return {
-    boxId: machine.id as string,
-    capture: () => boat.screenshotBoat(cfg, bot.id, machine.id),
-  };
+  return b && lifecycle === "attach" ? b : null;
 }
 
 function managedBoatOwners(): boat.ManagedBoatOwner[] {
@@ -6911,7 +6955,7 @@ async function selectableComputers(bot: BotRecord) {
   const caps = instance?.adapter.capabilities;
   const off = bot.computer === "off";
   // A desktop the bot's tools cannot reach is not offered, and not probed.
-  const toolsLeaveOut = computerToolsError(cloudEngine(instance), bot.toolScope) !== null;
+  const toolsLeaveOut = computerToolsError(cloudEngine(instance), bot.toolScope, bot.name);
   const localEngine = caps?.remoteAgent !== true;
   const surfaces = (["cloud", "vm", "local", "browser"] as const).filter(surface => !CLOUD_HOME || cloudHomeOffersPlace(surface));
   return Promise.all(surfaces.map(async surface => {
@@ -6925,7 +6969,7 @@ async function selectableComputers(bot: BotRecord) {
       : "This computer is not configured or running. Open the Computer panel to set it up.";
     try {
       if (off) reason = "Computer access is Off in this bot's settings.";
-      else if (toolsLeaveOut && surface !== "browser") reason = TOOLS_LEAVE_OUT_COMPUTER;
+      else if (toolsLeaveOut && surface !== "browser") reason = toolsLeaveOut;
       else if (surface === "cloud") {
         if (bot.cloudBackend === "vps") {
           const status = canWorkOnCloud(cloudEngine(instance), "vps") ? await vps.vpsComputerStatus(cfg, bot.id) : null;
@@ -9839,7 +9883,7 @@ async function startTurn(
       // created or woken — never handed to another engine.
       if (wants === "cloud" && placeSource) {
         const unsupported = cloudPlaceDriverError(cloudEngine(instance), cloudBackend, placeSource)
-          ?? computerToolsError(cloudEngine(instance), toolScope, placeSource);
+          ?? computerToolsError(cloudEngine(instance), toolScope, bot.name);
         if (unsupported) throw new PlaceUnavailableError("cloud", unsupported);
       }
       let previewCapture: (() => Promise<{ png: string; format: string }>) | null = null;
@@ -9993,6 +10037,10 @@ async function startTurn(
           // completion fold must not report this failure a second time.
           resourceOwner.lazyClaimFailureReported = true;
         }
+        // A routine, a delegation or a resume reports this exactly as it
+        // reports a place that failed at dispatch: with this cause, before
+        // the interrupt settles the turn as merely "interrupted".
+        opts?.onDispatchError?.(message);
         void interruptDirectThread(bot.id, threadId).catch(() => {});
       };
 
@@ -12192,8 +12240,12 @@ async function runGroupMemberTurn(
   if (roomGuestConfined) guestDrivenTurns.set(threadId, internalGeneration);
   // A room turn is never provably the owner's alone (server/lending-memory.ts).
   if (CLOUD_HOME) noteForeignTurn(bot.id, threadId, internalGeneration);
-  const resourceOwner = { threadId, generation: internalGeneration };
+  const resourceOwner: TurnOwner = { threadId, generation: internalGeneration };
   turnResourceOwners.set(threadId, resourceOwner);
+  // Set when this member's cloud computer, claimed by its first computer
+  // call, could not start (or parked waiting for its seat): the turn ends on
+  // it, with this cause, instead of as merely interrupted.
+  let roomClaimFailure: RoomClaimEnd | undefined;
   let roomVmTarget: ReturnType<typeof localVmTargetForBot> | null = null;
   let retainRoomVmLease = false;
   let roomSpeaker: { botId: string; name: string; color: string } | undefined;
@@ -12474,7 +12526,7 @@ async function runGroupMemberTurn(
   // engine that cannot use the cloud computer is refused, never swapped.
   if (!roomTeamComputer && roomPlan.computer === "cloud") {
     const unsupported = cloudPlaceDriverError(cloudEngine(instance), turnProvider(readyBot) === "vps" ? "vps" : "box")
-      ?? computerToolsError(cloudEngine(instance), readyBot.toolScope);
+      ?? computerToolsError(cloudEngine(instance), readyBot.toolScope, readyBot.name);
     if (unsupported) throw new PlaceUnavailableError("cloud", unsupported);
   }
   // One place per room turn as well: a team computer reached on Auto means
@@ -12517,6 +12569,38 @@ async function runGroupMemberTurn(
       startScreenPoller(readyBot.id, threadId, { computer: capture });
     }
   };
+  // The member's cloud computer could not start on its first computer call:
+  // the same row, report and parking a failure at setup gets (the catch at
+  // the end of this function), then the member's turn ends. Fenced to this
+  // member's still-running turn.
+  const failRoomClaim = (failure: string) => {
+    if (activeInternalGenerationByThread.get(threadId) !== internalGeneration || groupSpeakers.get(threadId) !== roomSpeaker) return;
+    if (resourceOwner.computerParkedOn) {
+      registerComputerResume({
+        botId: bot.id,
+        threadId,
+        resource: resourceOwner.computerParkedOn,
+        generation: internalGeneration,
+        afterMessageId: store.activePath(threadId).findLast((entry) => entry.role === "user")?.id,
+      });
+      roomClaimFailure = { parked: true };
+      if (orchestration) orchestration.result.stopReason = `${bot.name} parked waiting for the computer`;
+    } else {
+      // A room row is not cut, so the cause keeps all its words.
+      const message = placeFailureMessage(failure, "works-on", Infinity);
+      roomClaimFailure = { parked: false, message };
+      store.appendMessage(threadId, {
+        role: "bot", kind: "activity",
+        from: { botId: bot.id, name: bot.name, color: bot.color },
+        tool: failedTurnTool(message),
+      });
+      onDispatchError?.(message);
+      // Claude settles the interrupt as exit_before_result: not a second
+      // incident for the same failure.
+      resourceOwner.lazyClaimFailureReported = true;
+    }
+    void instance.adapter.interruptTurn(threadId).catch(() => {});
+  };
   // An explicit place that cannot be attached fails the member's turn with
   // its cause and the one setting that changes it.
   try {
@@ -12548,7 +12632,7 @@ async function runGroupMemberTurn(
         } else {
           // As in a bot thread: created or woken by the member's first
           // computer call, never by the room message itself.
-          integrations.localComputer = mountBotBoat(readyBot, resourceOwner, { onClaimed: showClaimedScreen });
+          integrations.localComputer = mountBotBoat(readyBot, resourceOwner, { onClaimed: showClaimedScreen, onRejected: failRoomClaim });
         }
         roomComputerKind = "box";
       }
@@ -12796,12 +12880,9 @@ async function runGroupMemberTurn(
       if (providerTurnId && e.turnId && e.turnId !== providerTurnId) return;
       if (e.type === "item.completed" && e.itemType === "assistant_text") replyText += `\n${e.text}`;
       else if (e.type === "turn.completed") {
-        if (orchestration && !e.ok) {
-          orchestration.result.stopReason = e.stopReason ?? null;
-          finish("provider_failed");
-        } else {
-          finish("settled");
-        }
+        const end = roomTurnEnd(e, Boolean(orchestration), roomClaimFailure);
+        if (orchestration && end.stopReason !== undefined) orchestration.result.stopReason = end.stopReason;
+        finish(end.outcome);
       }
       // Waiting on a person is not turn work: hold the ceiling while an
       // approval or question card is open, so deciding slowly does not
@@ -12983,7 +13064,7 @@ async function runGroupMemberTurn(
     drainSecretResumes();
     drainTeamSetupResumes();
   }
-  if (outcome === "provider_failed") {
+  if (outcome === "provider_failed" || outcome === "parked") {
     if (skillAuthoring) skillAuthoringClaim.claimed = false;
     return false;
   }
@@ -16183,14 +16264,22 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (method === "GET") return json(res, 200, { current, canSelect, options });
         if (computerSelectionTurns.get(internalCapability.threadId) !== source) return json(res, 409, { error: "The user request ended before its computer was selected." });
         if (unoffered) return json(res, 409, { error: unoffered, options });
-        const option = requested === "auto"
-          ? options.find(option => option.ready && option.surface === current) ?? options.find(option => option.ready && option.surface === "vm") ?? options.find(option => option.ready) ?? options.find(option => option.canStart) ?? options.find(option => option.canCreate && option.surface === "vm") ?? options.find(option => option.canCreate)
-          : options.find(option => option.surface === requested);
+        // The computer this turn mounted is already selected, even before it
+        // is up when its first call starts it (the bot's cloud computer):
+        // switching to it would only restart the request.
+        const claim = autoVmClaims.get(internalCapability.threadId);
+        const startsOnFirstCall = claim?.owner.generation === internalCapability.generation && claim.startsComputer === true && !claim.failed;
+        const picked = pickComputer(options, requested, current, startsOnFirstCall);
+        const option = picked.option;
         if (!option?.available) return json(res, 409, { error: option?.reason ?? "No configured computer or browser is available. Open the Computer panel to set one up.", options });
         if (source!.selected) {
           if (source!.selected !== option.surface) return json(res, 409, { error: "A computer switch is already pending. End this turn to continue there." });
         } else {
-          if (option.surface === current && option.ready) return json(res, 200, { status: "ready", surface: current, message: "This computer is already selected. Use its mounted tools." });
+          if (picked.current) {
+            return json(res, 200, { status: "ready", surface: current, message: option.ready
+              ? "This computer is already selected. Use its mounted tools."
+              : "This computer is already selected. It starts on its first call; use its mounted tools." });
+          }
           source!.selected = option.surface;
           source!.previousSurface = store.taskByThread(bot.id, bot.threadId)?.surface;
         }

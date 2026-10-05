@@ -45,6 +45,10 @@ export interface AutoVmClaimSlot {
   /** The Boat a cloud computer's claim created or woke (mountBotBoat):
    * its tools reach that Boat once the claim has landed. */
   boxId?: string;
+  /** The claim itself creates or wakes the computer (mountBotBoat), so that
+   * computer is this turn's even before it is up: select_computer counts it
+   * as selected. The other lazy claims only lease a desktop that is up. */
+  startsComputer?: true;
   /** Called once, after the slot is marked failed, when the fired claim
    * rejected (issue #1369): the turn surfaces a terminal error and ends
    * instead of staying busy behind a gate that can only refuse. The

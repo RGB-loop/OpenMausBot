@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Bot, InstanceInfo } from "@/state/store";
 import {
   autoSelectsLocalComputer,
+  busyBoatView,
   instanceSupportsLocalComputer,
   linuxAutoDescription,
   localComputerDisabledReason,
@@ -197,6 +198,20 @@ describe("local computer UI eligibility", () => {
     // and Auto stays observation-only regardless of busy
     expect(resolveBoatPanelAction({ ...cloud, computer: undefined, boatState: "ready" })).toBe("show-ready-boat");
     expect(resolveBoatPanelAction({ ...cloud, computer: undefined, boatState: null, autoLocal: false })).toBe("auto-unavailable");
+  });
+
+  it("while it watches, spins only for a cloud computer that is really starting", () => {
+    // Missing or asleep: only the bot's first computer call starts it, and a
+    // turn that never uses the screen never does. Nothing to wait for.
+    expect(busyBoatView(null, true)).toEqual({ line: "computer.cloud.new", spinner: false });
+    expect(busyBoatView(null, false)).toEqual({ line: "computer.cloud.new", spinner: false });
+    for (const boatState of ["archived", "stopped"]) {
+      expect(busyBoatView(boatState, true)).toEqual({ line: "computer.cloud.asleep", spinner: false });
+      expect(busyBoatView(boatState, false)).toEqual({ line: "computer.cloud.asleep", spinner: false });
+    }
+    // Starting: a turn is bringing it up, or it is still coming up after one.
+    expect(busyBoatView("provisioning", true)).toEqual({ line: "computer.phase.busyBoat", spinner: true });
+    expect(busyBoatView("resuming", false)).toEqual({ line: "computer.phase.starting", spinner: true });
   });
 
   it("never gives the box-native engine a passive Auto creation exception", () => {

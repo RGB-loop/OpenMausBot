@@ -151,17 +151,16 @@ export function cloudPlaceDriverError(
     : `This model can't use a computer. ${next}`;
 }
 
-/** What select_computer says about a computer a bot's tools cannot reach. */
-export const TOOLS_LEAVE_OUT_COMPUTER = "This bot's Tool selection leaves out the computer.";
-
-/** Why this bot's Tool selection keeps it off a computer, or null. Engines
- * reach every desktop through the "computer" MCP server, so a selection
- * without it has nothing to work with there. Checked with the engine rule,
- * before anything is created or woken. The Computer engine runs its whole
- * turn on Boat and has no such server. */
-export function computerToolsError(engine: CloudEngine, toolScope: unknown, source: PlaceSource = "works-on"): string | null {
+/** Why this bot's Tool selection keeps it off a computer, or null: one line,
+ * the cause and the one setting that changes it, the same whatever chose the
+ * place (a turn's refusal and select_computer's reason alike). Engines reach
+ * every desktop through the "computer" MCP server, so a selection without it
+ * has nothing to work with there. Checked with the engine rule, before
+ * anything is created or woken. The Computer engine runs its whole turn on
+ * Boat and has no such server. */
+export function computerToolsError(engine: CloudEngine, toolScope: unknown, botName: string): string | null {
   if (engine.driverKind === "boxAgent" || canUseMcpServer(toolScope, "computer")) return null;
-  return `${TOOLS_LEAVE_OUT_COMPUTER} Allow it in Access settings, or ${PLACE_ACTION[source].clause}.`;
+  return `${botName}'s Tool selection leaves out the computer. Allow it in ${botName}'s Access settings.`;
 }
 
 /** One line, cause then next action. A bot thread's transcript row keeps

@@ -58,6 +58,7 @@ import { LinuxLocalControl } from "./LinuxLocalControl";
 import { MacLocalControl } from "./MacLocalControl";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import {
+  busyBoatView,
   instanceSupportsLocalComputer,
   localComputerDisabledReason,
   localComputerSelectable,
@@ -760,7 +761,9 @@ export function ComputerPanel({
     if (phase !== "busy-boat") return;
     let alive = true;
     const check = () => {
-      if (!profileBot.busy && canManageCloud) {
+      // The turn ended: settle on what this conversation's cloud computer
+      // is now (the bot's Works on, or a pin to it), and stop looking.
+      if (!profileBot.busy && livePlace === "cloud") {
         setRetry((n) => n + 1);
         return;
       }
@@ -778,7 +781,7 @@ export function ComputerPanel({
       alive = false;
       window.clearInterval(timer);
     };
-  }, [phase, threadPath, profileBot.busy, canManageCloud]);
+  }, [phase, threadPath, profileBot.busy, livePlace]);
 
   // Live frames of this conversation's screen come straight from the app's
   // stream, never through the store. Only a frame heard while this preview is
@@ -1322,11 +1325,12 @@ export function ComputerPanel({
     active ? "bg-raised text-ink shadow-sm" : "text-ink-secondary hover:text-ink",
   );
 
+  const busyBoat = busyBoatView(boatState, profileBot.busy === true);
   const emptyState = {
     checking: t("computer.phase.checking"),
     starting: t("computer.phase.starting"),
     // A turn that has not used its cloud computer yet has not started one.
-    "busy-boat": boatState ? t("computer.phase.busyBoat") : t("computer.cloud.new", { name: bot.name }),
+    "busy-boat": t(busyBoat.line, { name: bot.name }),
     unconfigured: t("computer.phase.unconfigured"),
     "auto-unavailable": t("computer.phase.autoUnavailable"),
     "team-boat": "This bot uses a shared team computer. Open Team map to view or manage it.",
@@ -1552,7 +1556,7 @@ export function ComputerPanel({
             />
           ) : (
             <div className="flex flex-col items-center gap-2 px-6 text-center text-ink-secondary">
-              {phase === "checking" || phase === "starting" || phase === "busy-boat" || phase === "vm" || (phase === "local" && !isLinux) ? (
+              {phase === "checking" || phase === "starting" || (phase === "busy-boat" && busyBoat.spinner) || phase === "vm" || (phase === "local" && !isLinux) ? (
                 <Loader2 size={18} className="animate-spin" />
               ) : phase === "off" ? (
                 <Power size={22} />
