@@ -10,6 +10,7 @@
  * from the person's seat they are the same "cloud computer" panel. */
 import type { Surface } from "../shared/wire.ts";
 import { canWorkOnCloud, type CloudEngine } from "../shared/cloud-computer.ts";
+import { canUseMcpServer } from "../shared/tool-scope.ts";
 export type { Surface };
 
 /** The bot's "Works on" setting; undefined = Auto. */
@@ -148,6 +149,19 @@ export function cloudPlaceDriverError(
   return engine.driverKind === "boxAgent"
     ? `The Computer engine runs on Boat and can't use a self-hosted VPS. ${next}`
     : `This model can't use a computer. ${next}`;
+}
+
+/** What select_computer says about a computer a bot's tools cannot reach. */
+export const TOOLS_LEAVE_OUT_COMPUTER = "This bot's Tool selection leaves out the computer.";
+
+/** Why this bot's Tool selection keeps it off a computer, or null. Engines
+ * reach every desktop through the "computer" MCP server, so a selection
+ * without it has nothing to work with there. Checked with the engine rule,
+ * before anything is created or woken. The Computer engine runs its whole
+ * turn on Boat and has no such server. */
+export function computerToolsError(engine: CloudEngine, toolScope: unknown, source: PlaceSource = "works-on"): string | null {
+  if (engine.driverKind === "boxAgent" || canUseMcpServer(toolScope, "computer")) return null;
+  return `${TOOLS_LEAVE_OUT_COMPUTER} Allow it in Access settings, or ${PLACE_ACTION[source].clause}.`;
 }
 
 /** One line, cause then next action. A bot thread's transcript row keeps

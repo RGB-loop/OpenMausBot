@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   cloudPlaceDriverError,
+  computerToolsError,
   parseSurface,
   placeFailureMessage,
   placeUnavailable,
@@ -225,6 +226,25 @@ describe("cloudPlaceDriverError", () => {
     expect(cloudPlaceDriverError({ driverKind: "openaiCompat", computerMcp: false }, "box")).toBe("This model can't use a computer. Choose another model, or set Works on to Auto.");
     expect(cloudPlaceDriverError({}, "vps", "pin")).toBe("This model can't use a computer. Choose another model, or clear this conversation's place in the composer.");
     expect(cloudPlaceDriverError({}, "box", "routine")).toBe("This model can't use a computer. Choose another model, or change where this routine runs.");
+  });
+});
+
+describe("computerToolsError", () => {
+  it("refuses a Tool selection without the computer, with the setting that changes it", () => {
+    const claude = { driverKind: "claudeAgent", computerMcp: true };
+    expect(computerToolsError(claude, { deny: ["mcp:computer:*"] })).toBe(
+      "This bot's Tool selection leaves out the computer. Allow it in Access settings, or set Works on to Auto.");
+    expect(computerToolsError(claude, { allow: ["native:*"] }, "pin")).toBe(
+      "This bot's Tool selection leaves out the computer. Allow it in Access settings, or clear this conversation's place in the composer.");
+    expect(computerToolsError(claude, { allow: ["native:*"] }, "routine")).toMatch(/change where this routine runs\.$/);
+  });
+
+  it("lets every selection that keeps a computer tool through, and the Computer engine always", () => {
+    const claude = { driverKind: "claudeAgent", computerMcp: true };
+    expect(computerToolsError(claude, undefined)).toBeNull();
+    expect(computerToolsError(claude, { allow: ["native:*", "mcp:computer:screenshot"] })).toBeNull();
+    expect(computerToolsError(claude, { deny: ["mcp:computer:exec"] })).toBeNull();
+    expect(computerToolsError({ driverKind: "boxAgent" }, { allow: [] })).toBeNull();
   });
 });
 

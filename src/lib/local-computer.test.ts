@@ -125,7 +125,7 @@ describe("local computer UI eligibility", () => {
       }
     }
     expect(resolveBoatPanelAction({ computer: "cloud", configured: true, boatState: "idle",
-      canUseCloud: true, autoLocal: true, teamComputer: true })).toBe("ensure-boat");
+      canUseCloud: true, autoLocal: true, teamComputer: true })).toBe("attach-ready-boat");
   });
 
   it("never creates a missing Boat merely because an Auto panel opened", () => {
@@ -167,21 +167,19 @@ describe("local computer UI eligibility", () => {
     }
   });
 
-  it("provisions only after an explicit Cloud choice", () => {
-    expect(resolveBoatPanelAction({
-      computer: "cloud",
-      configured: true,
-      boatState: null,
-      canUseCloud: true,
-      autoLocal: true,
-    })).toBe("ensure-boat");
-    expect(resolveBoatPanelAction({
-      computer: "cloud",
-      configured: true,
-      boatState: "archived",
-      canUseCloud: true,
-      autoLocal: true,
-    })).toBe("ensure-boat");
+  it("never creates or wakes a Boat because Cloud computer was chosen or the panel opened", () => {
+    // The bot's first computer call starts it; the panel only says so, and
+    // starting it now is the person's own button.
+    const cloud = { computer: "cloud" as const, configured: true, canUseCloud: true, autoLocal: true };
+    expect(resolveBoatPanelAction({ ...cloud, boatState: null })).toBe("cloud-new");
+    for (const boatState of ["archived", "stopped"]) {
+      expect(resolveBoatPanelAction({ ...cloud, boatState })).toBe("cloud-asleep");
+    }
+    for (const boatState of ["idle", "ready", "running"]) {
+      expect(resolveBoatPanelAction({ ...cloud, boatState })).toBe("attach-ready-boat");
+    }
+    // Starting already (the person's button, or another conversation): watch it come up.
+    expect(resolveBoatPanelAction({ ...cloud, boatState: "provisioning" })).toBe("busy-boat");
   });
 
   it("watches instead of provisioning while a turn owns the box", () => {

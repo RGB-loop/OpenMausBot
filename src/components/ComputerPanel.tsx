@@ -120,6 +120,8 @@ type Phase =
   | "show-ready-boat"
   | "show-sleeping-boat"
   | "show-pending-boat"
+  | "cloud-new"
+  | "cloud-asleep"
   | "browser"
   | "off"
   | "error";
@@ -496,7 +498,6 @@ export function ComputerPanel({
     // or churn preview state while reading routine history.
     if (panelView !== "computer") return;
     let alive = true;
-    let boatRetryTimer: number | undefined;
     setResolvedComputerSelection(null);
     setTeamComputer(null);
     setPhase("checking");
@@ -671,14 +672,17 @@ export function ComputerPanel({
         alive = false;
       };
     }
-    // Explicit Cloud may create/wake its Boat. Auto is observation-only here:
-    // even a ready Boat and the boat-native engine stay free of POSTs until the
-    // person deliberately chooses Cloud.
+    // Opening the panel only looks. With Cloud computer chosen, the bot's
+    // first computer call creates or wakes the Boat, or the person's own
+    // Start it now / Wake it now button does; on Auto the panel only reports
+    // an existing Boat.
     api(threadPath("computer"))
       .then((status) => {
         if (!alive) return;
         const action = resolveBoatPanelAction({
-          computer: canManageCloud ? "cloud" : undefined,
+          // This conversation is on the cloud computer: the bot's Works on,
+          // or a pin (the person's, or select_computer's).
+          computer: livePlace === "cloud" ? "cloud" : undefined,
           configured: Boolean(status.configured),
           boatState: typeof status.box?.state === "string" ? status.box.state : null,
           canUseCloud: cloudSupported,
@@ -705,57 +709,24 @@ export function ComputerPanel({
           return;
         }
         if (action === "attach-ready-boat" || (bot.computer === "cloud" && action === "show-ready-boat")) {
-          // The turn owns a ready boat; provisioning would be refused (409)
-          // and is not needed. Going straight to ready lets the turn's live
-          // frames and the screenshot poll show what the bot is doing.
+          // A ready boat, the bot's own or the one this conversation was
+          // moved to (select_computer): going straight to ready lets the
+          // turn's live frames and the screenshot poll show what the bot is
+          // doing.
           setBoatState(typeof status.box?.state === "string" ? status.box.state : null);
           setPhase("ready");
           return;
         }
-        if (action !== "ensure-boat") {
-          if (action === "show-ready-boat" || action === "show-sleeping-boat" || action === "show-pending-boat") {
-            setBoatState(typeof status.box?.state === "string" ? status.box.state : null);
-          }
-          setPhase(action);
-          return;
-        }
-        setPhase("starting");
-        return api(`/api/bots/${bot.id}/computer/provision`, { method: "POST" }).then((r) => {
-          if (!alive) return;
-          setBoatState(r.state ?? null);
-          setResolvedComputerSelection({
-            botId: bot.id,
-            threadId: bot.threadId,
-            computer: bot.computer,
-            cloudBackend,
-          });
-          setPhase("ready");
-        });
+        setBoatState(typeof status.box?.state === "string" ? status.box.state : null);
+        setPhase(action);
       })
       .catch((e) => {
         if (!alive) return;
-        // A turn that started while provision was in flight: not a fault,
-        // the panel waits for the turn (bot.busy re-runs this effect).
-        if (isActiveTurnRefusal(e)) {
-          setPhase("busy-boat");
-          return;
-        }
-        // The panel's own screenshot poll holds this boat's lifecycle claim
-        // while it captures, so a provision landing mid-capture is refused
-        // with a *different* 409. It is a wait too: re-resolve shortly
-        // instead of showing the fault this panel exists to stop showing.
-        if (isRemoteScreenshotContention({ status: Number((e as { status?: unknown })?.status ?? 0), message: String(e?.message ?? "") })) {
-          setError(null);
-          setPhase("checking");
-          boatRetryTimer = window.setTimeout(() => setRetry((n) => n + 1), 2000);
-          return;
-        }
         setError(e.message);
         setPhase("error");
       });
     return () => {
       alive = false;
-      if (boatRetryTimer !== undefined) window.clearTimeout(boatRetryTimer);
     };
   }, [
     bot.id,
@@ -778,6 +749,7 @@ export function ComputerPanel({
     computerSelectionPersisted,
     surfaceReady,
     canManageCloud,
+    livePlace,
     threadPath,
   ]);
 
@@ -796,10 +768,8 @@ export function ComputerPanel({
         .then((status) => {
           if (!alive) return;
           const state = typeof status.box?.state === "string" ? status.box.state : null;
-          if (isReadyBoatState(state)) {
-            setBoatState(state);
-            setPhase("ready");
-          }
+          setBoatState(state);
+          if (isReadyBoatState(state)) setPhase("ready");
         })
         .catch(() => { /* the next tick tries again */ });
     };
@@ -1127,13 +1097,36 @@ export function ComputerPanel({
           setResolvedComputerSelection(null);
           setBoatState(cloudBackend === "vps" ? "stopped" : "archived");
           if (cloudBackend === "vps") setPhase("vps-stopped");
-          // The deciders map an archived boat to the sleeping observation
-          // phase; re-resolving would see "ensure-boat" and wake it again.
-          else setPhase("show-sleeping-boat");
+          else setPhase(canManageCloud ? "cloud-asleep" : "show-sleeping-boat");
         }
       })
       .catch((e) => {
         setError(e.message);
+      })
+      .finally(() => setPending(null));
+  };
+
+  /** The person's own Start it now / Wake it now: the only way the panel
+   * starts a cloud computer. Choosing it or opening the panel never does. */
+  const startCloudComputer = () => {
+    setPending("provision");
+    setError(null);
+    setPhase("starting");
+    api(`/api/bots/${bot.id}/computer/provision`, { method: "POST" })
+      .then((result) => {
+        setBoatState(result.state ?? null);
+        setResolvedComputerSelection({ botId: bot.id, threadId: bot.threadId, computer: bot.computer, cloudBackend });
+        setPhase("ready");
+      })
+      .catch((e) => {
+        // A turn started meanwhile: it starts the computer it needs, and the
+        // panel watches.
+        if (isActiveTurnRefusal(e)) {
+          setPhase("busy-boat");
+          return;
+        }
+        setError(e.message);
+        setPhase("error");
       })
       .finally(() => setPending(null));
   };
@@ -1332,13 +1325,16 @@ export function ComputerPanel({
   const emptyState = {
     checking: t("computer.phase.checking"),
     starting: t("computer.phase.starting"),
-    "busy-boat": t("computer.phase.busyBoat"),
+    // A turn that has not used its cloud computer yet has not started one.
+    "busy-boat": boatState ? t("computer.phase.busyBoat") : t("computer.cloud.new", { name: bot.name }),
     unconfigured: t("computer.phase.unconfigured"),
     "auto-unavailable": t("computer.phase.autoUnavailable"),
     "team-boat": "This bot uses a shared team computer. Open Team map to view or manage it.",
     "show-ready-boat": t("computer.phase.showReadyBoat"),
     "show-sleeping-boat": t("computer.phase.showSleepingBoat"),
     "show-pending-boat": t("computer.phase.showPendingBoat"),
+    "cloud-new": t("computer.cloud.new", { name: bot.name }),
+    "cloud-asleep": t("computer.cloud.asleep", { name: bot.name }),
     "vps-unconfigured": t("computer.phase.vpsUnconfigured"),
     "vps-incompatible": t("computer.phase.vpsIncompatible"),
     "vps-stopped": t("computer.phase.vpsStopped"),
@@ -1616,6 +1612,16 @@ export function ComputerPanel({
                     : phase === "show-ready-boat"
                       ? t("computer.chooseCloudOpen")
                       : t("computer.chooseCloudManage")}
+                </button>
+              )}
+              {canManageCloud && (phase === "cloud-new" || phase === "cloud-asleep") && (
+                <button
+                  type="button"
+                  onClick={startCloudComputer}
+                  disabled={pending !== null}
+                  className="mt-1 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover disabled:opacity-50"
+                >
+                  {t(phase === "cloud-new" ? "computer.cloud.startNow" : "computer.cloud.wakeNow")}
                 </button>
               )}
               {vmResumable && pending !== "vm-start" && (
