@@ -3028,13 +3028,25 @@ ipcMain.handle("cloud-move:restore-previous", (event, id) => {
 function myCloud() {
   return myCloudOrigin({ account: cloudAccount, remembered: rememberedHome, remoteAccess: desktopRemoteAccess });
 }
-/** Local Settings, and My Cloud's page in the main window: the Cloud's own channels. */
-const cloudPageSender = (channel, handler) => (event) => {
+/** Which page in the main window asks: this computer's own ("local"), the
+ * person's own Cloud's by the one rule above ("cloud"), or neither (null). */
+const cloudPageAsking = (event) => {
   const contents = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
-  if (senderIsLocal(event) && workspaceSenderAllowed(event, contents, environmentsState, rendererOrigin())) return handler(false);
-  if (cloudPageSenderAllowed(event, { contents, homeOrigin: myCloud(), activeOrigin: activeEnvironment(environmentsState)?.origin })) return handler(true);
-  throw new Error(`${channel} is only available in this app's window`);
+  if (senderIsLocal(event) && workspaceSenderAllowed(event, contents, environmentsState, rendererOrigin())) return "local";
+  if (cloudPageSenderAllowed(event, { contents, homeOrigin: myCloud(), activeOrigin: activeEnvironment(environmentsState)?.origin })) return "cloud";
+  return null;
 };
+/** Local Settings, and the verified Cloud page in the main window: the Cloud's own channels. */
+const cloudPageSender = (channel, handler) => (event) => {
+  const asking = cloudPageAsking(event);
+  if (!asking) throw new Error(`${channel} is only available in this app's window`);
+  return handler(asking === "cloud");
+};
+// This app's updates: this computer's page and the person's own Cloud page
+// (the one rule its Settings → Plan and the microphone use), so someone who
+// stays on My Cloud still sees "Restart to update". Any other server's page
+// gets nothing.
+const updaterPageAllowed = event => cloudPageAsking(event) !== null;
 // The Cloud's setup checklist: "Let your Cloud use this Mac" shows the lending
 // switch, as the menu-bar item's Lending settings… does. Nothing is lent here.
 ipcMain.handle("cloud-lending:open", cloudPageSender("cloud-lending:open", () => openLendingSettings()));
@@ -3414,7 +3426,7 @@ app.whenReady().then(async () => {
   }
   registerCuaIpc();
   androidDevice.registerIpc(ipcMain);
-  registerUpdaterIpc();
+  registerUpdaterIpc({ pageAllowed: updaterPageAllowed });
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on
   // failure — computer use degrades to "unavailable", the rest still works.
@@ -3520,8 +3532,8 @@ app.whenReady().then(async () => {
       return credentials;
     }).finally(syncManagedComposioCredentials);
   }
-  // in-app auto-update (packaged only) — checks GitHub releases, downloads on
-  // the user's click, installs on "Restart to update"
+  // in-app auto-update (packaged only) — checks GitHub releases and downloads
+  // by itself; only "Restart to update", the person's click, installs
   startUpdater();
   refreshApplicationMenu();
   app.on("activate", () => {
