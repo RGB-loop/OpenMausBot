@@ -881,7 +881,7 @@ describe("structured tool execution boundaries", () => {
     expect(f.recorder.events.some((event) => event.type === "runtime.error")).toBe(false);
   });
 
-  it("stops a model that keeps requesting tools after 64 steps, with one next action", async () => {
+  it("stops a model that keeps requesting tools after 64 steps, with one next action that does not repeat the steps that ran", async () => {
     const f = await fixture((_body, response, round) => sse(response, [
       chunk({ tool_calls: [toolCall("audit_write", '{"name":"receipt","value":"done"}', `call_${round}`)] }, "tool_calls"),
     ]));
@@ -894,7 +894,7 @@ describe("structured tool execution boundaries", () => {
     expect(f.requests).toHaveLength(64);
     expect(f.effects()).toHaveLength(64);
     expect(f.recorder.events.filter((event) => event.type === "runtime.error")).toEqual([expect.objectContaining({
-      message: "Stopped after 64 steps without a final answer. Try again with a smaller part of the task.",
+      message: "Stopped after 64 steps without a final answer. The steps so far already ran, so ask only for what's left.",
       terminal: true,
     })]);
   });
@@ -912,7 +912,7 @@ describe("structured tool execution boundaries", () => {
     expect(f.requests).toHaveLength(9);
     expect(f.effects()).toHaveLength(200);
     expect(f.recorder.events.filter((event) => event.type === "runtime.error")).toEqual([expect.objectContaining({
-      message: "Stopped after 200 tool calls without a final answer. Try again with a smaller part of the task.",
+      message: "Stopped after 200 tool calls without a final answer. The steps so far already ran, so ask only for what's left.",
     })]);
   });
 

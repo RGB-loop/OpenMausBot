@@ -128,11 +128,13 @@ class UnsupportedChatToolsError extends Error {}
 /** One turn's safety stops: model steps, and tool calls across all of them.
  * Tool-heavy models (a memory server, a browser) take dozens of steps, and
  * a stopped turn cannot simply be continued — the next turn is rebuilt from
- * the text transcript, which holds none of these tool results. */
+ * the text transcript, which holds none of these tool results. The calls
+ * that ran have taken effect, so the stop asks only for what is left: a
+ * retry of the whole task would repeat them. */
 const MAX_CHAT_ROUNDS = 64;
 const MAX_TURN_TOOL_CALLS = 200;
 const stoppedAfter = (count: string) =>
-  `Stopped after ${count} without a final answer. Try again with a smaller part of the task.`;
+  `Stopped after ${count} without a final answer. The steps so far already ran, so ask only for what's left.`;
 
 const NUDGE_ANNOUNCED_ACTION = "You said what you would do next but called no tool. Do it now with your tools, or reply with your final answer if nothing is left to do.";
 
