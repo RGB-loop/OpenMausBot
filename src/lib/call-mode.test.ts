@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CALL_MODE_KEY, CALL_MODES, callModeHint, liveDisclosure, parseCallMode } from "./call-mode";
 import { t } from "./i18n";
+import { localeChoices, locales } from "@/locales";
 
 describe("call mode", () => {
   afterEach(() => {
@@ -30,6 +31,15 @@ describe("call mode", () => {
     expect(live).not.toContain("your computer");
     expect(liveDisclosure({ cloudHome: true })).toBe(t("call.live.disclosureCloud"));
     expect(liveDisclosure({ cloudHome: false })).toBe(t("call.live.disclosure"));
+  });
+
+  // Where the chat runs changes one sentence, never the language: a pack
+  // translates the Cloud wording only where it translates this computer's.
+  it("writes both disclosures in the same language in every pack", () => {
+    for (const { code } of localeChoices) {
+      const pack = locales[code];
+      expect(Object.hasOwn(pack, "call.live.disclosureCloud"), code).toBe(Object.hasOwn(pack, "call.live.disclosure"));
+    }
   });
 
   it("remembers the choice and survives storage that refuses writes", async () => {
