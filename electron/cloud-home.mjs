@@ -95,6 +95,24 @@ export function rememberedCloudHome(previous, state) {
   return previous?.accountId === accountId ? previous : null;
 }
 
+/** The one rule for "this page is my Cloud": the Cloud page's own channels
+ * (Settings → Plan, its setup checklist) and the microphone for a Live call
+ * both ask it. The machine the sign-in verified, or, while a check is pending
+ * or has failed, the one this same account last verified (rememberedCloudHome).
+ * None when signed out, for another account, or in companion client mode,
+ * where this app has no Cloud of its own.
+ *
+ * @param {{ account: { homeTarget(): { origin: string } | null, state(): { account?: { id: string } } } | null,
+ *   remembered: { accountId: string, origin: string } | null, remoteAccess: unknown }} known
+ * @returns {string | null} */
+export function myCloudOrigin({ account, remembered, remoteAccess }) {
+  if (remoteAccess || !account) return null;
+  const verified = account.homeTarget()?.origin;
+  if (verified) return verified;
+  const accountId = account.state()?.account?.id;
+  return accountId && remembered?.accountId === accountId ? remembered.origin : null;
+}
+
 /** Whether choosing this Server entry means "open my Cloud", which goes
  * through the Cloud's own connection (no pairing code to type). */
 export function isCloudHomeEntry(entry, { homeOrigin = null, remembered = null } = {}) {

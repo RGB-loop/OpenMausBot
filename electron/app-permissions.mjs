@@ -87,20 +87,31 @@ function cloudHomeMicrophoneAllowed(permission, requestingUrlOrOrigin, homeOrigi
  * appPermissionAllowed; the Cloud gets the microphone, and only while it is
  * the page open in the main window.
  *
- * @param {{ rendererOrigin: () => string, mainContents: () => unknown, cloudHomeOrigin: () => string | null }} context
+ * @param {{ rendererOrigin: () => string, mainContents: () => unknown, cloudHomeOrigin: () => string | null,
+ *   cloudHomeRestoring?: () => Promise<unknown> | null }} context
  *   `mainContents`: the main window's webContents, or null; `cloudHomeOrigin`:
- *   the Cloud the sign-in verified, asked on every request so signing out
- *   takes the microphone away at once.
+ *   the person's own Cloud (cloud-home.mjs myCloudOrigin), asked on every
+ *   request so signing out takes the microphone away at once;
+ *   `cloudHomeRestoring`: while the saved Cloud sign-in is still restoring
+ *   (the first seconds after launch), a wait for it, which main caps; null after.
  */
-export function appPermissionHandlers({ rendererOrigin, mainContents, cloudHomeOrigin }) {
-  const allowed = (contents, permission, requesting, details) => {
-    if (appPermissionAllowed(permission, requesting, rendererOrigin(), details)) return true;
-    const main = mainContents();
-    return Boolean(contents) && contents === main && cloudHomeMicrophoneAllowed(permission, requesting, cloudHomeOrigin(), details);
-  };
+export function appPermissionHandlers({ rendererOrigin, mainContents, cloudHomeOrigin, cloudHomeRestoring = () => null }) {
+  // The main window's page asking for the microphone: its Cloud's own ask, if it is the Cloud.
+  const asksAsCloud = (contents, permission, requesting, details) =>
+    Boolean(contents) && contents === mainContents() && cloudHomeMicrophoneAllowed(permission, requesting, requesting, details);
+  const allowed = (contents, permission, requesting, details) =>
+    appPermissionAllowed(permission, requesting, rendererOrigin(), details) ||
+    (asksAsCloud(contents, permission, requesting, details) && cloudHomeMicrophoneAllowed(permission, requesting, cloudHomeOrigin(), details));
   return {
+    // Only a request may wait (Electron answers it through the callback). A
+    // Cloud page that asks before the saved sign-in has restored is decided
+    // once it has, never refused for being early; anything else at once.
     request: (contents, permission, callback, details) => {
-      callback(allowed(contents, permission, details?.requestingUrl ?? contents?.getURL?.() ?? "", details));
+      const requesting = details?.requestingUrl ?? contents?.getURL?.() ?? "";
+      if (allowed(contents, permission, requesting, details)) return callback(true);
+      const restoring = asksAsCloud(contents, permission, requesting, details) ? cloudHomeRestoring() : null;
+      if (!restoring) return callback(false);
+      void Promise.resolve(restoring).catch(() => {}).then(() => callback(allowed(contents, permission, requesting, details)));
     },
     check: (contents, permission, requestingOrigin, details) =>
       allowed(contents, permission, requestingOrigin || contents?.getURL?.() || "", details),
