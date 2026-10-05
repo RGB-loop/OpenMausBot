@@ -30,9 +30,9 @@ public struct StateSnapshot: Codable, Equatable, Sendable {
     /// is a different computer, so its copy is never shown.
     public var serverEnvironmentId: String?
     public var savedAt: Date
-    /// The roster with every transcript stripped off.
-    public var bots: [Bot]
-    public var rooms: [Room]
+    /// The roster, as rows that have no room for a transcript.
+    public var bots: [CachedBot]
+    public var rooms: [CachedRoom]
     /// The latest page of each opened thread, by thread id.
     public var threads: [String: CachedThread]
     public var routines: [Routine]
@@ -58,6 +58,239 @@ public struct StateSnapshot: Codable, Equatable, Sendable {
         public static let standard = Limits(
             messagesPerThread: 50, threads: 100, routineRuns: 100, maxBytes: 5 * 1_024 * 1_024
         )
+    }
+
+    // MARK: Roster rows
+    //
+    // The roster rows below keep the property names, and so the JSON keys,
+    // of the wire types they copy, in the same order. A file the first
+    // schema-1 build wrote — `Bot` and `Room` with their transcripts set to
+    // nil — reads back as these rows unchanged, so the version stays 1.
+
+    /// A bot as the roster keeps it: `Bot` field for field, less the
+    /// record's own transcript. A hydrate leaves a page of messages on each
+    /// record, screenshots and all; the only copy of a transcript the cache
+    /// keeps is the bounded page in `threads`. Spelled out rather than
+    /// reusing the wire type for the same reason as `CachedMessage`: a heavy
+    /// field the wire gains later has to be added here on purpose, so no
+    /// snapshot, however it is made, can carry one to disk. StateSnapshotTests
+    /// fails when `Bot` gains a field this row neither keeps nor leaves out
+    /// by name.
+    public struct CachedBot: Codable, Equatable, Sendable {
+        public var id: String
+        public var threadId: String
+        public var name: String
+        public var title: String
+        public var description: String
+        public var notifications: Bool
+        public var color: String
+        public var avatarUrl: String?
+        public var avatarCrop: AvatarCrop?
+        public var unread: Bool
+        public var modelSelection: ModelSelection
+        public var createdAt: Double
+        public var busy: Bool?
+        public var activity: String?
+        public var waitingOnTeammate: Bool?
+        public var pinned: Bool?
+        public var hidden: Bool?
+        public var section: String?
+        public var chiefOfStaff: Bool?
+        public var approvalMode: String?
+        public var autoApprove: Bool?
+        public var alwaysAllow: [String]?
+        public var computer: String?
+        public var cloudBackend: String?
+        public var speakReplies: Bool?
+        public var voice: String?
+        public var mascotExpression: String?
+        public var mascotBody: String?
+        public var tasks: [CachedTask]?
+        public var projects: [BotProject]?
+        public var activeLeafId: String?
+
+        public init(_ bot: Bot) {
+            id = bot.id
+            threadId = bot.threadId
+            name = bot.name
+            title = bot.title
+            description = bot.description
+            notifications = bot.notifications
+            color = bot.color
+            avatarUrl = bot.avatarUrl
+            avatarCrop = bot.avatarCrop
+            unread = bot.unread
+            modelSelection = bot.modelSelection
+            createdAt = bot.createdAt
+            busy = bot.busy
+            activity = bot.activity
+            waitingOnTeammate = bot.waitingOnTeammate
+            pinned = bot.pinned
+            hidden = bot.hidden
+            section = bot.section
+            chiefOfStaff = bot.chiefOfStaff
+            approvalMode = bot.approvalMode
+            autoApprove = bot.autoApprove
+            alwaysAllow = bot.alwaysAllow
+            computer = bot.computer
+            cloudBackend = bot.cloudBackend
+            speakReplies = bot.speakReplies
+            voice = bot.voice
+            mascotExpression = bot.mascotExpression
+            mascotBody = bot.mascotBody
+            tasks = bot.tasks?.map(CachedTask.init)
+            projects = bot.projects
+            activeLeafId = bot.activeLeafId
+        }
+
+        /// The record as a hydrate would leave it, with no transcript on it.
+        public var bot: Bot {
+            var bot = Bot(
+                id: id, threadId: threadId, name: name, title: title, description: description,
+                notifications: notifications, color: color, unread: unread,
+                modelSelection: modelSelection, createdAt: createdAt
+            )
+            bot.avatarUrl = avatarUrl
+            bot.avatarCrop = avatarCrop
+            bot.busy = busy
+            bot.activity = activity
+            bot.waitingOnTeammate = waitingOnTeammate
+            bot.pinned = pinned
+            bot.hidden = hidden
+            bot.section = section
+            bot.chiefOfStaff = chiefOfStaff
+            bot.approvalMode = approvalMode
+            bot.autoApprove = autoApprove
+            bot.alwaysAllow = alwaysAllow
+            bot.computer = computer
+            bot.cloudBackend = cloudBackend
+            bot.speakReplies = speakReplies
+            bot.voice = voice
+            bot.mascotExpression = mascotExpression
+            bot.mascotBody = mascotBody
+            bot.tasks = tasks?.map(\.task)
+            bot.projects = projects
+            bot.activeLeafId = activeLeafId
+            return bot
+        }
+    }
+
+    /// A channel or DM as the roster keeps it: `Room` field for field, less
+    /// its transcript (see `CachedBot`).
+    public struct CachedRoom: Codable, Equatable, Sendable {
+        public var id: String
+        public var threadId: String
+        public var name: String
+        public var memberIds: [String]
+        public var defaultResponder: GroupResponder
+        public var bulletin: String
+        public var unread: Bool
+        public var createdAt: Double
+        public var dm: Bool?
+        public var section: String?
+        public var busyBotId: String?
+        public var working: Bool?
+        public var tasks: [CachedTask]?
+
+        public init(_ room: Room) {
+            id = room.id
+            threadId = room.threadId
+            name = room.name
+            memberIds = room.memberIds
+            defaultResponder = room.defaultResponder
+            bulletin = room.bulletin
+            unread = room.unread
+            createdAt = room.createdAt
+            dm = room.dm
+            section = room.section
+            busyBotId = room.busyBotId
+            working = room.working
+            tasks = room.tasks?.map(CachedTask.init)
+        }
+
+        /// The record as a hydrate would leave it, with no transcript on it.
+        public var room: Room {
+            var room = Room(
+                id: id, threadId: threadId, name: name, memberIds: memberIds,
+                defaultResponder: defaultResponder, bulletin: bulletin, unread: unread, createdAt: createdAt
+            )
+            room.dm = dm
+            room.section = section
+            room.busyBotId = busyBotId
+            room.working = working
+            room.tasks = tasks?.map(\.task)
+            return room
+        }
+    }
+
+    /// A row of a thread list: `BotTask` field for field, spelled out so a
+    /// field it gains later is kept only on purpose.
+    public struct CachedTask: Codable, Equatable, Sendable {
+        public var threadId: String
+        public var title: String
+        public var createdAt: Double
+        public var modelSelection: ModelSelection?
+        public var busy: Bool?
+        public var activity: String?
+        public var waitingOnTeammate: Bool?
+        public var unread: Bool?
+        public var approvalMode: String?
+        public var autoApprove: Bool?
+        public var alwaysAllow: [String]?
+        public var projectId: String?
+        public var openedBy: ThreadOpener?
+        public var closedBy: ThreadCloser?
+        public var snoozedUntil: Double?
+        public var archivedAt: Double?
+        public var routineRunId: String?
+        public var pinned: Bool?
+        public var updatedAt: Double?
+
+        public init(_ task: BotTask) {
+            threadId = task.threadId
+            title = task.title
+            createdAt = task.createdAt
+            modelSelection = task.modelSelection
+            busy = task.busy
+            activity = task.activity
+            waitingOnTeammate = task.waitingOnTeammate
+            unread = task.unread
+            approvalMode = task.approvalMode
+            autoApprove = task.autoApprove
+            alwaysAllow = task.alwaysAllow
+            projectId = task.projectId
+            openedBy = task.openedBy
+            closedBy = task.closedBy
+            snoozedUntil = task.snoozedUntil
+            archivedAt = task.archivedAt
+            routineRunId = task.routineRunId
+            pinned = task.pinned
+            updatedAt = task.updatedAt
+        }
+
+        public var task: BotTask {
+            var task = BotTask(threadId: threadId, title: title, createdAt: createdAt)
+            task.modelSelection = modelSelection
+            task.busy = busy
+            task.activity = activity
+            task.waitingOnTeammate = waitingOnTeammate
+            task.unread = unread
+            task.approvalMode = approvalMode
+            task.autoApprove = autoApprove
+            task.alwaysAllow = alwaysAllow
+            task.projectId = projectId
+            task.openedBy = openedBy
+            task.closedBy = closedBy
+            task.snoozedUntil = snoozedUntil
+            task.archivedAt = archivedAt
+            task.routineRunId = routineRunId
+            task.pinned = pinned
+            task.updatedAt = updatedAt
+            return task
+        }
+
+        /// `BotTask.listStamp`: the time the thread list sorts by.
+        var listStamp: Double { updatedAt ?? createdAt }
     }
 
     /// One opened thread as it last looked: its active branch, newest last.
@@ -359,19 +592,9 @@ extension CompanionState {
             serverEnvironmentId: serverEnvironmentId,
             savedAt: savedAt,
             // Transcripts live in `threads`, one bounded page each; the copy
-            // a hydrate leaves on the record would be a second, unbounded one.
-            bots: bots.map { bot in
-                var bot = bot
-                bot.messages = nil
-                bot.hasMore = nil
-                return bot
-            },
-            rooms: rooms.map { room in
-                var room = room
-                room.messages = nil
-                room.hasMore = nil
-                return room
-            },
+            // a hydrate leaves on the record has no field to land in.
+            bots: bots.map(StateSnapshot.CachedBot.init),
+            rooms: rooms.map(StateSnapshot.CachedRoom.init),
             threads: [:],
             routines: routines,
             routineRuns: StateSnapshot.recentRuns(routineRuns, limit: limits.routineRuns)
@@ -396,8 +619,8 @@ extension CompanionState {
     /// replaces it.
     public init(snapshot: StateSnapshot) {
         self.init()
-        bots = snapshot.bots
-        rooms = snapshot.rooms
+        bots = snapshot.bots.map(\.bot)
+        rooms = snapshot.rooms.map(\.room)
         for bot in snapshot.bots {
             messages[bot.threadId] = []
             activeLeafIds[bot.threadId] = bot.activeLeafId

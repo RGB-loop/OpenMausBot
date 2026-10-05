@@ -347,6 +347,70 @@ final class StateSnapshotTests: XCTestCase {
         XCTAssertTrue(rebuilt.rooms.allSatisfy { $0.messages == nil && $0.hasMore == nil })
     }
 
+    // MARK: - Roster rows
+
+    func testEveryRosterFieldSurvivesExceptTheRecordsOwnTranscript() {
+        let task = fullTask()
+        let bot = fullBot()
+        let room = fullRoom()
+        // Every field is set, so the round trips below hold each one: a
+        // field copied in one direction and not the other fails here.
+        XCTAssertEqual(unsetFields(task), [], "Set it in fullTask().")
+        XCTAssertEqual(unsetFields(bot), [], "Set it in fullBot().")
+        XCTAssertEqual(unsetFields(room), [], "Set it in fullRoom().")
+
+        XCTAssertEqual(StateSnapshot.CachedTask(task).task, task)
+        XCTAssertEqual(StateSnapshot.CachedBot(bot).bot, withoutTranscript(bot))
+        XCTAssertEqual(StateSnapshot.CachedRoom(room).room, withoutTranscript(room))
+    }
+
+    func testAFieldTheWireGainsIsKeptOrLeftOutOnPurpose() {
+        // Each cached type lists every field of its wire type but these. A
+        // new wire field fails here until it is added to the cached type or,
+        // if it is heavy, secret or live, to this list.
+        var screen = message("screen", at: 1, role: .bot, kind: .screen)
+        screen.png = "cGl4ZWxz"
+        let pairs: [(name: String, wire: Any, cached: Any, leftOut: Set<String>)] = [
+            ("Message", screen, StateSnapshot.CachedMessage(screen), ["png"]),
+            ("Bot", fullBot(), StateSnapshot.CachedBot(fullBot()), ["messages", "hasMore"]),
+            ("Room", fullRoom(), StateSnapshot.CachedRoom(fullRoom()), ["messages", "hasMore"]),
+            ("BotTask", fullTask(), StateSnapshot.CachedTask(fullTask()), []),
+        ]
+        for pair in pairs {
+            let wire = fieldNames(pair.wire)
+            XCTAssertEqual(wire.subtracting(pair.leftOut), fieldNames(pair.cached), pair.name)
+            // An entry for a field the wire no longer has is stale, not a decision.
+            XCTAssertTrue(pair.leftOut.isSubset(of: wire), "\(pair.name): \(pair.leftOut.subtracting(wire))")
+        }
+    }
+
+    func testTheRosterRowsKeepTheKeysOfTheFirstSchemaOneFiles() throws {
+        // What the first schema-1 build wrote: the wire records themselves,
+        // their transcripts set to nil.
+        let bot = fullBot()
+        let room = fullRoom()
+        let thread = StateSnapshot.CachedThread(messages: [.init(message("m1", at: 1))], hasMore: false, activeLeafId: "m1")
+        let old = try StateSnapshot.makeEncoder().encode(WireRosterFile(
+            schemaVersion: StateSnapshot.currentSchemaVersion, connectionId: "computer-1",
+            serverEnvironmentId: "env-1", savedAt: savedAt,
+            bots: [withoutTranscript(bot)], rooms: [withoutTranscript(room)],
+            threads: ["main": thread], routines: [routine("daily")], routineRuns: []
+        ))
+        let current = StateSnapshot(
+            schemaVersion: StateSnapshot.currentSchemaVersion, connectionId: "computer-1",
+            serverEnvironmentId: "env-1", savedAt: savedAt,
+            bots: [.init(bot)], rooms: [.init(room)],
+            threads: ["main": thread], routines: [routine("daily")], routineRuns: []
+        )
+
+        // An old file loads as the rows this build would have written…
+        XCTAssertEqual(try StateSnapshot.decoded(from: old), current)
+        // …and a new file is the same JSON, key for key, so no version bump.
+        let oldJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: old) as? NSDictionary)
+        let newJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: current.encoded()) as? NSDictionary)
+        XCTAssertEqual(newJSON, oldJSON)
+    }
+
     // MARK: - Cached, then live
 
     func testACachedStateIsNeverWrittenBackAsANewSync() throws {
@@ -450,4 +514,130 @@ final class StateSnapshotTests: XCTestCase {
             scheduledFor: scheduledFor, status: "completed", manual: false, createdAt: scheduledFor
         )
     }
+
+    // MARK: Roster fixtures
+
+    /// The names of every stored property of `value`'s type.
+    ///
+    /// Read with Mirror rather than off the Codable keys on purpose. An
+    /// encoder writes nothing for a nil optional, so keys read off an
+    /// encoded value list only the fields the fixture happens to set — and a
+    /// field the wire gains is almost always a new optional that an older
+    /// fixture leaves nil, the one case the guard exists to catch. Mirror
+    /// lists every stored property whatever its value, so a new field shows
+    /// up the day it is declared. The wire types use synthesized Codable, so
+    /// a property's name is also its key; the on-disk side is held by
+    /// `testTheRosterRowsKeepTheKeysOfTheFirstSchemaOneFiles`.
+    private func fieldNames(_ value: Any) -> Set<String> {
+        Set(Mirror(reflecting: value).children.compactMap(\.label))
+    }
+
+    /// The stored properties of `value` that are nil.
+    private func unsetFields(_ value: Any) -> [String] {
+        Mirror(reflecting: value).children.compactMap { child in
+            let inner = Mirror(reflecting: child.value)
+            return inner.displayStyle == .optional && inner.children.isEmpty ? child.label : nil
+        }
+    }
+
+    private func withoutTranscript(_ bot: Bot) -> Bot {
+        var bot = bot
+        bot.messages = nil
+        bot.hasMore = nil
+        return bot
+    }
+
+    private func withoutTranscript(_ room: Room) -> Room {
+        var room = room
+        room.messages = nil
+        room.hasMore = nil
+        return room
+    }
+
+    private func recordShot(_ id: String) -> Message {
+        var shot = message(id, at: 1, role: .bot, kind: .screen)
+        shot.png = Data("RECORD-PIXELS".utf8).base64EncodedString()
+        return shot
+    }
+
+    /// A thread row with every field set.
+    private func fullTask() -> BotTask {
+        var task = BotTask(threadId: "t1", title: "Flights", createdAt: 1)
+        task.modelSelection = ModelSelection(instanceId: "claude", model: "opus", effort: "high")
+        task.busy = true
+        task.activity = "working"
+        task.waitingOnTeammate = true
+        task.unread = true
+        task.approvalMode = "custom"
+        task.autoApprove = false
+        task.alwaysAllow = ["Bash"]
+        task.projectId = "p1"
+        task.openedBy = ThreadOpener(botId: "echo", name: "Echo", delegationId: "d1", at: 2)
+        task.closedBy = ThreadCloser(botId: "echo", name: "Echo", at: 3)
+        task.snoozedUntil = 0
+        task.archivedAt = 0
+        task.routineRunId = "run-1"
+        task.pinned = true
+        task.updatedAt = 4
+        return task
+    }
+
+    /// A bot record with every field set, its transcript included.
+    private func fullBot() -> Bot {
+        var bot = self.bot("scout", threadId: "t1", tasks: [fullTask()])
+        bot.avatarUrl = "/api/attachments/scout.png"
+        bot.avatarCrop = .circle
+        bot.busy = true
+        bot.activity = "working"
+        bot.waitingOnTeammate = false
+        bot.pinned = true
+        bot.hidden = false
+        bot.section = "Travel"
+        bot.chiefOfStaff = true
+        bot.approvalMode = "ask"
+        bot.autoApprove = false
+        bot.alwaysAllow = ["Read"]
+        bot.computer = "maus"
+        bot.cloudBackend = "vps"
+        bot.speakReplies = true
+        bot.voice = "ash"
+        bot.mascotExpression = "happy"
+        bot.mascotBody = "cursor"
+        bot.projects = [BotProject(id: "p1", name: "Trips", emoji: "🧳")]
+        bot.messages = [recordShot("bot-shot")]
+        bot.activeLeafId = "a-2"
+        bot.hasMore = true
+        return bot
+    }
+
+    /// A room record with every field set, its transcript included.
+    private func fullRoom() -> Room {
+        var room = Room(
+            id: "team", threadId: "team-main", name: "Team", memberIds: ["scout", "echo"],
+            defaultResponder: GroupResponder(kind: "bot", botId: "scout"), bulletin: "Ship Friday",
+            unread: true, createdAt: 5
+        )
+        room.dm = false
+        room.section = "Work"
+        room.busyBotId = "scout"
+        room.working = true
+        room.tasks = [fullTask()]
+        room.messages = [recordShot("room-shot")]
+        room.hasMore = false
+        return room
+    }
+}
+
+/// The file the first schema-1 build wrote, before the roster had rows of
+/// its own: `StateSnapshot` with the wire records in place of the rows.
+private struct WireRosterFile: Encodable {
+    var schemaVersion: Int
+    var connectionId: String
+    var serverEnvironmentId: String?
+    var savedAt: Date
+    var bots: [Bot]
+    var rooms: [Room]
+    var threads: [String: StateSnapshot.CachedThread]
+    var routines: [Routine]
+    var routineRuns: [RoutineRun]
 }

@@ -74,6 +74,46 @@ final class SnapshotStoreTests: XCTestCase {
         XCTAssertEqual(reloaded?.savedAt, Self.savedAt)
     }
 
+    func testASnapshotMadeByHandStillCarriesNoRecordTranscriptToDisk() async throws {
+        let store = SnapshotStore(directory: directory)
+        let pixels = Data(String(repeating: "RECORD-PIXELS-", count: 40).utf8).base64EncodedString()
+        func shot(_ id: String) -> Message {
+            var message = Message(id: id, role: .bot, kind: .screen, at: 1)
+            message.png = pixels
+            return message
+        }
+        // A hydrated roster: every record still holds its own page of messages.
+        var scout = Self.bot
+        scout.messages = [shot("bot-shot")]
+        scout.hasMore = true
+        var room = Room(
+            id: "team", threadId: "team-main", name: "Team", memberIds: ["scout"],
+            defaultResponder: GroupResponder(kind: "all"), bulletin: "", unread: false, createdAt: 0
+        )
+        room.messages = [shot("room-shot")]
+        room.hasMore = true
+
+        // The only way onto a snapshot is the roster row, which has no field for them.
+        var made = snapshot("computer-1")
+        made.bots = [.init(scout)]
+        made.rooms = [.init(room)]
+        store.save(made)
+        await store.flush()
+
+        let data = try Data(contentsOf: store.fileURL(forConnection: "computer-1"))
+        let text = String(decoding: data, as: UTF8.self)
+        for needle in [pixels, "bot-shot", "room-shot"] {
+            XCTAssertFalse(text.contains(needle), "found \(needle)")
+        }
+        let file = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let rows = try XCTUnwrap(file["bots"] as? [[String: Any]]) + XCTUnwrap(file["rooms"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 2)
+        for row in rows {
+            XCTAssertNil(row["messages"], "\(row)")
+            XCTAssertNil(row["hasMore"], "\(row)")
+        }
+    }
+
     // MARK: - Refusing a file
 
     func testASchemaVersionMismatchIsRefusedAndRemoved() async throws {
@@ -252,7 +292,7 @@ final class SnapshotStoreTests: XCTestCase {
             connectionId: connectionId,
             serverEnvironmentId: environment,
             savedAt: Self.savedAt.addingTimeInterval(seconds),
-            bots: [Self.bot],
+            bots: [.init(Self.bot)],
             rooms: [],
             threads: ["scout-main": .init(messages: [.init(message)], hasMore: false, activeLeafId: "m1")],
             routines: [],
