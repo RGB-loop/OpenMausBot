@@ -2262,6 +2262,38 @@ class Session(
         }
     }
 
+    // In-chat connection cards: a bot paused on "Connect to GitHub". These
+    // throw rather than set actionError — the card says what went wrong in
+    // place, as desktop's does. See ConnectorRequest.kt.
+
+    /** The sign-in page for one card, as an https link. */
+    suspend fun authorizeConnectorRequest(chat: Chat, message: Message): URI {
+        val (activeClient, botId) = connectorRequestCall(chat, message)
+        return activeClient.authorizeConnectorRequest(botId, message.id, chat.threadId)
+    }
+
+    /** Ask whether sign-in finished; the answer also reaches the card as a patch. */
+    suspend fun checkConnectorRequest(chat: Chat, message: Message): Boolean {
+        val (activeClient, botId) = connectorRequestCall(chat, message)
+        return activeClient.connectorRequestStatus(botId, message.id, chat.threadId).connected
+    }
+
+    suspend fun resumeConnectorRequest(chat: Chat, message: Message) {
+        val (activeClient, botId) = connectorRequestCall(chat, message)
+        activeClient.resumeConnectorRequest(botId, message.id, chat.threadId)
+    }
+
+    suspend fun dismissConnectorRequest(chat: Chat, message: Message) {
+        val (activeClient, botId) = connectorRequestCall(chat, message)
+        activeClient.dismissConnectorRequest(botId, message.id, chat.threadId)
+    }
+
+    private fun connectorRequestCall(chat: Chat, message: Message): Pair<CompanionClient, String> {
+        val activeClient = client ?: throw ConnectorRequestNoComputer()
+        val botId = chat.connectorOwner(message) ?: throw APIError.BadUrl
+        return activeClient to botId
+    }
+
     suspend fun loadRoutines(): RoutinesResponse {
         val activeClient = client ?: return RoutinesResponse(emptyList(), emptyList())
         return try {

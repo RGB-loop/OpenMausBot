@@ -156,6 +156,7 @@ internal fun previewText(message: Message): String = when (message.kind) {
     Message.Kind.DIGEST -> ""
     Message.Kind.COMPACTION -> message.compaction?.chipText ?: message.text.orEmpty()
     Message.Kind.ROUTINE_RUN -> message.routineRunPreview
+    Message.Kind.CONNECTOR -> message.connectorPreviewLine
     Message.Kind.UNKNOWN -> message.text.orEmpty()
 }
 
@@ -274,6 +275,9 @@ fun transcriptRows(messages: List<Message>, detail: ActivityDetail): List<Transc
             // Match iOS: a receipt with no recorded work should not leave a
             // chip or an empty row after every ordinary conversational reply.
             if (message.kind == Message.Kind.DIGEST && TurnDigest.parse(message.text).sections.isEmpty()) return@forEach
+            // A connection request the person set aside ("Not now") is not
+            // drawn, as on desktop; the rows around it close up.
+            if (message.kind == Message.Kind.CONNECTOR && message.connector?.dismissed == true) return@forEach
             val turn = folds[message.id]
             if (turn != null) {
                 flush()

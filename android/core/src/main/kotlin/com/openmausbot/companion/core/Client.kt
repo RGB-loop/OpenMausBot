@@ -714,6 +714,66 @@ class CompanionClient(
         return url
     }
 
+    /**
+     * In-chat connection cards (ConnectorRequest.kt): the sign-in page for one
+     * card. The computer marks the card authorizing as it answers and never
+     * stores the link. Only an https link with a host is returned.
+     */
+    suspend fun authorizeConnectorRequest(botId: String, messageId: String, threadId: String): URI {
+        val response = try {
+            CompanionJson.decodeFromString<ConnectorAuthorizationResponse>(
+                connectorRequest(ConnectorRequestAction.AUTHORIZE, botId, messageId, threadId),
+            )
+        } catch (_: SerializationException) {
+            throw APIError.BadUrl
+        }
+        val url = runCatching { URI(response.url) }.getOrNull()
+        if (url == null || !url.scheme.equals("https", ignoreCase = true) || url.host.isNullOrEmpty()) {
+            throw APIError.BadUrl
+        }
+        return url
+    }
+
+    /**
+     * Whether sign-in finished. This call is also what tells the computer: it
+     * flips the card to connected and, once every app in the request is
+     * connected, resumes the bot's turn.
+     */
+    suspend fun connectorRequestStatus(botId: String, messageId: String, threadId: String): ConnectorRequestStatus =
+        try {
+            CompanionJson.decodeFromString(connectorRequest(ConnectorRequestAction.STATUS, botId, messageId, threadId))
+        } catch (error: SerializationException) {
+            throw APIError.Transport("The computer sent something this app couldn't read.", error)
+        }
+
+    /** Start the paused task again once everything it asked for is connected. */
+    suspend fun resumeConnectorRequest(botId: String, messageId: String, threadId: String) {
+        connectorRequest(ConnectorRequestAction.RESUME, botId, messageId, threadId)
+    }
+
+    /** "Not now": set the request aside. The bot stays paused. */
+    suspend fun dismissConnectorRequest(botId: String, messageId: String, threadId: String) {
+        connectorRequest(ConnectorRequestAction.DISMISS, botId, messageId, threadId)
+    }
+
+    private suspend fun connectorRequest(
+        action: ConnectorRequestAction,
+        botId: String,
+        messageId: String,
+        threadId: String,
+    ): String {
+        val path = action.path(botId, messageId) ?: throw APIError.BadUrl
+        if (threadId.isEmpty()) throw APIError.BadUrl
+        val request = if (action.method == "GET") {
+            makeRequest("GET", path, query = listOf("threadId" to threadId))
+        } else {
+            makeRequest("POST", path, body = jsonBody("threadId" to threadId))
+        }
+        val raw = perform(request)
+        check(raw)
+        return raw.data.toString(Charsets.UTF_8)
+    }
+
     suspend fun toggleReaction(threadId: String, messageId: String, emoji: String): Message =
         send<MessageResponse>(makeRequest(
             "POST",
