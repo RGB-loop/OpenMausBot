@@ -10,6 +10,7 @@
  * from the person's seat they are the same "cloud computer" panel. */
 import type { Surface } from "../shared/wire.ts";
 import { canWorkOnCloud, type CloudEngine } from "../shared/cloud-computer.ts";
+import { canUseMcpServer } from "../shared/tool-scope.ts";
 import { placeRowText, type PlaceRow, type PlaceSource } from "../shared/place-view.ts";
 export type { Surface, PlaceSource };
 
@@ -111,16 +112,20 @@ export function resolveSurface(input: {
  * null when it can (shared/cloud-computer.ts holds the rule). Checked before
  * anything is provisioned, so a turn that cannot run never creates or wakes
  * a machine. */
-export function cloudPlaceRefusal(
-  engine: CloudEngine & { name: string },
-  backend: "box" | "vps",
-  source: PlaceSource,
-  bot: string,
-): PlaceUnavailableError | null {
-  if (canWorkOnCloud(engine, backend)) return null;
-  return placeUnavailable("cloud", engine.driverKind === "boxAgent"
-    ? { state: "place-failed", params: { bot, cause: "The Computer engine runs on Boat and can't use a self-hosted VPS." }, source }
-    : { state: "cc-cannot", params: { bot, model: engine.name }, source });
+export function cloudPlaceRefusal(engine: CloudEngine & { name: string }, source: PlaceSource, bot: string): PlaceUnavailableError | null {
+  if (canWorkOnCloud(engine)) return null;
+  return placeUnavailable("cloud", { state: "cc-cannot", params: { bot, model: engine.name }, source });
+}
+
+/** Why this bot's Tool selection keeps it off a computer, as a failed place,
+ * or null: one line and the one setting that changes it, the same whatever
+ * chose the place (a turn's refusal and select_computer's reason alike).
+ * Engines reach every desktop through the "computer" MCP server, so a
+ * selection without it has nothing to work with there. Checked with the
+ * engine rule, before anything is created or woken. */
+export function computerToolsRefusal(toolScope: unknown, source: PlaceSource, bot: string): PlaceUnavailableError | null {
+  if (canUseMcpServer(toolScope, "computer")) return null;
+  return placeUnavailable("cloud", { state: "cc-tools-off", params: { bot }, source });
 }
 
 /** A place the turn was told to use could not be used. Its message is the

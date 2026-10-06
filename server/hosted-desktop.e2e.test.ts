@@ -70,8 +70,6 @@ it("keeps the bot's own engine on the cloud computer, and a failed place never b
       res.setHeader("content-type", "text/event-stream");
       return res.end(`data: ${JSON.stringify({ choices: [{ delta: { content: "Fixture reply" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
     }
-    if (path === "/api/provider-models") return res.end(JSON.stringify({ "claude-code": { models: [{ id: "claude-fable-5" }] } }));
-    if (path === "/me") return res.end(JSON.stringify({ ok: true }));
     // Boat's own runner: the one thing a Hosted desktop turn must never reach.
     if (path.endsWith("/prompt")) {
       prompts++;
@@ -100,7 +98,9 @@ it("keeps the bot's own engine on the cloud computer, and a failed place never b
   if (!address || typeof address === "string") throw new Error("fixture failed to bind");
   const origin = `http://127.0.0.1:${address.port}`;
   const gate = join(await import("node:os").then(os => os.tmpdir()), `omb-hosted-desktop-gate-${process.pid}-${Date.now()}`);
-  const fixture = await launchVerificationServer({ FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_SLOW_FINISH_GATE: gate },
+  // Each turn on the cloud computer uses it, as a real model would: its first
+  // computer call is what creates or wakes the Boat.
+  const fixture = await launchVerificationServer({ FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_SLOW_FINISH_GATE: gate, FAKE_CLAUDE_USES_CLOUD_COMPUTER: "1" },
     undefined, undefined, undefined, undefined, undefined, [], origin).catch(async error => {
     upstream.closeAllConnections(); await new Promise<void>(resolve => upstream.close(() => resolve())); throw error;
   });
@@ -114,7 +114,9 @@ it("keeps the bot's own engine on the cloud computer, and a failed place never b
     return result.body;
   };
   const control = (args: string[]) => runControlOmb([...args, "--url", fixture.info.url]) as Promise<any>;
+  // The rows a person reads; a turn's digest comes after them.
   const lastRows = async (thread: string) => (await apiOk("GET", `/api/threads/${thread}/messages?limit=30`)).messages
+    .filter((message: any) => message.kind !== "digest")
     .map((message: any) => message.kind === "activity" ? String(message.tool?.name) : `${message.role}:${message.kind}`);
   const task = async (botId: string, threadId: string) =>
     (await apiOk("GET", "/api/bots")).bots.find((bot: any) => bot.id === botId).tasks.find((entry: any) => entry.threadId === threadId);
@@ -226,7 +228,8 @@ it("keeps the bot's own engine on the cloud computer, and a failed place never b
     await control(["send", "--bot", fenced.id, "--task", fenced.activeTaskId, "--text", "Use the hosted desktop."]);
     expect((await control(["wait", "--bot", fenced.id, "--task", fenced.activeTaskId, "--timeout", "30"])).status).toBe("failed");
     expect((await lastRows(fenced.activeTaskId)).at(-1)).toBe("error: Fenced fixture's cloud computer didn't start. Try again.");
-    const failedRow = (await apiOk("GET", `/api/threads/${fenced.activeTaskId}/messages?limit=30`)).messages.at(-1);
+    const failedRow = (await apiOk("GET", `/api/threads/${fenced.activeTaskId}/messages?limit=30`)).messages
+      .filter((message: any) => message.kind !== "digest").at(-1);
     expect(failedRow.tool.place).toEqual({ state: "cc-no-start", params: { bot: "Fenced fixture" }, source: "works-on" });
     await control(["send", "--bot", fenced.id, "--task", fenced.activeTaskId, "--text", "Try the hosted desktop again."]);
     expect((await control(["wait", "--bot", fenced.id, "--task", fenced.activeTaskId, "--timeout", "30"])).status).toBe("failed");

@@ -1497,7 +1497,6 @@
   "computer.day.sat": "Сб",
   "computer.err.localEngine": "Ця модель не може керувати цим комп'ютером. Оберіть Claude або ACP-провайдера моделей.",
   "computer.err.vmEngine": "Ця модель не може користуватися локальною ВМ. Оберіть Claude або ACP-провайдера моделей.",
-  "computer.err.vpsEngine": "Ця модель не може користуватися самохостним VPS. Оберіть Claude або ACP-провайдера моделей, або переключіть хмарний бекенд на Boat.",
   "computer.err.vmNotReady": "Локальна ВМ не готова",
   "computer.err.vmOpenSettings": "{problem}. Відкрийте Налаштування → Локальна ВМ.",
   "computer.err.vpsAlias": "Додайте SSH-аліас VPS у Налаштування → API-ключі.",

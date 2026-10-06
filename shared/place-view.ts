@@ -102,8 +102,6 @@ export interface PlaceFacts {
     browser: boolean;
     /** Not waiting on a sign-in (src/lib/failed-turn.ts engineSignedOut). */
     signedIn: boolean;
-    /** The Computer engine, whose whole turn runs on its Boat. */
-    boatAgent?: boolean;
   };
   /** The bot's tool selection includes the computer. */
   toolsAllowComputer: boolean;
@@ -322,7 +320,7 @@ export function placeState(facts: PlaceFacts): { state: PlaceState; params: Plac
       : { state: "auto", params: { bot } };
   }
   if (facts.place === "browser") {
-    if (!facts.engine.browser || facts.engine.boatAgent) return { state: "browser-cannot", params: { bot, model } };
+    if (!facts.engine.browser) return { state: "browser-cannot", params: { bot, model } };
     return facts.browserOn ? { state: "browser", params: { bot } } : { state: "browser-off", params: { bot } };
   }
   if (facts.place === "local") {
@@ -331,12 +329,12 @@ export function placeState(facts: PlaceFacts): { state: PlaceState; params: Plac
       : { state: "local", params: { bot } };
   }
   if (facts.place === "vm") {
-    return facts.engine.computer && !facts.engine.boatAgent ? { state: "vm", params: { bot } } : { state: "vm-cannot", params: { bot, model } };
+    return facts.engine.computer ? { state: "vm", params: { bot } } : { state: "vm-cannot", params: { bot, model } };
   }
-  // The cloud computer: on the person's own server (VPS) or on Boat.
+  // The cloud computer: on the person's own server (VPS) or on Boat, one
+  // rule for both (shared/cloud-computer.ts).
   const vps = facts.backend === "vps";
-  const canUse = vps ? facts.engine.computer && !facts.engine.boatAgent : facts.engine.computer || facts.engine.boatAgent === true;
-  if (!canUse) return { state: "cc-cannot", params: { bot, model } };
+  if (!facts.engine.computer) return { state: "cc-cannot", params: { bot, model } };
   if (!facts.toolsAllowComputer) return { state: "cc-tools-off", params: { bot } };
   if (!facts.engine.signedIn) return { state: "cc-sign-in", params: { bot, engine: facts.engine.name } };
   if (vps) return { state: "vps", params: { bot } };
@@ -479,7 +477,7 @@ const PASSING_WORDS = [
 ];
 const NO_START_WORDS = [
   /did not become ready/i, /desktop link could not be created/i, /could not be created or reached/i, /did not wake/i,
-  /no computer yet/i,
+  /no computer yet/i, /didn't start in time/i,
 ];
 const CLEARING_WORDS = [/is being deleted/i, /previous cloud computer deletion/i, /deletion was not confirmed/i, /deletion is still being reconciled/i];
 

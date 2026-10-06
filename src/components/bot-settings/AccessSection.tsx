@@ -518,7 +518,6 @@ export function AccessSection({
   const { state, dispatch } = useStore();
   const {
     patch,
-    canUseVps,
     canUseConnectedApps,
     connectedAppsConfigured,
     connectedAppsEnabled,
@@ -583,7 +582,6 @@ export function AccessSection({
             )}
             <CloudBackendPicker
               value={bot.cloudBackend ?? "box"}
-              vpsSupported={canUseVps}
               onChange={(backend) => patch({ cloudBackend: backend })}
             />
             {!bot.computer && bot.cloudBackend === "vps" && (

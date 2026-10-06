@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   cloudPlaceRefusal,
+  computerToolsRefusal,
   parseSurface,
   placeUnavailable,
   resolveSurface,
@@ -213,23 +214,43 @@ it("does not instruct use of a selected browser when no surface is mounted", () 
 });
 
 describe("cloudPlaceRefusal", () => {
-  const engine = (patch: { driverKind?: string; computerMcp?: boolean }) => ({ name: "Llama", ...patch });
+  const engine = (patch: { computerMcp?: boolean }) => ({ name: "Llama", ...patch });
 
-  it("lets every engine with computer tools use either cloud backend, and the Computer engine only Boat", () => {
-    expect(cloudPlaceRefusal(engine({ driverKind: "claude", computerMcp: true }), "box", "works-on", "Scout")).toBeNull();
-    expect(cloudPlaceRefusal(engine({ driverKind: "claude", computerMcp: true }), "vps", "works-on", "Scout")).toBeNull();
-    expect(cloudPlaceRefusal(engine({ driverKind: "boxAgent" }), "box", "works-on", "Scout")).toBeNull();
-    expect(cloudPlaceRefusal(engine({ driverKind: "boxAgent" }), "vps", "works-on", "Scout")?.message)
-      .toMatch(/^The Computer engine runs on Boat and can't use a self-hosted VPS\./);
+  it("lets every engine with computer tools use the cloud computer, whatever it runs on", () => {
+    expect(cloudPlaceRefusal(engine({ computerMcp: true }), "works-on", "Scout")).toBeNull();
+    expect(cloudPlaceRefusal(engine({ computerMcp: true }), "routine", "Scout")).toBeNull();
   });
 
   it("refuses an engine without computer tools as one state, its fix the same whatever the source", () => {
-    const refused = cloudPlaceRefusal(engine({ driverKind: "openaiCompat", computerMcp: false }), "box", "works-on", "Scout")!;
+    const refused = cloudPlaceRefusal(engine({ computerMcp: false }), "works-on", "Scout")!;
     expect(refused).toMatchObject({ name: "PlaceUnavailableError", place: "cloud", row: { state: "cc-cannot", params: { bot: "Scout", model: "Llama" }, source: "works-on" } });
     expect(refused.message).toBe("Llama can't use a computer. Choose a model that can, such as Claude or ChatGPT. Choose another model in Scout's settings.");
     for (const source of ["pin", "routine", "room"] as const) {
-      expect(cloudPlaceRefusal(engine({}), "box", source, "Scout")?.message).toBe(refused.message);
+      expect(cloudPlaceRefusal(engine({}), source, "Scout")?.message).toBe(refused.message);
     }
+  });
+});
+
+describe("computerToolsRefusal", () => {
+  it("refuses a Tool selection without the computer with one action: the setting that changes it", () => {
+    const refused = computerToolsRefusal({ deny: ["mcp:computer:*"] }, "works-on", "Scout")!;
+    expect(refused).toMatchObject({ name: "PlaceUnavailableError", place: "cloud", row: { state: "cc-tools-off", params: { bot: "Scout" }, source: "works-on" } });
+    const line = "What Scout can use doesn't include a computer. Change what Scout can use in its settings.";
+    expect(refused.message).toBe(line);
+    // The same one action whatever chose the place: never a second one, and
+    // never "Set Works on to Auto".
+    for (const source of ["pin", "routine", "room"] as const) {
+      expect(computerToolsRefusal({ allow: ["native:*"] }, source, "Scout")?.message).toBe(line);
+    }
+    // An Auto-recorded pin is cleared by the dispatch, and the line says so.
+    expect(computerToolsRefusal({ allow: ["native:*"] }, "auto-pin", "Scout")?.message)
+      .toBe("What Scout can use doesn't include a computer. This conversation is back on Auto. Change what Scout can use in its settings.");
+  });
+
+  it("lets every selection that keeps a computer tool through", () => {
+    expect(computerToolsRefusal(undefined, "works-on", "Scout")).toBeNull();
+    expect(computerToolsRefusal({ allow: ["native:*", "mcp:computer:screenshot"] }, "works-on", "Scout")).toBeNull();
+    expect(computerToolsRefusal({ deny: ["mcp:computer:exec"] }, "works-on", "Scout")).toBeNull();
   });
 });
 

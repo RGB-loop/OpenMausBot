@@ -45,7 +45,6 @@ function engineFacts(instance: InstanceInfo | undefined, model: string | undefin
     computer: instance?.capabilities?.computerMcp === true,
     browser: instance?.capabilities?.browserMcp === true,
     signedIn: !engineSignedOut(instance),
-    boatAgent: instance?.driverKind === "boxAgent",
   };
 }
 
