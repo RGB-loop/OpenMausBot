@@ -83,7 +83,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -205,7 +204,7 @@ fun MessageRow(
 
             // A request the person spoke on a Live call; the harness labels it.
             if (mine && message.via == "call") {
-                Text(text = "via call", fontSize = 12.sp, color = secondaryTint)
+                Text(text = stringResource(R.string.mobile_message_via_call), fontSize = 12.sp, color = secondaryTint)
             }
 
             message.reactions?.takeIf { it.isNotEmpty() }?.let { reactions ->
@@ -897,7 +896,7 @@ private fun VoiceNoteAttachmentView(
 
     if (clip is VoiceNoteClipState.Failed) {
         AttachmentLoadFailure(
-            label = "Voice note unavailable",
+            label = stringResource(R.string.mobile_voice_note_unavailable),
             foreground = foreground,
             onRetry = { clip = VoiceNoteClipState.NotLoaded },
         )
@@ -940,9 +939,9 @@ private fun VoiceNoteAttachmentView(
                             else -> loadAndPlay()
                         }
                     }
-                    .semantics {
-                        contentDescription = if (playing) "Pause voice note" else "Play voice note"
-                    },
+                    .localizedSemantics(contentDescription = {
+                        stringResource(if (playing) R.string.mobile_voice_note_pause else R.string.mobile_voice_note_play)
+                    }),
                 contentAlignment = Alignment.Center,
             ) {
                 when {
@@ -976,7 +975,7 @@ private fun VoiceNoteAttachmentView(
                 enabled = active != null && durationMs != null,
                 modifier = Modifier
                     .weight(1f)
-                    .semantics { contentDescription = "Seek voice note" },
+                    .localizedSemantics(contentDescription = { stringResource(R.string.mobile_voice_note_seek) }),
             )
             Text(
                 voiceNoteClock(positionMs) + " / " + (durationMs?.let(::voiceNoteClock) ?: "--:--"),
@@ -1096,7 +1095,7 @@ private fun ActivityChip(
             )
             if (ActivityReceipt.showsLabel(status)) {
                 Text(
-                    text = ActivityReceipt.label(status),
+                    text = localizedMobileCopy(ActivityReceipt.label(status)),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
@@ -1120,7 +1119,7 @@ private fun ActivityChip(
                         haptics.play(TactileAction.TOGGLE_ACTIVITY_RUN)
                         expanded = !expanded
                     }
-                    .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
+                    .localizedSemantics(stateDescription = { stringResource(if (expanded) R.string.mobile_a11y_expanded else R.string.mobile_a11y_collapsed) }),
             )
         }
     }
