@@ -12,7 +12,11 @@ import UIKit
 struct ClaudeUpdateCard: View {
     let instanceId: String
     let tint: Color
-    @EnvironmentObject private var session: Session
+    /// False while the phone shows the last sync (MOCA-296): the updater
+    /// runs on a computer it cannot reach.
+    let canAct: Bool
+    /// Runs the updater; the card reads nothing from the session.
+    let actions: TranscriptActions
     @State private var phase: Phase = .ask
     @State private var copied = false
 
@@ -44,8 +48,8 @@ struct ClaudeUpdateCard: View {
                             .background(Capsule().fill(tint))
                     }
                     .buttonStyle(.plain)
-                    .disabled(!session.canAct)
-                    .opacity(session.canAct ? 1 : 0.5)
+                    .disabled(!canAct)
+                    .opacity(canAct ? 1 : 0.5)
                     Button {
                         Haptics.selection()
                         phase = .manual
@@ -141,12 +145,12 @@ struct ClaudeUpdateCard: View {
     }
 
     private func update() {
-        guard phase != .updating, session.canAct else { return }
+        guard phase != .updating, canAct else { return }
         Haptics.selection()
         phase = .updating
         Task {
             do {
-                let version = try await session.updateClaude(instanceId: instanceId)
+                let version = try await actions.updateClaude(instanceId: instanceId)
                 phase = .updated(version: version)
             } catch {
                 phase = .failed(error: error.localizedDescription)
