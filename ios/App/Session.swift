@@ -51,7 +51,13 @@ final class Session: ObservableObject {
         case offline(String)
     }
 
-    @Published private(set) var state = CompanionState()
+    @Published private(set) var state = CompanionState() {
+        didSet {
+            // The transport's floor under every disabled button: while the
+            // last sync is on screen, nothing but a read leaves the phone.
+            if oldValue.isCached != state.isCached { writeGate.set(shut: state.isCached) }
+        }
+    }
     @Published private(set) var connection: Connection?
     @Published private(set) var connections: [Connection] = []
     let threadSelection = BotThreadSelection()
@@ -62,7 +68,18 @@ final class Session: ObservableObject {
     /// Paired with a server directly rather than through the companion
     /// sidecar: see `Connection.pairedWithServer`.
     var pairedWithServer: Bool { connection?.pairedWithServer ?? false }
-    @Published private(set) var status: Status = .unpaired
+    @Published private(set) var status: Status = .unpaired {
+        didSet {
+            // A 401 or a changed server identity: this phone is no longer
+            // paired with what the last sync shows, so it is not kept.
+            if status == .unauthorized, oldValue != .unauthorized { forgetLastSync() }
+        }
+    }
+    /// Whether anything on screen may be sent, answered, stopped or run.
+    /// False while the last sync is showing instead of the computer's live
+    /// state (MOCA-296): a saved ask may have expired or been answered
+    /// elsewhere. Every composer, card, Stop and routine action reads this.
+    var canAct: Bool { state.canAct }
     /// Transient, user-facing failures from an action they just took.
     @Published var actionError: String?
     /// One exact message the next opened chat should reveal.
@@ -194,10 +211,34 @@ final class Session: ObservableObject {
     }
 
     private var registry = CompanionConnectionRegistry()
+
+    // MARK: Offline snapshot (MOCA-296)
+
+    /// Where the last sync is kept, one file per computer. Nil in the DEBUG
+    /// preview fixtures, which must never write their data to disk.
+    private var snapshots: SnapshotStore?
+    /// Shared with every client this session builds for the active computer;
+    /// shut while `state` is a cached copy.
+    private let writeGate = OfflineWriteGate()
+    /// Bumped whenever `state` stops being "this computer, not yet live": a
+    /// hydrate landed, the runtime stopped, the computer changed. A cached
+    /// copy that finishes loading after any of those is dropped.
+    private var snapshotGeneration = 0
+    /// The one pending debounced save; batches that arrive while it waits
+    /// add nothing.
+    private var snapshotSaveTask: Task<Void, Never>?
+    private var lastSnapshotSave = Date.distantPast
+    /// The routines and runs last loaded from the computer, or read back
+    /// with the last sync, for the Home calendar and Routines list offline.
+    private var lastRoutines: (routines: [Routine], runs: [RoutineRun]) = ([], [])
+    /// The most often a live state is written down while the stream runs.
+    static let snapshotSaveInterval: TimeInterval = 5
+
     // MARK: - Pairing
 
     init() {
         Self.removeStaleFilePreviews()
+        snapshots = (try? SnapshotStore.defaultDirectory()).map { SnapshotStore(directory: $0) }
         _ = NotificationCoordinator.shared
         NotificationCoordinator.shared.responseHandler = { [weak self] target in
             Task { @MainActor in await self?.openNotification(target) }
@@ -211,6 +252,8 @@ final class Session: ObservableObject {
            ),
            let data = try? Data(contentsOf: url),
            let fleet = try? JSONDecoder().decode(Fleet.self, from: data) {
+            // Fixtures never touch the real snapshot directory.
+            snapshots = nil
             let preview = Connection(
                 id: "preview-current",
                 name: "Milind’s MacBook Pro",
@@ -358,6 +401,18 @@ final class Session: ObservableObject {
                 UserDefaults.standard.removeObject(forKey: PrefKey.rosterDensity)
             }
             if arguments.contains("-busy-fleet-preview") { startBusyFleetPreview() }
+            if arguments.contains("-offline-preview"),
+               let snapshot = state.offlineSnapshot(
+                   connectionId: preview.id,
+                   serverEnvironmentId: nil,
+                   savedAt: Date().addingTimeInterval(-20 * 60)
+               ) {
+                // The fixture as the last sync, with the computer out of
+                // reach: what a cold launch away from it shows.
+                state = CompanionState(snapshot: snapshot)
+                status = .offline("Can’t reach \(preview.name).")
+                return
+            }
             status = .live
             return
         }
@@ -492,6 +547,8 @@ final class Session: ObservableObject {
             // costs a walk to the computer.
             connection = saved
             restorePending = true
+            // The last sync can still show while the token waits on unlock.
+            showLastSync(of: saved)
             status = .offline(
                 (error as? KeychainError)?.isLocked == true
                     ? "Unlock this device to reach your computer."
@@ -625,8 +682,13 @@ final class Session: ObservableObject {
         self.rotation = CandidateRotation(endpoints: liveRoutes)
         self.client = CompanionClient(
             connection: winner.map(stored.dialing) ?? stored,
-            token: token
+            token: token,
+            writeGate: writeGate
         )
+        // A new pairing starts from nothing: whatever an earlier pairing
+        // with this id left on disk is not this one's.
+        snapshots?.wipe(connectionId: stored.id)
+        snapshotGeneration += 1
         self.state = CompanionState()
         // A fresh pairing settles any restore that was still waiting on the
         // keychain — the token is in hand, so there is nothing left to retry.
@@ -759,6 +821,7 @@ final class Session: ObservableObject {
             Task.detached { try? await client.logout() }
         }
         if wasActive { stopActiveRuntime() }
+        snapshots?.wipe(connectionId: id)
         preparedPhoneCredentials = preparedPhoneCredentials.filter { $0.value.connectionID != id }
         Keychain.remove(id)
         registry.remove(id: id)
@@ -824,6 +887,7 @@ final class Session: ObservableObject {
         client = nil
         token = nil
         rotation = CandidateRotation(hosts: [])
+        cancelSnapshotWork()
         state = CompanionState()
         resetAvatarCache()
         resetAttachmentCache()
@@ -840,8 +904,11 @@ final class Session: ObservableObject {
         // a legacy/local route is only tried when it was the exact saved route.
         rotation = CandidateRotation(endpoints: saved.orderedEndpoints)
         let first = rotation.currentEndpoint.map(saved.dialing) ?? saved
-        client = CompanionClient(connection: first, token: stored)
+        client = CompanionClient(connection: first, token: stored, writeGate: writeGate)
         status = .connecting
+        // Before the stream opens: the saved copy reads in milliseconds and
+        // the hydrate takes a round trip, so Home has something at once.
+        showLastSync(of: saved)
     }
 
     private func stopActiveRuntime() {
@@ -860,6 +927,10 @@ final class Session: ObservableObject {
         screenWatchers = 0
         client = nil
         token = nil
+        // Leaving a live computer writes it down first; the copy of the
+        // state taken here is all the write needs.
+        saveLastSync()
+        cancelSnapshotWork()
         state = CompanionState()
         resetAvatarCache()
         resetAttachmentCache()
@@ -956,6 +1027,8 @@ final class Session: ObservableObject {
     /// a known point instead of wherever the socket happened to die.
     func disconnect() {
         resetCredentialEntry()
+        // Leaving the screen is the last moment the state is known good.
+        saveLastSync()
         streamTask?.cancel()
         streamTask = nil
         endpointRefreshTask?.cancel()
@@ -976,6 +1049,7 @@ final class Session: ObservableObject {
     /// the island. After that, iOS suspends us anyway; disconnect cleanly so
     /// the cursor is written down at a known point.
     func linger() {
+        saveLastSync()
         guard streamTask != nil, lingerTask == .invalid else { disconnect(); return }
         // A previous request can leave a sleeper behind when iOS refuses the
         // background assertion. Never let it outlive the assertion it belongs
@@ -1055,11 +1129,17 @@ final class Session: ObservableObject {
                         // hello cursor only after that hydrate succeeds: if
                         // the request dies halfway through replay/hydration,
                         // reconnecting must still ask for the missing gap.
-                        if !resumed {
+                        // A cached copy has no cursor, so the server cannot
+                        // have resumed it; hydrate whatever it says rather
+                        // than fold live frames into the last sync.
+                        let hydrated = !resumed || state.isCached
+                        if hydrated {
                             try await hydrate(using: client)
                             state.resetCursor(cursor)
                         }
                         status = .live
+                        // The new live state is worth keeping at once.
+                        if hydrated { saveLastSync() }
                         // Remember what actually carried the stream for
                         // display and legacy ordering. Typed routes retain
                         // their explicit security priority next launch.
@@ -1108,6 +1188,7 @@ final class Session: ObservableObject {
         var updated = state
         updated.applyBatch(batch)
         state = updated
+        saveLastSyncSoon()
         for frame in batch {
             if case let .runtime(event) = frame.frame,
                ["turn.completed", "runtime.error", "request.opened", "request.resolved", "item.completed"].contains(event.type) {
@@ -1133,6 +1214,8 @@ final class Session: ObservableObject {
             }
             guard state.hydrate(snapshot.fleet, waitingThreads: snapshot.waitingThreads,
                                 ifCursorMatches: expectedCursor) else { continue }
+            // Live now: a saved copy still being read must not replace this.
+            snapshotGeneration += 1
             log.info("hydrated \(snapshot.fleet.bots.count, privacy: .public) bots, \(snapshot.fleet.groups.count, privacy: .public) rooms")
             NotificationCoordinator.shared.setBadge(state.unreadCount)
             // Wording must not delay hydration or the stream's cursor commit.
@@ -1151,6 +1234,88 @@ final class Session: ObservableObject {
         throw APIError.status(code: 409, message: "Conversations changed while loading. Please try opening this notification again.")
     }
 
+    // MARK: - The last sync (MOCA-296)
+
+    /// Read this computer's saved copy and show it, unless a live hydrate
+    /// (or a change of computer) lands first. Decoding and rebuilding the
+    /// state both run off the main thread; the main actor only publishes.
+    private func showLastSync(of saved: Connection) {
+        snapshotGeneration += 1
+        guard let snapshots else { return }
+        let generation = snapshotGeneration
+        Task { [weak self] in
+            guard let snapshot = await snapshots.load(
+                connectionId: saved.id,
+                serverEnvironmentId: saved.serverEnvironmentId
+            ) else { return }
+            let cached = await Task.detached(priority: .userInitiated) {
+                CompanionState(snapshot: snapshot)
+            }.value
+            guard let self,
+                  self.snapshotGeneration == generation,
+                  self.connection?.id == saved.id,
+                  self.state.cursor == nil,
+                  self.status != .unauthorized
+            else { return }
+            self.lastRoutines = (snapshot.routines, snapshot.routineRuns)
+            self.state = cached
+            log.info("showing the last sync from \(snapshot.savedAt, privacy: .public)")
+        }
+    }
+
+    /// Write the live state down now, on the store's queue. The caller pays
+    /// for a value copy of `state`; building, encoding and the file write
+    /// all happen off the main thread, and a newer save replaces one still
+    /// waiting. Nothing is written for a cached copy or a state that has not
+    /// been hydrated yet.
+    private func saveLastSync() {
+        snapshotSaveTask?.cancel()
+        snapshotSaveTask = nil
+        guard let snapshots, let connection, state.cursor != nil, !state.isCached else { return }
+        lastSnapshotSave = Date()
+        snapshots.save(
+            state,
+            connectionId: connection.id,
+            serverEnvironmentId: connection.serverEnvironmentId,
+            routines: lastRoutines.routines,
+            routineRuns: lastRoutines.runs
+        )
+    }
+
+    /// After a batch: at most one save per `snapshotSaveInterval`, however
+    /// busy the fleet. A save already waiting covers every batch behind it.
+    private func saveLastSyncSoon() {
+        guard snapshots != nil, snapshotSaveTask == nil else { return }
+        let wait = max(0, Self.snapshotSaveInterval - Date().timeIntervalSince(lastSnapshotSave))
+        snapshotSaveTask = Task { [weak self] in
+            if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+            guard !Task.isCancelled, let self else { return }
+            self.snapshotSaveTask = nil
+            self.saveLastSync()
+        }
+    }
+
+    private func cancelSnapshotWork() {
+        snapshotSaveTask?.cancel()
+        snapshotSaveTask = nil
+        snapshotGeneration += 1
+        lastRoutines = ([], [])
+    }
+
+    /// The pairing is gone (401, or a different server at this address):
+    /// remove its copy, and stop showing it if it is on screen.
+    private func forgetLastSync() {
+        guard let id = connection?.id ?? registry.activeConnectionID else { return }
+        snapshots?.wipe(connectionId: id)
+        snapshotSaveTask?.cancel()
+        snapshotSaveTask = nil
+        snapshotGeneration += 1
+        if state.isCached {
+            state = CompanionState()
+            lastRoutines = ([], [])
+        }
+    }
+
     // MARK: - Which address to dial
 
     /// Turn a stream failure into advice a person can act on — and, when the
@@ -1164,7 +1329,7 @@ final class Session: ObservableObject {
             CompanionEndpoint.direct(host: connection.host, port: connection.port, priority: 10_000)
         var next: String?
         if let candidate = rotation.advanceEndpoint(after: error), let token {
-            client = CompanionClient(connection: connection.dialing(candidate), token: token)
+            client = CompanionClient(connection: connection.dialing(candidate), token: token, writeGate: writeGate)
             next = candidate.displayAddress
             log.info("advancing to companion route \(candidate.url, privacy: .public)")
         }
@@ -1261,7 +1426,7 @@ final class Session: ObservableObject {
         persistActiveConnection(updated)
         rotation = CandidateRotation(endpoints: updated.orderedEndpoints)
         if let token {
-            client = CompanionClient(connection: updated.dialing(endpoint), token: token)
+            client = CompanionClient(connection: updated.dialing(endpoint), token: token, writeGate: writeGate)
         }
         // Dial the new address now rather than on the next backoff tick —
         // someone who just typed an address is watching the banner.
@@ -2053,7 +2218,10 @@ final class Session: ObservableObject {
         do {
             let page = try await client.messages(threadId: threadId)
             state.merge(page, intoThread: threadId)
-        } catch { if !Task.isCancelled { actionError = error.localizedDescription } }
+        } catch {
+            // A thread the last sync did not keep simply has no page yet.
+            if !Task.isCancelled && !state.isCached { actionError = error.localizedDescription }
+        }
     }
 
     func image(threadId: String, messageId: String) async -> Data? {
@@ -2065,7 +2233,9 @@ final class Session: ObservableObject {
         guard trimmed.count >= 2, let client else { return [] }
         do { return try await client.search(trimmed) }
         catch {
-            actionError = error.localizedDescription
+            // Offline, search is the roster filter over the last sync; the
+            // computer's message search failing is expected, not news.
+            if !state.isCached { actionError = error.localizedDescription }
             return []
         }
     }
@@ -2641,8 +2811,18 @@ final class Session: ObservableObject {
     // MARK: - Routines
 
     func loadRoutines() async -> (routines: [Routine], runs: [RoutineRun]) {
+        // Offline, the calendar and the list show what the last sync kept.
+        if state.isCached { return lastRoutines }
         guard let client else { return ([], []) }
-        do { return try await client.routines() }
+        let connectionID = client.connection.id
+        do {
+            let loaded = try await client.routines()
+            if connection?.id == connectionID {
+                lastRoutines = loaded
+                saveLastSyncSoon()
+            }
+            return loaded
+        }
         catch { actionError = error.localizedDescription; return ([], []) }
     }
 

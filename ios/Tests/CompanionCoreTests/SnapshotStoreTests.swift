@@ -259,6 +259,57 @@ final class SnapshotStoreTests: XCTestCase {
         XCTAssertFalse(files.touchedMainThread)
     }
 
+    /// The cost a save puts on its caller under a full fleet: 100 opened
+    /// threads of 50 messages, a few megabytes encoded. Session calls this on
+    /// the main actor at most every few seconds; the caller pays a value copy
+    /// and an enqueue, and the build, encode and write happen on the store's
+    /// queue. The bound is a frame, generous for CI; the numbers are printed.
+    func testAFullFleetSaveCostsItsCallerLessThanAFrame() async throws {
+        var state = CompanionState()
+        let line = String(repeating: "A reply long enough to be a real paragraph. ", count: 20)
+        state.bots = (0..<100).map { index in
+            Bot(
+                id: "bot-\(index)", threadId: "thread-\(index)", name: "Bot \(index)", title: "",
+                description: "", notifications: true, color: "green", unread: false,
+                modelSelection: ModelSelection(instanceId: "engine", model: "default"), createdAt: Double(index)
+            )
+        }
+        for index in 0..<100 {
+            let messages = (0..<50).map { number -> Message in
+                var message = Message(id: "m-\(index)-\(number)", role: number % 2 == 0 ? .user : .bot, kind: .text, at: Double(number))
+                message.text = line
+                message.parentId = number == 0 ? nil : "m-\(index)-\(number - 1)"
+                return message
+            }
+            state.merge(ThreadPage(messages: messages, hasMore: false), intoThread: "thread-\(index)")
+        }
+        state.cursor = "stream:1"
+        let store = SnapshotStore(directory: directory)
+
+        let callerStart = Date()
+        store.save(state, connectionId: "computer-1", serverEnvironmentId: nil, savedAt: Self.savedAt)
+        let caller = Date().timeIntervalSince(callerStart)
+        let flushStart = Date()
+        await store.flush()
+        let background = Date().timeIntervalSince(flushStart)
+
+        let loadStart = Date()
+        let loaded = await store.load(connectionId: "computer-1", serverEnvironmentId: nil)
+        let snapshot = try XCTUnwrap(loaded)
+        let decode = Date().timeIntervalSince(loadStart)
+        let rebuildStart = Date()
+        let cached = CompanionState(snapshot: snapshot)
+        let rebuild = Date().timeIntervalSince(rebuildStart)
+        let bytes = try Data(contentsOf: store.fileURL(forConnection: "computer-1")).count
+
+        print(String(
+            format: "offline snapshot: %d bytes, %d threads; caller %.2f ms, queue build+encode+write %.1f ms, load+decode %.1f ms, rebuild %.1f ms",
+            bytes, snapshot.threads.count, caller * 1_000, background * 1_000, decode * 1_000, rebuild * 1_000
+        ))
+        XCTAssertEqual(cached.bots.count, 100)
+        XCTAssertLessThan(caller, 0.016, "A save must not cost the caller a frame.")
+    }
+
     // MARK: - File names
 
     func testNoConnectionIdCanNameAFileOutsideTheDirectory() async throws {

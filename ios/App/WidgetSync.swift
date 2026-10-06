@@ -91,6 +91,10 @@ final class WidgetSyncBridge {
             sinceClock = WidgetSinceClock()
             clockConnectionID = connectionID
         }
+        // The last sync (MOCA-296) never reaches the widgets: they answer
+        // asks on their own, and a saved ask may be stale. Until the live
+        // hydrate they see what a launch showed before the copy existed.
+        let state = state.isCached ? CompanionState() : state
         let snapshot = state.widgetSnapshot(connectionID: connectionID, detail: .stored) { chat in
             MausState.forChat(chat, in: state).rawValue
         } since: { update in

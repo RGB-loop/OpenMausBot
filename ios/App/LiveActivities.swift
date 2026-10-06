@@ -78,6 +78,10 @@ final class LiveActivityCoordinator {
 
     private func sync(_ state: CompanionState) {
         guard activitiesEnabled else { return }
+        // The last sync (MOCA-296) is history, not something happening now:
+        // the island reads it as the empty state a launch had before the
+        // copy existed, so a saved ask never becomes a live, answerable one.
+        let state = state.isCached ? CompanionState() : state
         let now = Date()
         // One ActivityKit read per sync; the first activity per bot is the
         // one updated, as before, and every unwanted one is ended below.
