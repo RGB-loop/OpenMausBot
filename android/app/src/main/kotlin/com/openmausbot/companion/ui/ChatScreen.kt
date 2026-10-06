@@ -120,6 +120,8 @@ import com.openmausbot.companion.core.AttachmentPolicy
 import com.openmausbot.companion.core.Bot
 import com.openmausbot.companion.core.Chat
 import com.openmausbot.companion.core.ComposerMention
+import com.openmausbot.companion.core.ComposerQuestion
+import com.openmausbot.companion.core.TypedAnswerResult
 import com.openmausbot.companion.core.MentionChoice
 import com.openmausbot.companion.core.ChatTarget
 import com.openmausbot.companion.core.LocalMessageLink
@@ -523,6 +525,12 @@ private fun LoadedChat(
     val pendingApproval = remember(rawTranscript) {
         ComposerAccessories.hasPendingApproval(rawTranscript)
     }
+    // The one open question a typed line answers. A bot blocked on its
+    // question never reads a line steered into its turn, so while exactly one
+    // question waits (and nothing is attached) Send answers it instead.
+    val composerQuestion = remember(rawTranscript, chat.name, attachments.isEmpty()) {
+        ComposerQuestion.target(rawTranscript, chat.name, hasAttachments = attachments.isNotEmpty())
+    }
 
     // One live composer per thread, including when an upload finishes after
     // switching away and back. Only typed text enters saved instance state;
@@ -797,6 +805,39 @@ private fun LoadedChat(
             return
         }
         if (text.isEmpty()) return
+        // Only the typed line answers; a chip or a command is its own ask.
+        val question = composerQuestion.takeIf { explicitText == null }
+        if (question != null) {
+            if (sendingMessage) return
+            val target = composer
+            sendingMessage = true
+            attachmentError = null
+            composer.onSend()
+            publishFrom(composer)
+            haptics.play(HapticCue.SEND)
+            scope.launch {
+                val result = try {
+                    session.answerInWords(chat, question.card, question.answer(text))
+                } finally {
+                    sendingMessage = false
+                }
+                when (result) {
+                    TypedAnswerResult.Answered -> Unit
+                    // The question closed before the line reached it: say it
+                    // as an ordinary message rather than lose it.
+                    TypedAnswerResult.Gone -> session.send(text, chat)
+                    // Hand the words back, with the reason under them.
+                    is TypedAnswerResult.Failed -> {
+                        if (target.text.isBlank()) {
+                            target.onTypedChange(text)
+                            publishFrom(target)
+                        }
+                        attachmentError = result.message
+                    }
+                }
+            }
+            return
+        }
         composer.onSend()
         // Clearing the draft closes the HUD through the rule above, which is
         // how iOS's `showCommandHUD = false` on submit happens as well.
@@ -1085,6 +1126,7 @@ private fun LoadedChat(
                 preparing = preparingAttachments,
                 busy = chat.busy,
                 engineCanSteer = engineCanSteer,
+                questionAsker = composerQuestion?.asker,
                 queuedSends = queuedSends,
                 steering = steering,
                 onSteer = steerNow,
@@ -1765,6 +1807,8 @@ private fun Composer(
     preparing: Boolean,
     busy: Boolean,
     engineCanSteer: Boolean,
+    /** The bot waiting on the one open question Send would answer. */
+    questionAsker: String?,
     queuedSends: List<QueuedSend>,
     steering: Boolean,
     onSteer: (() -> Unit)?,
@@ -1985,6 +2029,7 @@ private fun Composer(
                                 engineCanSteer = engineCanSteer,
                                 sending = sending,
                                 listening = dictationListening,
+                                questionAsker = questionAsker,
                             )),
                             fontSize = 17.sp,
                             color = secondaryTint,
@@ -2092,7 +2137,9 @@ private fun Composer(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = stringResource(R.string.mobile_send_9bc2575c),
+                            contentDescription = stringResource(
+                                if (questionAsker != null) R.string.mobile_submit_answer_bf80bc31 else R.string.mobile_send_9bc2575c,
+                            ),
                             tint = if (canSend) BubbleColor.mineText else secondaryTint,
                             modifier = Modifier.size(16.dp),
                         )

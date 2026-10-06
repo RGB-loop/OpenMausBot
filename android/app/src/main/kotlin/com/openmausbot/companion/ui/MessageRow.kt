@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -49,6 +50,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -116,6 +118,8 @@ import com.openmausbot.companion.core.outcome
 import com.openmausbot.companion.core.presentation
 import com.openmausbot.companion.core.showsHeldNote
 import com.openmausbot.companion.core.stacksOptions
+import com.openmausbot.companion.core.takesTypedAnswer
+import com.openmausbot.companion.core.TypedAnswerResult
 import com.openmausbot.companion.core.summaryLine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.CancellationException
@@ -796,6 +800,8 @@ internal const val SHARED_IMAGE_FRAME_TAG = "shared-image-frame"
 
 /** A card's answers when they stack one under another; tests find it. */
 internal const val STACKED_OPTIONS_TAG = "card-options-stacked"
+internal const val CARD_ANSWER_FIELD_TAG = "card-answer-field"
+internal const val CARD_ANSWER_SEND_TAG = "card-answer-send"
 
 @Composable
 private fun AttachmentLoadFailure(label: String, foreground: Color = BubbleColor.mineText, onRetry: () -> Unit) {
@@ -1255,6 +1261,8 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
     var answering by remember(message.id) { mutableStateOf(false) }
     // The full request behind a short card, collapsed until asked for.
     var showingDetails by remember(message.id) { mutableStateOf(false) }
+    // A question's answer in the person's own words.
+    var typedAnswer by remember(message.id) { mutableStateOf("") }
     val skillRequest = card.skillRequest
     val presentation = card.presentation
 
@@ -1429,6 +1437,60 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     card.options.forEach { option -> optionButton(option, Modifier) }
                 }
+            }
+
+            // A question also takes words: under its options, or on its own
+            // when it offered none (the computer's `ask_user` with no choices,
+            // which left nothing to tap). Once the computer takes the answer
+            // the card stays still until it settles and shows the words; a
+            // failed send keeps them for a retry.
+            if (card.takesTypedAnswer) {
+                val ready = typedAnswer.isNotBlank() && !answering
+                fun sendTypedAnswer() {
+                    if (!ready) return
+                    haptics.play(TactileAction.CHOOSE_APPROVAL)
+                    answering = true
+                    scope.launch {
+                        when (val result = session.answerInWords(chat, card, typedAnswer.trim())) {
+                            TypedAnswerResult.Answered -> Unit
+                            TypedAnswerResult.Gone -> answering = false
+                            is TypedAnswerResult.Failed -> {
+                                session.actionError = result.message
+                                answering = false
+                            }
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = typedAnswer,
+                    onValueChange = { typedAnswer = it },
+                    placeholder = {
+                        Text(
+                            stringResource(
+                                if (card.options.isEmpty()) R.string.mobile_type_your_answer
+                                else R.string.mobile_type_your_own_answer_84cf9943,
+                            ),
+                        )
+                    },
+                    singleLine = false,
+                    maxLines = 4,
+                    enabled = !answering,
+                    shape = RoundedCornerShape(20.dp),
+                    trailingIcon = {
+                        IconButton(
+                            onClick = ::sendTypedAnswer,
+                            enabled = ready,
+                            modifier = Modifier.testTag(CARD_ANSWER_SEND_TAG),
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = stringResource(R.string.mobile_submit_answer_bf80bc31),
+                                tint = if (ready) MaterialTheme.colorScheme.primary else secondaryTint,
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag(CARD_ANSWER_FIELD_TAG),
+                )
             }
 
             // The grant key comes from the card. The phone never derives its

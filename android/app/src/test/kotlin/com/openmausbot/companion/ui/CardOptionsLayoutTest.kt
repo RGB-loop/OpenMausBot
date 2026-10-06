@@ -8,7 +8,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.width
@@ -92,9 +95,57 @@ class CardOptionsLayoutTest {
             ),
         )
         assertEquals(0, compose.onAllNodesWithTag(STACKED_OPTIONS_TAG, useUnmergedTree = true).fetchSemanticsNodes().size)
+        assertEquals(0, compose.onAllNodesWithTag(CARD_ANSWER_FIELD_TAG).fetchSemanticsNodes().size, "an approval takes no words")
         val allow = compose.onNodeWithText("Allow").getBoundsInRoot()
         val deny = compose.onNodeWithText("Deny").getBoundsInRoot()
         assertEquals(allow.top, deny.top, "side by side")
         assertTrue(deny.left >= allow.right)
+    }
+
+    /** The computer's `ask_user` with no choices used to leave nothing to tap. */
+    @Test fun aQuestionWithNoOptionsOpensAnAnswerField() {
+        show(
+            OptionCard(
+                title = "Your bot has a question",
+                subtitle = "Which email address should the reminder come from?",
+                options = emptyList(),
+                requestId = "q",
+                requestType = "question",
+            ),
+        )
+        compose.onNodeWithTag(CARD_ANSWER_FIELD_TAG).assertExists()
+        compose.onNodeWithText("Type your answer", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag(CARD_ANSWER_SEND_TAG).assertIsNotEnabled()
+    }
+
+    @Test fun aQuestionWithOptionsTakesWordsUnderThem() {
+        show(
+            OptionCard(
+                title = "Your bot has a question",
+                subtitle = "What should the subject say?",
+                options = listOf("Use the invoice number", "Keep it short: Invoice due"),
+                requestId = "q",
+                requestType = "question",
+            ),
+        )
+        compose.onNodeWithText("Type your own answer", useUnmergedTree = true).assertExists()
+        val last = compose.onNodeWithText("Keep it short: Invoice due").getBoundsInRoot()
+        val field = compose.onNodeWithTag(CARD_ANSWER_FIELD_TAG).getBoundsInRoot()
+        assertTrue(field.top >= last.bottom, "under the options: $last then $field")
+    }
+
+    /** A structured question with no options opens straight to its field. */
+    @Test fun aStructuredQuestionWithNoOptionsOpensItsField() {
+        show(
+            OptionCard(
+                title = "Your bot has a question",
+                subtitle = "Which folder should they go in?",
+                options = emptyList(),
+                requestId = "q",
+                questionRequest = QuestionRequestCardData(questions = listOf(AskQuestion(question = "Which folder should they go in?"))),
+            ),
+        )
+        compose.onNodeWithTag("question-answer-field").assertExists()
+        assertEquals(0, compose.onAllNodesWithText("Other").fetchSemanticsNodes().size, "no lone Other row")
     }
 }
