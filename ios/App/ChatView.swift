@@ -2733,31 +2733,22 @@ struct CardView: View {
                 }
 
                 if card.isPending {
-                    HStack(spacing: 8) {
-                        ForEach(card.options, id: \.self) { option in
-                            Button {
-                                Haptics.selection()
-                                answering = true
-                                Task {
-                                    await session.answer(chat: chat, card: card, choice: option)
-                                    answering = false
+                    // A question's answers are sentences: one under another,
+                    // full width, wrapping. Allow and Deny share a row.
+                    Group {
+                        if card.stacksOptions {
+                            VStack(spacing: 8) {
+                                ForEach(card.options, id: \.self) { option in
+                                    optionButton(option, card: card, stacked: true)
                                 }
-                            } label: {
-                                Text(option)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(Self.isRefusal(option) ? Color.primary : .white)
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 40)
-                                    .background(
-                                        Capsule().fill(Self.isRefusal(option) ? Color.secondary.opacity(0.18) : tint)
-                                    )
                             }
-                            .buttonStyle(.plain)
-                            .disabled(
-                                answering ||
-                                    (card.skillRequest != nil && !Self.isRefusal(option) &&
-                                        card.skillRequest?.reviewedSha256 == nil)
-                            )
+                            .accessibilityIdentifier("card-options-stacked")
+                        } else {
+                            HStack(spacing: 8) {
+                                ForEach(card.options, id: \.self) { option in
+                                    optionButton(option, card: card, stacked: false)
+                                }
+                            }
                         }
                     }
                     .padding(.top, 2)
@@ -2814,6 +2805,41 @@ struct CardView: View {
                     .strokeBorder(card.isPending ? tint : .clear, lineWidth: 1.5)
             }
         }
+    }
+
+    /// One answer. Stacked, it takes the card's width and as many lines as
+    /// its label needs; in a row, it takes an equal share at one height.
+    private func optionButton(_ option: String, card: OptionCard, stacked: Bool) -> some View {
+        let refusal = Self.isRefusal(option)
+        let fill = refusal ? Color.secondary.opacity(0.18) : tint
+        // A capsule around two or three lines reads as a blob; a stacked
+        // answer gets rounded corners instead.
+        let shape = stacked ? AnyShape(RoundedRectangle(cornerRadius: 20, style: .continuous)) : AnyShape(Capsule())
+        return Button {
+            Haptics.selection()
+            answering = true
+            Task {
+                await session.answer(chat: chat, card: card, choice: option)
+                answering = false
+            }
+        } label: {
+            Text(option)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(refusal ? Color.primary : .white)
+                .multilineTextAlignment(stacked ? .center : .leading)
+                .fixedSize(horizontal: false, vertical: stacked)
+                .padding(.horizontal, stacked ? 16 : 0)
+                .padding(.vertical, stacked ? 10 : 0)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: stacked ? 44 : 40, maxHeight: stacked ? nil : 40)
+                .background(shape.fill(fill))
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .disabled(
+            answering ||
+                (card.skillRequest != nil && !refusal && card.skillRequest?.reviewedSha256 == nil)
+        )
     }
 
     /// "Send to Linear?" for a held send to one app, the generic question
