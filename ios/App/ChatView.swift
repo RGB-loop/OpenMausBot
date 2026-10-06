@@ -1108,9 +1108,17 @@ struct ChatView: View {
         return attachments.isEmpty && session.steeringInstanceIds.contains(bot.modelSelection.instanceId)
     }
 
+    /// The one open question a typed line answers. A bot blocked on its
+    /// question never reads a line steered into its turn, so while exactly
+    /// one question waits (and nothing is attached) Send answers it instead.
+    private var composerQuestion: ComposerQuestion.Target? {
+        ComposerQuestion.target(in: messages, chatName: current.name, hasAttachments: !attachments.isEmpty)
+    }
+
     private var composerPrompt: String {
         if sendingMessage { return "Sending…" }
         if dictation.isListening { return "Listening…" }
+        if let asker = composerQuestion?.asker { return String(localized: "Answer \(asker)…") }
         if current.busy { return engineCanSteer ? "Sends into this turn" : "Sends after this turn" }
         return "Ask \(current.name)"
     }
@@ -1133,6 +1141,8 @@ struct ChatView: View {
         let text = (explicitText ?? draftAtSend).trimmingCharacters(in: .whitespacesAndNewlines)
         let outgoingAttachments = attachments
         let chatAtSend = current
+        // Only the typed line answers; a chip or a command is its own ask.
+        let question = explicitText == nil ? composerQuestion : nil
         guard !text.isEmpty || !outgoingAttachments.isEmpty,
               !preparingAttachments,
               !sendingMessage
@@ -1142,11 +1152,27 @@ struct ChatView: View {
         showCommandHUD = false
         showingPlus = false
         Task {
-            let sent = await session.send(
-                text: text,
-                attachments: outgoingAttachments,
-                to: chatAtSend
-            )
+            let sent: Bool
+            if let question, !text.isEmpty {
+                switch await session.answer(chat: chatAtSend, card: question.card, inWords: question.answer(text)) {
+                case .answered:
+                    sent = true
+                case .gone:
+                    // The question closed before the line reached it: say
+                    // it as an ordinary message rather than lose it.
+                    sent = await session.send(text: text, attachments: [], to: chatAtSend)
+                case let .failed(failure):
+                    // Keep the words in the field, with the reason under it.
+                    session.actionError = failure
+                    sent = false
+                }
+            } else {
+                sent = await session.send(
+                    text: text,
+                    attachments: outgoingAttachments,
+                    to: chatAtSend
+                )
+            }
             sendingMessage = false
             guard sent else {
                 let failure = session.actionError ?? "Couldn't send this message. Try again."
@@ -1685,7 +1711,9 @@ struct ChatView: View {
                         .padding(.trailing, 6)
                         .padding(.bottom, 6)
                         .animation(.easeOut(duration: 0.15), value: canSend)
-                        .accessibilityLabel(current.busy
+                        .accessibilityLabel(composerQuestion != nil
+                            ? "Submit answer"
+                            : current.busy
                             ? engineCanSteer ? "Send into the running turn" : "Queue this message for when the turn finishes"
                             : "Send message")
                     }
@@ -2630,6 +2658,9 @@ struct CardView: View {
     /// The full request behind a short card. Collapsed until asked for, and
     /// again whenever the card is drawn afresh.
     @State private var showingDetails = false
+    /// A question's answer in the person's own words.
+    @State private var typedAnswer = ""
+    @FocusState private var answerFocused: Bool
 
     /// The option this card offers that means "go ahead".
     ///
@@ -2753,6 +2784,10 @@ struct CardView: View {
                     }
                     .padding(.top, 2)
 
+                    if card.takesTypedAnswer {
+                        typedAnswerField(card)
+                    }
+
                     // The grant key comes from the card. The phone never
                     // derives its own, so it cannot permit something subtly
                     // wider than the computer would have. The same goes for
@@ -2840,6 +2875,64 @@ struct CardView: View {
             answering ||
                 (card.skillRequest != nil && !refusal && card.skillRequest?.reviewedSha256 == nil)
         )
+    }
+
+    /// A question also takes words: under its options, or on its own when it
+    /// offered none (the computer's `ask_user` with no choices, which left
+    /// nothing to tap). Sent the way the buttons are, as the answer's text.
+    private func typedAnswerField(_ card: OptionCard) -> some View {
+        let prompt: LocalizedStringKey = card.options.isEmpty ? "Type your answer" : "Type your own answer"
+        let ready = !typedAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !answering
+        return HStack(alignment: .bottom, spacing: 8) {
+            TextField(prompt, text: $typedAnswer, axis: .vertical)
+                .font(.system(size: 15))
+                .lineLimit(1...4)
+                .textFieldStyle(.plain)
+                .focused($answerFocused)
+                .padding(.vertical, 10)
+                .disabled(answering)
+                .accessibilityIdentifier("card-answer-field")
+            Button {
+                sendTypedAnswer(card)
+            } label: {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(ready ? Color.white : Color.secondary)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(ready ? tint : Color.secondary.opacity(0.18)))
+            }
+            .buttonStyle(.plain)
+            .disabled(!ready)
+            .padding(.bottom, 6)
+            .accessibilityLabel("Submit answer")
+            .accessibilityIdentifier("card-answer-send")
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color.secondary.opacity(0.10))
+        )
+    }
+
+    /// Once the computer takes the answer the card stays still until it
+    /// settles and shows the words; a failed send keeps them for a retry.
+    private func sendTypedAnswer(_ card: OptionCard) {
+        let typed = typedAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty, !answering else { return }
+        Haptics.selection()
+        answering = true
+        answerFocused = false
+        Task {
+            switch await session.answer(chat: chat, card: card, inWords: typed) {
+            case .answered:
+                break
+            case .gone:
+                answering = false
+            case let .failed(failure):
+                session.actionError = failure
+                answering = false
+            }
+        }
     }
 
     /// "Send to Linear?" for a held send to one app, the generic question
