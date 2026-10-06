@@ -1,6 +1,6 @@
 import type { EffortLevel, EngineAccess, ModelCatalog, ModelSelection, ProviderSnapshot } from "./contracts.ts";
 
-interface SelectableInstance {
+export interface SelectableInstance {
   instanceId: string;
   driverKind: string;
   snapshot: ProviderSnapshot;
@@ -21,12 +21,23 @@ export interface DefaultSelectionContext {
 const claudeFirst = (instances: readonly SelectableInstance[]) =>
   instances.find((instance) => instance.driverKind === "claudeAgent") ?? instances[0];
 
+/** Installed and waiting on a sign-in. A custom endpoint brings its own
+ * credential, so its sign-in state does not count. */
+export function signedOut(instance: SelectableInstance): boolean {
+  return instance.snapshot.state === "available" && instance.access !== "custom" && instance.snapshot.authenticated === false;
+}
+
 /** The ready rule: an engine can run a turn now when it is available, the
- * organisation allows it, and it is not signed out. A custom endpoint brings
- * its own credential, so its sign-in state does not count. */
+ * organisation allows it, and it is not signed out (signedOut). */
 export function readyToRun(instance: SelectableInstance, context: DefaultSelectionContext = {}): boolean {
-  return instance.snapshot.state === "available" && context.refusal?.(instance) === undefined &&
-    (instance.access === "custom" || instance.snapshot.authenticated !== false);
+  return instance.snapshot.state === "available" && context.refusal?.(instance) === undefined && !signedOut(instance);
+}
+
+/** The engine still offers this model, and its variant where one is set. A
+ * saved default and a thread's own model (thread-model.ts) both ask it. */
+export function offersSelection(instance: Pick<SelectableInstance, "models" | "capabilities">, selection: ModelSelection): boolean {
+  return (selection.variant === undefined || instance.capabilities?.modelVariants === true) &&
+    (instance.models.default === selection.model || instance.models.options.some((model) => model.id === selection.model));
 }
 
 /** The engine a new bot gets, and the one a bot moved off a removed engine
@@ -50,8 +61,7 @@ export function selectDefaultModelSelection(
       // An organisation that disallows the saved engine makes it unusable,
       // exactly like an unavailable one: setup, never another provider.
       context.refusal?.(instance) !== undefined ||
-      (preferred.variant !== undefined && !instance.capabilities?.modelVariants) ||
-      !(instance.models.default === preferred.model || instance.models.options.some((model) => model.id === preferred.model))
+      !offersSelection(instance, preferred)
     ) {
       return { instanceId: "", model: "" };
     }
