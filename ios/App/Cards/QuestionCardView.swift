@@ -12,12 +12,17 @@ import SwiftUI
 /// The desktop's `src/components/QuestionCard.tsx`, in SwiftUI: a tab per
 /// question, the model's options with their glosses, an "Other" row for a
 /// reply it did not think of, and one submit that sends every answer at once.
+/// A question with no options opens straight to its answer field: there is
+/// nothing to pick, so a lone "Other" row would only be one more tap.
 /// The answer text is built by `AskQuestionAnswer.format`, so an answer given
 /// here is byte-for-byte the one the Mac would have sent.
 struct QuestionCardView: View {
-    let chat: Chat
     let message: Message
-    @EnvironmentObject private var session: Session
+    /// The chat's name and colour, as values: the card redraws when its
+    /// message does, not whenever the session publishes.
+    let context: TranscriptRowContext
+    /// Sends the answer; nothing here reads the session.
+    let actions: TranscriptActions
 
     /// Per question: the option labels ticked, and the free-text reply.
     @State private var picked: [Int: Set<String>] = [:]
@@ -30,7 +35,7 @@ struct QuestionCardView: View {
     @State private var sent: String?
     @FocusState private var otherFocused: Bool
 
-    private var tint: Color { MausPalette.color(chat.color) }
+    private var tint: Color { MausPalette.color(context.color) }
 
     private var card: OptionCard? { message.card }
     private var questions: [AskQuestion] { card?.questions ?? [] }
@@ -41,7 +46,8 @@ struct QuestionCardView: View {
     /// An open "Other" field with nothing in it is not an answer.
     private func answers(for position: Int) -> [String] {
         var chosen = Array(picked[position] ?? []).sorted()
-        if other.contains(position) {
+        let inWords = questions.indices.contains(position) && questions[position].answersInWords
+        if other.contains(position) || inWords {
             let typed = (custom[position] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if !typed.isEmpty { chosen.append(typed) }
         }
@@ -100,7 +106,7 @@ struct QuestionCardView: View {
     @ViewBuilder
     private func header(_ card: OptionCard) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Label("\(chat.name) has a question", systemImage: "questionmark.bubble.fill")
+            Label("\(context.name) has a question", systemImage: "questionmark.bubble.fill")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(settled ? Color.secondary : tint)
             Spacer(minLength: 8)
@@ -144,6 +150,25 @@ struct QuestionCardView: View {
 
     @ViewBuilder
     private func choices(_ question: AskQuestion) -> some View {
+        if question.answersInWords {
+            TextField("Type your answer", text: binding(forCustom: index), axis: .vertical)
+                .font(.system(size: 15))
+                .lineLimit(1...4)
+                .focused($otherFocused)
+                .textFieldStyle(.plain)
+                .accessibilityIdentifier("question-answer-field")
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.secondary.opacity(0.10))
+                )
+        } else {
+            optionList(question)
+        }
+    }
+
+    @ViewBuilder
+    private func optionList(_ question: AskQuestion) -> some View {
         VStack(spacing: 0) {
             ForEach(Array(question.options.enumerated()), id: \.offset) { position, option in
                 if position > 0 { Divider().opacity(0.4) }
@@ -301,12 +326,7 @@ struct QuestionCardView: View {
         Task {
             // A question only ever answers with text; the harness rejects an
             // allow/deny on one, so this never takes the permission path.
-            await session.answer(
-                threadId: chat.threadId,
-                requestId: requestId,
-                choice: answer,
-                isPermission: false
-            )
+            await actions.answerQuestion(requestId: requestId, choice: answer)
             answering = false
         }
     }
