@@ -154,7 +154,7 @@ struct NeedsYouIsland: View {
                                                     )
                                             }
                                             .buttonStyle(.plain)
-                                            .disabled(answering)
+                                            .disabled(answering || !session.canAct)
                                         }
                                     }
                                 }

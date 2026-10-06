@@ -200,6 +200,9 @@ struct ChatView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             liveCallBars
+            // Above the composer it explains, rather than under the header
+            // where the floating face and name pill sit (MOCA-296).
+            OfflineSnapshotBanner()
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -783,7 +786,8 @@ struct ChatView: View {
     /// device holds the line. A call that stopped on some other chat does
     /// not hide it: that notice is only visible there.
     private var canStartLiveCall: Bool {
-        liveCall.machine.allowsStart(onThread: threadId) && session.state.liveCall?.isRunning != true
+        session.canAct
+            && liveCall.machine.allowsStart(onThread: threadId) && session.state.liveCall?.isRunning != true
     }
 
     // MARK: - Header
@@ -856,6 +860,9 @@ struct ChatView: View {
                     GlassButton(systemImage: "display", size: 44, weight: .medium) {
                         showingComputer = true
                     }
+                    // A live view of a computer the phone cannot reach.
+                    .disabled(!session.canAct)
+                    .opacity(session.canAct ? 1 : 0.45)
                     .accessibilityLabel("Watch \(current.name)'s computer")
                 } else {
                     Color.clear.frame(width: 44, height: 44)
@@ -900,7 +907,8 @@ struct ChatView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .allowsHitTesting(!islandVisible)
+                // Settings are changes; the last sync cannot take them.
+                .allowsHitTesting(!islandVisible && session.canAct)
                 .accessibilityHidden(islandVisible)
                 .accessibilityLabel("Open \(current.name) settings")
                 .accessibilityHint("Changes this bot's model, profile, notifications, and voice")
@@ -1078,6 +1086,12 @@ struct ChatView: View {
                 subtitle: "Stop the current turn", destructive: true
             ) { Task { await session.interrupt(bot: bot) } })
         }
+        if !session.canAct {
+            // Showing the last sync (MOCA-296): browsing threads still
+            // works; everything else here changes something or needs the
+            // computer to answer.
+            for index in out.indices where out[index].id != "tasks" { out[index].disabled = true }
+        }
         return out
     }
 
@@ -1101,7 +1115,8 @@ struct ChatView: View {
     }
 
     private var canSend: Bool {
-        (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+        session.canAct
+            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
             && !preparingAttachments && !sendingMessage
     }
 
@@ -1129,6 +1144,7 @@ struct ChatView: View {
     }
 
     private var composerPrompt: String {
+        if !session.canAct { return String(localized: "Reconnect to send") }
         if sendingMessage { return "Sending…" }
         if dictation.isListening { return "Listening…" }
         if current.busy { return engineCanSteer ? "Sends into this turn" : "Sends after this turn" }
@@ -1136,7 +1152,7 @@ struct ChatView: View {
     }
 
     private var steerQueued: (() -> Void)? {
-        guard current.busy, !hasPendingApproval, case let .bot(bot) = current else { return nil }
+        guard session.canAct, current.busy, !hasPendingApproval, case let .bot(bot) = current else { return nil }
         return {
             steering = true
             dictation.stop()
@@ -1153,7 +1169,8 @@ struct ChatView: View {
         let text = (explicitText ?? draftAtSend).trimmingCharacters(in: .whitespacesAndNewlines)
         let outgoingAttachments = attachments
         let chatAtSend = current
-        guard !text.isEmpty || !outgoingAttachments.isEmpty,
+        guard session.canAct,
+              !text.isEmpty || !outgoingAttachments.isEmpty,
               !preparingAttachments,
               !sendingMessage
         else { return }
@@ -1557,7 +1574,7 @@ struct ChatView: View {
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if draft.isEmpty && attachments.isEmpty && !current.busy
-                        && !hasPendingApproval && !storedChips.isEmpty {
+                        && !hasPendingApproval && !storedChips.isEmpty && session.canAct {
                 PredictiveActionChipsView(chips: storedChips, accentColor: MausPalette.color(current.color)) { chip in
                     submit(chip.prompt)
                 }
@@ -1615,7 +1632,7 @@ struct ChatView: View {
                                 .frame(width: 30, height: 32)
                         }
                         .buttonStyle(.plain)
-                        .disabled(preparingAttachments || sendingMessage)
+                        .disabled(preparingAttachments || sendingMessage || !session.canAct)
                         .accessibilityLabel("Slash commands")
                         .padding(.leading, 6)
                         .padding(.bottom, 6)
@@ -1629,6 +1646,10 @@ struct ChatView: View {
                             .font(.system(size: 17))
                             .padding(.vertical, 11)
                             .focused($composerFocused)
+                            // The last sync is read-only (MOCA-296): the
+                            // prompt says why instead of taking words that
+                            // could not be sent.
+                            .disabled(!session.canAct)
                             .accessibilityIdentifier("message-input")
                             // Partial transcripts rebuild from a frozen base;
                             // prevent competing edits without dimming the text.
@@ -1651,7 +1672,7 @@ struct ChatView: View {
                         // Stop sits in the bar while the turn runs, as it does
                         // on the desktop. The Interrupt action under + was the
                         // only way before, and rooms had none at all.
-                        if current.canStop {
+                        if current.canStop && session.canAct {
                             Button {
                                 Haptics.selection()
                                 Task { await session.interrupt(current) }
@@ -1687,7 +1708,7 @@ struct ChatView: View {
                                 .pulseCompat(isActive: dictation.isListening)
                         }
                         .buttonStyle(.plain)
-                        .disabled(preparingAttachments || sendingMessage || liveCall.machine.isActive)
+                        .disabled(preparingAttachments || sendingMessage || liveCall.machine.isActive || !session.canAct)
                         .padding(.bottom, 6)
                         .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Start dictation")
 
@@ -1789,6 +1810,7 @@ struct MessageRow: View {
                         .buttonStyle(.bordered)
                         .buttonBorderShape(.capsule)
                         .tint(group.mine ? Color.accentColor : Color.secondary)
+                        .disabled(!session.canAct)
                     }
                 }
             }
@@ -1799,19 +1821,19 @@ struct MessageRow: View {
                     Button {
                         Task { await session.switchVersion(to: versions[index - 1], for: bot) }
                     } label: { Image(systemName: "chevron.left") }
-                    .disabled(index == 0 || bot.busy == true)
+                    .disabled(index == 0 || bot.busy == true || !session.canAct)
                     Text("\(index + 1) of \(versions.count)")
                     Button {
                         Task { await session.switchVersion(to: versions[index + 1], for: bot) }
                     } label: { Image(systemName: "chevron.right") }
-                    .disabled(index + 1 >= versions.count || bot.busy == true)
+                    .disabled(index + 1 >= versions.count || bot.busy == true || !session.canAct)
                 }
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Color.secondary)
             }
         }
         .contextMenu {
-            if !isPendingEdit {
+            if !isPendingEdit && session.canAct {
                 ForEach(Self.reactionChoices, id: \.self) { emoji in
                     Button(emoji) {
                         Haptics.selection()
@@ -1841,6 +1863,7 @@ struct MessageRow: View {
                message.webhookContent == nil,
                attachedContent.attachments.isEmpty,
                !isPendingEdit,
+               session.canAct,
                case let .bot(bot) = chat {
                 Divider()
                 Button("Edit and retry", systemImage: "pencil") {
@@ -2397,6 +2420,9 @@ struct CredentialRequestCardView: View {
         } else if submitted {
             Label("Encrypted and saved on your computer", systemImage: "checkmark.shield.fill")
                 .foregroundStyle(.green)
+        } else if !session.canAct {
+            // A saved ask may be stale; the last sync never answers one.
+            ReconnectToAnswerNotice()
         } else if canEnterOnPhone {
             phoneEntry
         } else if !hasSecurePairing {
@@ -2414,7 +2440,7 @@ struct CredentialRequestCardView: View {
             )
             .foregroundStyle(.green)
 
-            if secret.resumed != true, let preparedSubmission {
+            if secret.resumed != true, session.canAct, let preparedSubmission {
                 Button(action: { send(preparedSubmission) }) {
                     HStack(spacing: 7) {
                         if submitting { ProgressView() }
@@ -2642,6 +2668,18 @@ struct CredentialRequestCardView: View {
 /// An option card. When it still has a request behind it, this is the
 /// screen the companion exists for — a bot stopped, and only a person can
 /// let it continue.
+/// What an ask shows instead of its buttons while the phone is showing the
+/// last sync (MOCA-296): it may have expired or been answered elsewhere, so
+/// it is never answered from the cache.
+struct ReconnectToAnswerNotice: View {
+    var body: some View {
+        Label("Reconnect to answer", systemImage: "wifi.slash")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(Color.secondary)
+            .accessibilityIdentifier("reconnect-to-answer")
+    }
+}
+
 struct CardView: View {
     let chat: Chat
     let message: Message
@@ -2774,13 +2812,16 @@ struct CardView: View {
                             }
                             .buttonStyle(.plain)
                             .disabled(
-                                answering ||
+                                answering || !session.canAct ||
                                     (card.skillRequest != nil && !Self.isRefusal(option) &&
                                         card.skillRequest?.reviewedSha256 == nil)
                             )
                         }
                     }
                     .padding(.top, 2)
+                    .opacity(session.canAct ? 1 : 0.5)
+
+                    if !session.canAct { ReconnectToAnswerNotice() }
 
                     // The grant key comes from the card. The phone never
                     // derives its own, so it cannot permit something subtly
@@ -2805,7 +2846,7 @@ struct CardView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(Color.secondary)
                         .frame(maxWidth: .infinity)
-                        .disabled(answering)
+                        .disabled(answering || !session.canAct)
                     }
                 } else if let outcome = card.outcome {
                     Label {

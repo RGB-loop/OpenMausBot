@@ -115,7 +115,7 @@ struct TaskManagerView: View {
                             renameFocused = false
                             isSelecting = true
                         }
-                            .disabled(isMutating || tasks.count < 2)
+                            .disabled(isMutating || tasks.count < 2 || !session.canAct)
                             .accessibilityIdentifier("select-threads")
                     }
                 }
@@ -124,7 +124,7 @@ struct TaskManagerView: View {
                         Button("New thread", systemImage: "plus") {
                             perform { await create() }
                         }
-                        .disabled(isMutating || (!current.isBot && current.busy))
+                        .disabled(isMutating || (!current.isBot && current.busy) || !session.canAct)
                         .accessibilityIdentifier("new-thread")
                     }
                 }
@@ -319,17 +319,19 @@ struct TaskManagerView: View {
                     queued: session.state.pendingQueued[task.threadId]?.isEmpty == false
                 )
             }
-            .disabled(isMutating || (!current.isBot && current.busy && task.threadId != current.threadId))
+            // A bot's threads switch on this phone; a group's switch on the
+            // computer, which the last sync cannot ask (MOCA-296).
+            .disabled(isMutating || (!current.isBot && (current.busy || !session.canAct) && task.threadId != current.threadId))
             .accessibilityIdentifier("thread-\(task.threadId)")
             .contextMenu {
                 Button("Rename", systemImage: "pencil") { beginRename(task) }
-                    .disabled(isMutating)
+                    .disabled(isMutating || !session.canAct)
                 Button {
                     togglePin(task)
                 } label: {
                     Label(task.pinned == true ? "Unpin" : "Pin", systemImage: task.pinned == true ? "pin.slash" : "pin")
                 }
-                .disabled(isMutating)
+                .disabled(isMutating || !session.canAct)
                 if current.isBot {
                     Menu {
                         Button("Until new activity") { perform { await snooze(task, until: 0) } }
@@ -345,12 +347,12 @@ struct TaskManagerView: View {
                     } label: {
                         Label("Snooze", systemImage: "moon.zzz")
                     }
-                    .disabled(isMutating || taskIsWorking(task))
+                    .disabled(isMutating || !session.canAct || taskIsWorking(task))
                     if task.isSnoozed() {
                         Button("Stop snoozing", systemImage: "bell") {
                             perform { await snooze(task, until: nil) }
                         }
-                        .disabled(isMutating)
+                        .disabled(isMutating || !session.canAct)
                     }
                     Button {
                         toggleArchive(task)
@@ -360,7 +362,7 @@ struct TaskManagerView: View {
                             systemImage: task.isArchived ? "arrow.uturn.backward" : "archivebox"
                         )
                     }
-                    .disabled(isMutating || task.isWorking)
+                    .disabled(isMutating || !session.canAct || task.isWorking)
                 }
                 Button("Delete", systemImage: "trash", role: .destructive) { taskToDelete = task }
                     .disabled(!canDelete(task, current: current, taskCount: taskCount))
@@ -376,7 +378,7 @@ struct TaskManagerView: View {
                     Label(task.pinned == true ? "Unpin" : "Pin", systemImage: task.pinned == true ? "pin.slash" : "pin")
                 }
                 .tint(.indigo)
-                .disabled(isMutating)
+                .disabled(isMutating || !session.canAct)
                 if current.isBot {
                     Button {
                         toggleArchive(task)
@@ -387,13 +389,13 @@ struct TaskManagerView: View {
                         )
                     }
                     .tint(.orange)
-                    .disabled(isMutating || task.isWorking)
+                    .disabled(isMutating || !session.canAct || task.isWorking)
                 }
                 Button { beginRename(task) } label: {
                     Label("Rename", systemImage: "pencil")
                 }
                 .tint(.accentColor)
-                .disabled(isMutating)
+                .disabled(isMutating || !session.canAct)
             }
         }
     }
@@ -407,7 +409,7 @@ struct TaskManagerView: View {
     }
 
     private func canDelete(_ task: BotTask, current: Chat, taskCount: Int) -> Bool {
-        !isMutating && taskCount > 1 && (current.isBot ? !task.isWorking : !current.busy)
+        !isMutating && session.canAct && taskCount > 1 && (current.isBot ? !task.isWorking : !current.busy)
     }
 
     /// The desktop disables thread actions while a reply is in flight; the

@@ -173,7 +173,7 @@ struct CompactBotEntry: View, Equatable {
                 Button { createThread(for: bot) } label: {
                     Label("New thread", systemImage: "square.and.pencil")
                 }
-                .disabled(creating)
+                .disabled(creating || !session.canAct)
                 Button { manage(.bot(bot)) } label: {
                     Label("Manage threads", systemImage: "list.bullet")
                 }
@@ -339,11 +339,14 @@ struct CompactBotEntry: View, Equatable {
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
-                    Button {
-                        let pinned = task.pinned != true
-                        Task { await session.setTaskPinned(task, pinned: pinned, in: .bot(bot)) }
-                    } label: {
-                        Label(task.pinned == true ? "Unpin" : "Pin", systemImage: task.pinned == true ? "pin.slash" : "pin")
+                    // Pinning is a change; the last sync only browses.
+                    if session.canAct {
+                        Button {
+                            let pinned = task.pinned != true
+                            Task { await session.setTaskPinned(task, pinned: pinned, in: .bot(bot)) }
+                        } label: {
+                            Label(task.pinned == true ? "Unpin" : "Pin", systemImage: task.pinned == true ? "pin.slash" : "pin")
+                        }
                     }
                 }
                 .accessibilityIdentifier("thread.\(task.threadId)")
@@ -368,7 +371,7 @@ struct CompactBotEntry: View, Equatable {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(creating)
+        .disabled(creating || !session.canAct)
         .accessibilityLabel("New thread with \(bot.name)")
         .accessibilityIdentifier("new-thread.\(bot.id)")
     }

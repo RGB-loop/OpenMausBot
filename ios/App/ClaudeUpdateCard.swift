@@ -44,6 +44,8 @@ struct ClaudeUpdateCard: View {
                             .background(Capsule().fill(tint))
                     }
                     .buttonStyle(.plain)
+                    .disabled(!session.canAct)
+                    .opacity(session.canAct ? 1 : 0.5)
                     Button {
                         Haptics.selection()
                         phase = .manual
@@ -139,7 +141,7 @@ struct ClaudeUpdateCard: View {
     }
 
     private func update() {
-        guard phase != .updating else { return }
+        guard phase != .updating, session.canAct else { return }
         Haptics.selection()
         phase = .updating
         Task {

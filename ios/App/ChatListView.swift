@@ -137,7 +137,9 @@ struct ChatListView: View {
             // a bot that stopped for you grows out of the island
             .overlay(alignment: .top) {
                 if CompanionLayout.supportsIslandPresentation {
-                    NeedsYouIsland(update: updates.first { $0.kind == .needsYou }) { chat in path.append(chat) }
+                    // Not for the last sync: a saved ask is "last known" in
+                    // Updates, never a live interruption (MOCA-296).
+                    NeedsYouIsland(update: session.canAct ? updates.first { $0.kind == .needsYou } : nil) { chat in path.append(chat) }
                 }
             }
             }
@@ -436,6 +438,7 @@ struct ChatListView: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.trailing, 6)
+                .disabled(!session.canAct)
                 .accessibilityLabel("New group")
                 .accessibilityIdentifier("new-group")
             }
@@ -498,6 +501,7 @@ struct ChatListView: View {
                         GroupTile(room: nil, members: [])
                     }
                     .buttonStyle(.plain)
+                    .disabled(!session.canAct)
                     .accessibilityLabel("New group")
                 }
             }
@@ -682,7 +686,8 @@ struct ChatListView: View {
                 .frame(width: 180)
             searchButton
             walkieButton
-            if session.canAdminister {
+            // Creating is a change; the last sync only browses (MOCA-296).
+            if session.canAdminister && session.canAct {
                 sectionButton
                 newBotButton
             }
@@ -696,8 +701,9 @@ struct ChatListView: View {
             searchButton
             walkieButton
             // Creating bots and sections needs the admin scope on a server;
-            // a chat-only phone is not shown buttons the server would refuse.
-            if session.canAdminister {
+            // a chat-only phone is not shown buttons the server would refuse,
+            // and nor is a phone showing the last sync.
+            if session.canAdminister && session.canAct {
                 Menu {
                     Button("New section", systemImage: "folder.badge.plus", action: openNewSection)
                         .disabled(!hasVisibleBots)
@@ -740,7 +746,8 @@ struct ChatListView: View {
             showingWalkie = true
         }
         .accessibilityLabel("Walkie")
-        .disabled(liveCall.machine.isActive)
+        // Walkie sends what you say; the last sync cannot.
+        .disabled(liveCall.machine.isActive || !session.canAct)
     }
 
     private var sectionButton: some View {
@@ -1209,18 +1216,23 @@ struct StatusBanner: View {
 
     var body: some View {
         Group {
-            switch session.status {
-            case .live, .unpaired:
-                EmptyView()
-            case .connecting:
-                banner("Connecting…", systemImage: "arrow.triangle.2.circlepath", tint: .secondary)
-            case let .offline(reason):
-                banner(reason, systemImage: "wifi.slash", tint: .orange)
-            case .unauthorized:
-                banner("This device was unpaired on the computer.", systemImage: "lock.slash", tint: .red)
+            if OfflineSnapshotBanner.isShown(in: session) {
+                OfflineSnapshotBanner()
+            } else {
+                switch session.status {
+                case .live, .unpaired:
+                    EmptyView()
+                case .connecting:
+                    banner("Connecting…", systemImage: "arrow.triangle.2.circlepath", tint: .secondary)
+                case let .offline(reason):
+                    banner(reason, systemImage: "wifi.slash", tint: .orange)
+                case .unauthorized:
+                    banner("This device was unpaired on the computer.", systemImage: "lock.slash", tint: .red)
+                }
             }
         }
         .animation(.default, value: session.status)
+        .animation(.default, value: session.state.isCached)
     }
 
     private func banner(_ text: String, systemImage: String, tint: Color) -> some View {
@@ -1231,6 +1243,52 @@ struct StatusBanner: View {
             .padding(.vertical, 6)
             .glassCapsule(interactive: false)
             .padding(.bottom, 8)
+    }
+}
+
+/// The last sync is on screen instead of the computer's live state
+/// (MOCA-296): one quiet line at the top of Home and of every chat, whatever
+/// the stream is doing underneath, until a live hydrate replaces the copy.
+/// Tapping it tries the computer again now.
+struct OfflineSnapshotBanner: View {
+    @EnvironmentObject private var session: Session
+
+    static func isShown(in session: Session) -> Bool {
+        session.state.isCached && session.status != .unauthorized
+    }
+
+    var body: some View {
+        if Self.isShown(in: session), let cachedAt = session.state.cachedAt {
+            Button {
+                Task { await session.refresh() }
+            } label: {
+                Label {
+                    Text("Not connected · last updated \(LastSyncStamp.text(cachedAt))")
+                } icon: {
+                    Image(systemName: "wifi.slash")
+                }
+                .font(.footnote)
+                .foregroundStyle(Color.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .glassCapsule()
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 8)
+            .accessibilityIdentifier("offline-snapshot-banner")
+            .accessibilityHint(Text("Tries to reach your computer again"))
+        }
+    }
+}
+
+/// When the last sync was saved, for the offline banner: the time today,
+/// and the day as well before that ("3 Oct, 09:41"), in the phone's locale.
+enum LastSyncStamp {
+    static func text(_ date: Date) -> String {
+        Calendar.current.isDateInToday(date)
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.day().month(.abbreviated).hour().minute())
     }
 }
 

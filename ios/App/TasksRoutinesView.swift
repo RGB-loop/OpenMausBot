@@ -27,11 +27,15 @@ struct TasksRoutinesView: View {
                 }
                 ForEach(routines) { routine in
                     let canToggle = routine.canToggle()
+                    // The last sync lists routines but changes none of them:
+                    // no Run now, Pause, Delete or editor until the computer
+                    // answers (MOCA-296).
+                    let canChange = session.canAct
                     RoutineRow(routine: routine, bot: session.state.bot(routine.botId))
                         .contentShape(Rectangle())
-                        .onTapGesture { editor = .edit(routine) }
+                        .onTapGesture { if canChange { editor = .edit(routine) } }
                         .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                            if canToggle {
+                            if canToggle && canChange {
                                 Button(routine.enabled ? "Pause" : "Resume") {
                                     Task { await toggle(routine) }
                                 }
@@ -39,18 +43,22 @@ struct TasksRoutinesView: View {
                             }
                         }
                         .swipeActions(edge: .trailing) {
-                            Button("Delete", role: .destructive) { deleting = routine }
-                            Button("Run now") { Task { await runNow(routine) } }.tint(.blue)
+                            if canChange {
+                                Button("Delete", role: .destructive) { deleting = routine }
+                                Button("Run now") { Task { await runNow(routine) } }.tint(.blue)
+                            }
                         }
                         .contextMenu {
-                            Button("Run now", systemImage: "play.fill") { Task { await runNow(routine) } }
-                            if canToggle {
-                                Button(routine.enabled ? "Pause" : "Resume", systemImage: routine.enabled ? "pause" : "play") {
-                                    Task { await toggle(routine) }
+                            if canChange {
+                                Button("Run now", systemImage: "play.fill") { Task { await runNow(routine) } }
+                                if canToggle {
+                                    Button(routine.enabled ? "Pause" : "Resume", systemImage: routine.enabled ? "pause" : "play") {
+                                        Task { await toggle(routine) }
+                                    }
                                 }
+                                Button("Edit", systemImage: "pencil") { editor = .edit(routine) }
+                                Button("Delete", systemImage: "trash", role: .destructive) { deleting = routine }
                             }
-                            Button("Edit", systemImage: "pencil") { editor = .edit(routine) }
-                            Button("Delete", systemImage: "trash", role: .destructive) { deleting = routine }
                         }
                 }
             }
@@ -78,6 +86,7 @@ struct TasksRoutinesView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("New routine", systemImage: "plus") { editor = .new }
+                    .disabled(!session.canAct)
             }
         }
         .task { await reload() }

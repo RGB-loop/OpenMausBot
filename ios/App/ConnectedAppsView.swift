@@ -127,7 +127,7 @@ struct ConnectedAppsView: View {
                 Button("Connect \(card.label)", systemImage: "plus.circle") {
                     Task { await authorize(card, alias: nil) }
                 }
-                .disabled(catalog?.configured != true)
+                .disabled(catalog?.configured != true || !session.canAct)
             } else if accounts.isEmpty {
                 let statusLabel: LocalizedStringKey = isPending ? "Connecting…" : "Connected"
                 let statusSymbol = isPending ? "clock" : "checkmark.circle.fill"
@@ -160,7 +160,7 @@ struct ConnectedAppsView: View {
                     alias = ""
                     aliasCard = card
                 }
-                .disabled(accounts.count >= 5)
+                .disabled(accounts.count >= 5 || !session.canAct)
             }
         } header: {
             HStack {

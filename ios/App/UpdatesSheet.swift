@@ -98,7 +98,12 @@ private struct UpdateRow: View {
                         .multilineTextAlignment(.leading)
 
                     if update.kind == .needsYou, let card = update.card, card.isPending {
-                        if card.skillRequest != nil {
+                        if !session.canAct {
+                            // Last known, from the saved copy: never answered
+                            // from it (MOCA-296).
+                            ReconnectToAnswerNotice()
+                                .padding(.top, 6)
+                        } else if card.skillRequest != nil {
                             Label("Open the chat to review SKILL.md", systemImage: "doc.text.magnifyingglass")
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(Color.secondary)

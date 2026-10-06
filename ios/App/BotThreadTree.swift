@@ -107,7 +107,7 @@ struct BotThreadTree: View, Equatable {
                 Button { createThread() } label: {
                     Image(systemName: "plus").frame(width: 44, height: 44)
                 }
-                .disabled(creating)
+                .disabled(creating || !session.canAct)
                 .accessibilityLabel("New thread with \(bot.name)")
                 Button { manage(.bot(bot)) } label: {
                     Image(systemName: "ellipsis").frame(width: 44, height: 44)
@@ -150,11 +150,14 @@ struct BotThreadTree: View, Equatable {
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
-                    Button {
-                        let pinned = task.pinned != true
-                        Task { await session.setTaskPinned(task, pinned: pinned, in: .bot(bot)) }
-                    } label: {
-                        Label(task.pinned == true ? "Unpin" : "Pin", systemImage: task.pinned == true ? "pin.slash" : "pin")
+                    // Pinning is a change; the last sync only browses.
+                    if session.canAct {
+                        Button {
+                            let pinned = task.pinned != true
+                            Task { await session.setTaskPinned(task, pinned: pinned, in: .bot(bot)) }
+                        } label: {
+                            Label(task.pinned == true ? "Unpin" : "Pin", systemImage: task.pinned == true ? "pin.slash" : "pin")
+                        }
                     }
                 }
                 .accessibilityIdentifier("thread.\(task.threadId)")
