@@ -3,8 +3,10 @@
 // launch path. Once fetched, a screen renders in the same commit as the
 // click, exactly as when it was part of the entry; React.lazy would suspend
 // on every first render and React then holds that commit for up to 300 ms.
-// A chunk that fails to load leaves that screen empty and is asked for
-// again; it never throws into the tree, which has no error boundary.
+// A chunk that cannot load never throws into the tree, which has no error
+// boundary. Chromium (so Electron) keeps a failed import for the life of the
+// page and rejects every later import() of it at once, so the screen says it
+// could not load and offers a reload instead of showing nothing.
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,7 +49,7 @@ afterEach(() => {
 
 describe("lazyScreen", () => {
   it("renders an already fetched screen in the same commit that mounts it", async () => {
-    const Screen = lazyScreen(async () => Label);
+    const Screen = lazyScreen("Settings", async () => Label);
     await Screen.preload();
     expect(render(createElement(Screen, { text: "Settings" }))).toBe("<div><p>Settings</p></div>");
   });
@@ -55,7 +57,7 @@ describe("lazyScreen", () => {
   it("renders nothing before its chunk arrives, then the screen", async () => {
     let arrive!: (component: typeof Label) => void;
     const load = vi.fn((): Loaded => new Promise((resolve) => (arrive = resolve)));
-    const Screen = lazyScreen(load);
+    const Screen = lazyScreen("Routines", load);
     expect(render(createElement(Screen, { text: "Routines" }))).toBe("<div></div>");
     arrive(Label);
     await settle();
@@ -65,7 +67,7 @@ describe("lazyScreen", () => {
 
   it("fetches a chunk once, however many places ask for it", async () => {
     const load = vi.fn(async () => Label);
-    const Screen = lazyScreen(load);
+    const Screen = lazyScreen("Inspector", load);
     render(createElement("div", null, createElement(Screen, { text: "a" }), createElement(Screen, { text: "b" })));
     await Promise.all([Screen.preload(), Screen.preload()]);
     await settle();
@@ -79,7 +81,7 @@ describe("lazyScreen", () => {
       const [id] = useState(() => ++mounts);
       return createElement("p", null, `${text}${id}`);
     };
-    const Screen = lazyScreen(async () => Counter);
+    const Screen = lazyScreen("Counter", async () => Counter);
     render(createElement(Screen, { text: "x" }));
     await settle();
     render(createElement(Screen, { text: "y" }));
@@ -87,53 +89,74 @@ describe("lazyScreen", () => {
     expect(mounts).toBe(1);
   });
 
-  it("a failed chunk leaves only that screen empty, and the next request loads it", async () => {
+  // What Chromium does: the first import() fails, and every later one rejects
+  // straight away from the module map without fetching again.
+  it("a chunk that keeps failing shows a reload notice for that screen only, and logs it", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    const load = vi.fn<() => Loaded>()
-      .mockRejectedValueOnce(new TypeError("Failed to fetch dynamically imported module"))
-      .mockResolvedValue(Label);
-    const Screen = lazyScreen(load);
-    expect(render(createElement("main", null, "chat", createElement(Screen, { text: "Team map" })))).toBe("<div><main>chat</main></div>");
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {});
+    const load = vi.fn((): Loaded => Promise.reject(new TypeError("Failed to fetch dynamically imported module")));
+    const Screen = lazyScreen("TeamMapPage", load);
+    await expect(Screen.preload()).rejects.toThrow(TypeError);
+    render(createElement("main", null, "chat", createElement(Screen, { text: "Team map" })));
     await settle();
-    expect(document.body.innerHTML).toBe("<div><main>chat</main></div>");
+    expect(document.querySelector("main")!.outerHTML).toBe("<main>chat</main>");
+    const notice = document.querySelector<HTMLElement>('[role="alert"]');
+    expect(notice?.textContent).toContain("couldn’t load");
+    expect(document.body.textContent).not.toContain("Team map");
     expect(errors).not.toHaveBeenCalled();
-    await Screen.preload();
-    root!.unmount();
-    root = null;
-    document.body.innerHTML = "";
-    expect(render(createElement(Screen, { text: "Team map" }))).toBe("<div><p>Team map</p></div>");
-    expect(load).toHaveBeenCalledTimes(2);
+    expect(warnings).toHaveBeenCalledTimes(2);
+    expect(String(warnings.mock.calls[0]![0])).toContain("TeamMapPage");
+    expect(reload).not.toHaveBeenCalled();
+    notice!.querySelector("button")!.click();
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("a screen still open after a failed chunk asks again, backing off", async () => {
-    vi.useFakeTimers();
+  it("logs a failed prefetch rather than dropping it silently", async () => {
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failure = new TypeError("Failed to fetch dynamically imported module");
+    const Screen = lazyScreen("SettingsModal", (): Loaded => Promise.reject(failure));
+    await expect(Screen.preload()).rejects.toBe(failure);
+    expect(warnings).toHaveBeenCalledWith(expect.stringContaining("SettingsModal"), failure);
+  });
+
+  it("the next open asks once more, so a browser that fetches it again recovers", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const load = vi.fn<() => Loaded>()
       .mockRejectedValueOnce(new TypeError("Failed to fetch dynamically imported module"))
-      .mockRejectedValueOnce(new TypeError("Failed to fetch dynamically imported module"))
       .mockResolvedValue(Label);
-    const Screen = lazyScreen(load);
-    render(createElement(Screen, { text: "Computer" }));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(load).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1_000);
+    const Screen = lazyScreen("TriggersPanel", load);
+    render(createElement(Screen, { text: "Triggers" }));
+    await settle();
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+    render(createElement("p"));
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    render(createElement(Screen, { text: "Triggers" }));
+    await settle();
+    expect(document.body.textContent).toBe("Triggers");
+    expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(load).toHaveBeenCalledTimes(2);
-    expect(document.body.textContent).toBe("");
-    await vi.advanceTimersByTimeAsync(1_999);
-    expect(load).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(load).toHaveBeenCalledTimes(3);
-    await vi.waitFor(() => expect(document.body.textContent).toBe("Computer"));
   });
 
-  it("stops asking once the screen closes", async () => {
+  it("asks once per open and never polls, since a cached failure cannot recover by asking", async () => {
     vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const load = vi.fn(() => Promise.reject(new TypeError("Failed to fetch dynamically imported module")));
-    const Screen = lazyScreen(load);
+    const Screen = lazyScreen("ComputerPanel", load);
     render(createElement(Screen, {}));
-    await vi.advanceTimersByTimeAsync(0);
-    render(createElement("p"));
     await vi.advanceTimersByTimeAsync(60_000);
     expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("a screen closed before its chunk fails leaves nothing behind", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let fail!: (error: Error) => void;
+    const Screen = lazyScreen("ActivityPanel", (): Loaded => new Promise((_, reject) => (fail = reject)));
+    render(createElement(Screen, { text: "Activity" }));
+    render(createElement("p", null, "chat"));
+    fail(new TypeError("Failed to fetch dynamically imported module"));
+    await settle();
+    expect(document.body.innerHTML).toBe("<div><p>chat</p></div>");
   });
 });
 
