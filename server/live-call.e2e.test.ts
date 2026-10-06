@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LIVE_COPY } from "../shared/live-approval.ts";
 import { cloudPairingSignature } from "./cloud-home.ts";
+import { CLOUD_HOME_PLACE } from "./system-prompt.ts";
 import type { LiveCallState } from "../shared/wire.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { startFakeOpenAiLive, type FakeOpenAiLive } from "./testing/fake-openai-live.ts";
@@ -540,24 +541,33 @@ posixOnly("Live call on the person's Cloud", () => {
   it("saves the owner's OpenAI key on the Cloud, and a Live call starts with it", async () => {
     const before = await request("GET", "/api/config");
     expect(before.body).toMatchObject({ cloudHome: true, live: { configured: false } });
-    const refused = await request("POST", "/api/live/session", { botId: "nobody", sdp: SDP, client: "desktop" });
-    expect(refused.status).toBe(404);
+    const created = await request("POST", "/api/bots", { name: "Ada", modelSelection: { instanceId: "claude", model: "claude-fake" } });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const { id: botId, threadId } = created.body.bot as { id: string; threadId: string };
+
+    // No key yet: the Cloud says so (the page then shows the key form), and
+    // nothing reaches GPT-Live.
+    const refused = await request("POST", "/api/live/session", { botId, sdp: SDP, client: "desktop" });
+    expect(refused, JSON.stringify(refused.body)).toMatchObject({ status: 409, body: { needsKey: true } });
+    expect(live.sessions).toHaveLength(0);
 
     const saved = await request("PUT", "/api/config", { live: { key: OWNER_KEY } });
     expect(saved.status, JSON.stringify(saved.body)).toBe(200);
     expect(saved.body).toMatchObject({ cloudHome: true, live: { configured: true } });
     expect(JSON.stringify(saved.body)).not.toContain(OWNER_KEY);
 
-    const created = await request("POST", "/api/bots", { name: "Ada", modelSelection: { instanceId: "claude", model: "claude-fake" } });
-    expect(created.status, JSON.stringify(created.body)).toBe(201);
-    const { id: botId, threadId } = created.body.bot as { id: string; threadId: string };
-    const before201 = live.sessions.length;
     const started = await request("POST", "/api/live/session", { botId, sdp: SDP, client: "desktop" });
     expect(started.status, JSON.stringify(started.body)).toBe(201);
     expect(started.body).toMatchObject({ call: { botId, threadId }, transport: { type: "webrtc", sdp: expect.any(String) } });
-    // the call reached GPT-Live and its sideband attached
-    const session = live.sessions[before201];
-    expect(session).toBeDefined();
+    // the call reached GPT-Live with the owner's own key, and its sideband attached
+    expect(live.sessions).toHaveLength(1);
+    const [session] = live.sessions;
+    expect(session.key).toBe(OWNER_KEY);
+    // the voice is told it runs on My Cloud, in the bot's own words, never on
+    // the person's own computer (server/index.ts passes cloudHome)
+    const { instructions } = session.body.session as { instructions: string };
+    expect(instructions.split("\n")[0]).toBe(`You are Ada, an AI agent that runs on ${CLOUD_HOME_PLACE}.`);
+    expect(instructions).not.toContain("on the user's own computer");
     await live.waitForAttach(session.id);
 
     const ended = await request("POST", "/api/live/call/end", { callId: started.body.call.callId });

@@ -1751,7 +1751,6 @@
   "computer.err.localEngine": "该模型无法控制这台电脑。请选择 Claude 或某个 ACP 模型提供方。",
   "computer.err.vmEngine": "该模型无法使用本地虚拟机。请选择 Claude 或某个 ACP 模型提供方。",
   "computer.err.cloudEngine": "该模型无法使用电脑。请选择其他模型，或将“工作位置”设为自动。",
-  "computer.err.vpsEngine": "该模型无法使用自托管 VPS。请选择 Claude 或某个 ACP 模型提供方，或将云后端切换为 Boat。",
   "computer.err.vmNotReady": "本地虚拟机尚未就绪",
   "computer.err.vmOpenSettings": "{problem}。请打开“设置 → 本地虚拟机”。",
   "computer.err.vpsAlias": "请在设置 → API 密钥中添加 VPS 的 SSH 配置别名。",
@@ -2434,6 +2433,5 @@
   "computer.phase.showSleepingBoat": "自动找到了一台休眠的云电脑。它没有被唤醒或更改。",
   "computer.phase.showPendingBoat": "自动找到了一台尚未就绪的云电脑。它没有被更改。",
   "computer.badge.autoBoat": "云端电脑 · 自动 · 只读",
-  "computer.addBoatKey": "添加 Boat API 密钥即可为此机器人提供云电脑——它就在这里启动。",
-  "call.live.disclosureCloud": "实时通话会将你的语音连同此聊天的近期消息、机器人的回复以及其请求审批的详细信息一并发送给 OpenAI。OpenAI 密钥始终保存在 My Cloud 上。"
+  "computer.addBoatKey": "添加 Boat API 密钥即可为此机器人提供云电脑——它就在这里启动。"
 }

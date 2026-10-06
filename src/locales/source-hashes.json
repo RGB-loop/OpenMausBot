@@ -1124,7 +1124,6 @@
       "computer.err.localEngine": "d0b05966f7b157289a1649168f44154ae10ee7127ae60e3c5f95e6ba38e675ba",
       "computer.err.vmEngine": "d43c59238717653d157c5ea3d0ee0c75e36113704067e4e789b2d144b2ec5e58",
       "computer.err.cloudEngine": "9c186c100aa970b7a9f51f5c491d32ddfff5515a2ef1b706e0551b3330a36548",
-      "computer.err.vpsEngine": "fe85726aaf4c24e26222b4dada4635495dc2112ef06657fe0710b4ca4149615b",
       "computer.err.vmNotReady": "7afce1a8798850580c396c228ae25d8c43a0b71190a2fa7e794ce1dcf7c654a9",
       "computer.err.vmOpenSettings": "61a9e18e703c225c48fc050b00c62dbe8f311ac084ee9cd9dbfea79b2321fff9",
       "computer.err.vpsAlias": "1b41f11f1b7b2366bf9cf8a0d581694e33ef473ee2dc2c583432ed1a6ed2704e",
@@ -1506,8 +1505,7 @@
       "computer.phase.showSleepingBoat": "dfbd04c1e36d554878a6ec1366e5b381507c69da80f06b172962d79ff3e0d7a5",
       "computer.phase.showPendingBoat": "9d5fdebf99747cd6ac9a160b14440a32d39a5c164fdee27caa95babc669b5605",
       "computer.badge.autoBoat": "d9cb4ef116d5aaa5ec2c03b85f59618f5edaba1f89a0b811918f0a03b3434b21",
-      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36",
-      "call.live.disclosureCloud": "6719806a96b55d96357b899e5e254533b8b9280ee678f9fff7c3a2b02def8a44"
+      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36"
     },
     "es": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -2625,7 +2623,6 @@
       "computer.err.localEngine": "d0b05966f7b157289a1649168f44154ae10ee7127ae60e3c5f95e6ba38e675ba",
       "computer.err.vmEngine": "d43c59238717653d157c5ea3d0ee0c75e36113704067e4e789b2d144b2ec5e58",
       "computer.err.cloudEngine": "9c186c100aa970b7a9f51f5c491d32ddfff5515a2ef1b706e0551b3330a36548",
-      "computer.err.vpsEngine": "fe85726aaf4c24e26222b4dada4635495dc2112ef06657fe0710b4ca4149615b",
       "computer.err.vmNotReady": "7afce1a8798850580c396c228ae25d8c43a0b71190a2fa7e794ce1dcf7c654a9",
       "computer.err.vmOpenSettings": "61a9e18e703c225c48fc050b00c62dbe8f311ac084ee9cd9dbfea79b2321fff9",
       "computer.err.vpsAlias": "1b41f11f1b7b2366bf9cf8a0d581694e33ef473ee2dc2c583432ed1a6ed2704e",
@@ -2996,8 +2993,7 @@
       "computer.phase.showSleepingBoat": "dfbd04c1e36d554878a6ec1366e5b381507c69da80f06b172962d79ff3e0d7a5",
       "computer.phase.showPendingBoat": "9d5fdebf99747cd6ac9a160b14440a32d39a5c164fdee27caa95babc669b5605",
       "computer.badge.autoBoat": "d9cb4ef116d5aaa5ec2c03b85f59618f5edaba1f89a0b811918f0a03b3434b21",
-      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36",
-      "call.live.disclosureCloud": "6719806a96b55d96357b899e5e254533b8b9280ee678f9fff7c3a2b02def8a44"
+      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36"
     },
     "fr": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -4115,7 +4111,6 @@
       "computer.err.localEngine": "d0b05966f7b157289a1649168f44154ae10ee7127ae60e3c5f95e6ba38e675ba",
       "computer.err.vmEngine": "d43c59238717653d157c5ea3d0ee0c75e36113704067e4e789b2d144b2ec5e58",
       "computer.err.cloudEngine": "9c186c100aa970b7a9f51f5c491d32ddfff5515a2ef1b706e0551b3330a36548",
-      "computer.err.vpsEngine": "fe85726aaf4c24e26222b4dada4635495dc2112ef06657fe0710b4ca4149615b",
       "computer.err.vmNotReady": "7afce1a8798850580c396c228ae25d8c43a0b71190a2fa7e794ce1dcf7c654a9",
       "computer.err.vmOpenSettings": "61a9e18e703c225c48fc050b00c62dbe8f311ac084ee9cd9dbfea79b2321fff9",
       "computer.err.vpsAlias": "1b41f11f1b7b2366bf9cf8a0d581694e33ef473ee2dc2c583432ed1a6ed2704e",
@@ -4486,8 +4481,7 @@
       "computer.phase.showSleepingBoat": "dfbd04c1e36d554878a6ec1366e5b381507c69da80f06b172962d79ff3e0d7a5",
       "computer.phase.showPendingBoat": "9d5fdebf99747cd6ac9a160b14440a32d39a5c164fdee27caa95babc669b5605",
       "computer.badge.autoBoat": "d9cb4ef116d5aaa5ec2c03b85f59618f5edaba1f89a0b811918f0a03b3434b21",
-      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36",
-      "call.live.disclosureCloud": "6719806a96b55d96357b899e5e254533b8b9280ee678f9fff7c3a2b02def8a44"
+      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36"
     },
     "hi": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -5605,7 +5599,6 @@
       "computer.err.localEngine": "d0b05966f7b157289a1649168f44154ae10ee7127ae60e3c5f95e6ba38e675ba",
       "computer.err.vmEngine": "d43c59238717653d157c5ea3d0ee0c75e36113704067e4e789b2d144b2ec5e58",
       "computer.err.cloudEngine": "9c186c100aa970b7a9f51f5c491d32ddfff5515a2ef1b706e0551b3330a36548",
-      "computer.err.vpsEngine": "fe85726aaf4c24e26222b4dada4635495dc2112ef06657fe0710b4ca4149615b",
       "computer.err.vmNotReady": "7afce1a8798850580c396c228ae25d8c43a0b71190a2fa7e794ce1dcf7c654a9",
       "computer.err.vmOpenSettings": "61a9e18e703c225c48fc050b00c62dbe8f311ac084ee9cd9dbfea79b2321fff9",
       "computer.err.vpsAlias": "1b41f11f1b7b2366bf9cf8a0d581694e33ef473ee2dc2c583432ed1a6ed2704e",
@@ -5976,8 +5969,7 @@
       "computer.phase.showSleepingBoat": "dfbd04c1e36d554878a6ec1366e5b381507c69da80f06b172962d79ff3e0d7a5",
       "computer.phase.showPendingBoat": "9d5fdebf99747cd6ac9a160b14440a32d39a5c164fdee27caa95babc669b5605",
       "computer.badge.autoBoat": "d9cb4ef116d5aaa5ec2c03b85f59618f5edaba1f89a0b811918f0a03b3434b21",
-      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36",
-      "call.live.disclosureCloud": "6719806a96b55d96357b899e5e254533b8b9280ee678f9fff7c3a2b02def8a44"
+      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36"
     },
     "ja": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -7097,7 +7089,6 @@
       "computer.err.localEngine": "d0b05966f7b157289a1649168f44154ae10ee7127ae60e3c5f95e6ba38e675ba",
       "computer.err.vmEngine": "d43c59238717653d157c5ea3d0ee0c75e36113704067e4e789b2d144b2ec5e58",
       "computer.err.cloudEngine": "9c186c100aa970b7a9f51f5c491d32ddfff5515a2ef1b706e0551b3330a36548",
-      "computer.err.vpsEngine": "fe85726aaf4c24e26222b4dada4635495dc2112ef06657fe0710b4ca4149615b",
       "computer.err.vmNotReady": "7afce1a8798850580c396c228ae25d8c43a0b71190a2fa7e794ce1dcf7c654a9",
       "computer.err.vmOpenSettings": "61a9e18e703c225c48fc050b00c62dbe8f311ac084ee9cd9dbfea79b2321fff9",
       "computer.err.vpsAlias": "1b41f11f1b7b2366bf9cf8a0d581694e33ef473ee2dc2c583432ed1a6ed2704e",
@@ -7468,8 +7459,7 @@
       "computer.phase.showSleepingBoat": "dfbd04c1e36d554878a6ec1366e5b381507c69da80f06b172962d79ff3e0d7a5",
       "computer.phase.showPendingBoat": "9d5fdebf99747cd6ac9a160b14440a32d39a5c164fdee27caa95babc669b5605",
       "computer.badge.autoBoat": "d9cb4ef116d5aaa5ec2c03b85f59618f5edaba1f89a0b811918f0a03b3434b21",
-      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36",
-      "call.live.disclosureCloud": "6719806a96b55d96357b899e5e254533b8b9280ee678f9fff7c3a2b02def8a44"
+      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36"
     },
     "pt-br": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -8600,7 +8590,6 @@
       "computer.err.localEngine": "d0b05966f7b157289a1649168f44154ae10ee7127ae60e3c5f95e6ba38e675ba",
       "computer.err.vmEngine": "d43c59238717653d157c5ea3d0ee0c75e36113704067e4e789b2d144b2ec5e58",
       "computer.err.cloudEngine": "9c186c100aa970b7a9f51f5c491d32ddfff5515a2ef1b706e0551b3330a36548",
-      "computer.err.vpsEngine": "fe85726aaf4c24e26222b4dada4635495dc2112ef06657fe0710b4ca4149615b",
       "computer.err.vmNotReady": "7afce1a8798850580c396c228ae25d8c43a0b71190a2fa7e794ce1dcf7c654a9",
       "computer.err.vmOpenSettings": "61a9e18e703c225c48fc050b00c62dbe8f311ac084ee9cd9dbfea79b2321fff9",
       "computer.err.vpsAlias": "1b41f11f1b7b2366bf9cf8a0d581694e33ef473ee2dc2c583432ed1a6ed2704e",
@@ -8972,8 +8961,7 @@
       "computer.phase.showSleepingBoat": "dfbd04c1e36d554878a6ec1366e5b381507c69da80f06b172962d79ff3e0d7a5",
       "computer.phase.showPendingBoat": "9d5fdebf99747cd6ac9a160b14440a32d39a5c164fdee27caa95babc669b5605",
       "computer.badge.autoBoat": "d9cb4ef116d5aaa5ec2c03b85f59618f5edaba1f89a0b811918f0a03b3434b21",
-      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36",
-      "call.live.disclosureCloud": "6719806a96b55d96357b899e5e254533b8b9280ee678f9fff7c3a2b02def8a44"
+      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36"
     },
     "zh": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -10728,7 +10716,6 @@
       "computer.err.localEngine": "d0b05966f7b157289a1649168f44154ae10ee7127ae60e3c5f95e6ba38e675ba",
       "computer.err.vmEngine": "d43c59238717653d157c5ea3d0ee0c75e36113704067e4e789b2d144b2ec5e58",
       "computer.err.cloudEngine": "9c186c100aa970b7a9f51f5c491d32ddfff5515a2ef1b706e0551b3330a36548",
-      "computer.err.vpsEngine": "fe85726aaf4c24e26222b4dada4635495dc2112ef06657fe0710b4ca4149615b",
       "computer.err.vmNotReady": "7afce1a8798850580c396c228ae25d8c43a0b71190a2fa7e794ce1dcf7c654a9",
       "computer.err.vmOpenSettings": "61a9e18e703c225c48fc050b00c62dbe8f311ac084ee9cd9dbfea79b2321fff9",
       "computer.err.vpsAlias": "1b41f11f1b7b2366bf9cf8a0d581694e33ef473ee2dc2c583432ed1a6ed2704e",
@@ -11411,8 +11398,7 @@
       "computer.phase.showSleepingBoat": "dfbd04c1e36d554878a6ec1366e5b381507c69da80f06b172962d79ff3e0d7a5",
       "computer.phase.showPendingBoat": "9d5fdebf99747cd6ac9a160b14440a32d39a5c164fdee27caa95babc669b5605",
       "computer.badge.autoBoat": "d9cb4ef116d5aaa5ec2c03b85f59618f5edaba1f89a0b811918f0a03b3434b21",
-      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36",
-      "call.live.disclosureCloud": "6719806a96b55d96357b899e5e254533b8b9280ee678f9fff7c3a2b02def8a44"
+      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36"
     },
     "zh-tw": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -13167,7 +13153,6 @@
       "computer.err.localEngine": "d0b05966f7b157289a1649168f44154ae10ee7127ae60e3c5f95e6ba38e675ba",
       "computer.err.vmEngine": "d43c59238717653d157c5ea3d0ee0c75e36113704067e4e789b2d144b2ec5e58",
       "computer.err.cloudEngine": "9c186c100aa970b7a9f51f5c491d32ddfff5515a2ef1b706e0551b3330a36548",
-      "computer.err.vpsEngine": "fe85726aaf4c24e26222b4dada4635495dc2112ef06657fe0710b4ca4149615b",
       "computer.err.vmNotReady": "7afce1a8798850580c396c228ae25d8c43a0b71190a2fa7e794ce1dcf7c654a9",
       "computer.err.vmOpenSettings": "61a9e18e703c225c48fc050b00c62dbe8f311ac084ee9cd9dbfea79b2321fff9",
       "computer.err.vpsAlias": "1b41f11f1b7b2366bf9cf8a0d581694e33ef473ee2dc2c583432ed1a6ed2704e",
@@ -13850,8 +13835,7 @@
       "computer.phase.showSleepingBoat": "dfbd04c1e36d554878a6ec1366e5b381507c69da80f06b172962d79ff3e0d7a5",
       "computer.phase.showPendingBoat": "9d5fdebf99747cd6ac9a160b14440a32d39a5c164fdee27caa95babc669b5605",
       "computer.badge.autoBoat": "d9cb4ef116d5aaa5ec2c03b85f59618f5edaba1f89a0b811918f0a03b3434b21",
-      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36",
-      "call.live.disclosureCloud": "6719806a96b55d96357b899e5e254533b8b9280ee678f9fff7c3a2b02def8a44"
+      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36"
     },
     "uk": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -15354,7 +15338,6 @@
       "computer.err.localEngine": "d0b05966f7b157289a1649168f44154ae10ee7127ae60e3c5f95e6ba38e675ba",
       "computer.err.vmEngine": "d43c59238717653d157c5ea3d0ee0c75e36113704067e4e789b2d144b2ec5e58",
       "computer.err.cloudEngine": "9c186c100aa970b7a9f51f5c491d32ddfff5515a2ef1b706e0551b3330a36548",
-      "computer.err.vpsEngine": "fe85726aaf4c24e26222b4dada4635495dc2112ef06657fe0710b4ca4149615b",
       "computer.err.vmNotReady": "7afce1a8798850580c396c228ae25d8c43a0b71190a2fa7e794ce1dcf7c654a9",
       "computer.err.vmOpenSettings": "61a9e18e703c225c48fc050b00c62dbe8f311ac084ee9cd9dbfea79b2321fff9",
       "computer.err.vpsAlias": "1b41f11f1b7b2366bf9cf8a0d581694e33ef473ee2dc2c583432ed1a6ed2704e",
@@ -15889,8 +15872,7 @@
       "computer.phase.showSleepingBoat": "dfbd04c1e36d554878a6ec1366e5b381507c69da80f06b172962d79ff3e0d7a5",
       "computer.phase.showPendingBoat": "9d5fdebf99747cd6ac9a160b14440a32d39a5c164fdee27caa95babc669b5605",
       "computer.badge.autoBoat": "d9cb4ef116d5aaa5ec2c03b85f59618f5edaba1f89a0b811918f0a03b3434b21",
-      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36",
-      "call.live.disclosureCloud": "6719806a96b55d96357b899e5e254533b8b9280ee678f9fff7c3a2b02def8a44"
+      "computer.addBoatKey": "fcf349af3c05d6750fdc7ebdaac778bfcf27f8514faf5084c3882479c084cc36"
     }
   }
 }

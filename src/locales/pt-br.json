@@ -1127,7 +1127,6 @@
   "computer.err.localEngine": "Este modelo não consegue controlar este computador. Escolha Claude ou um provedor de modelos ACP.",
   "computer.err.vmEngine": "Este modelo não consegue usar a VM local. Escolha Claude ou um provedor de modelos ACP.",
   "computer.err.cloudEngine": "Este modelo não consegue usar um computador. Escolha outro modelo ou defina “Trabalha em” como Automático.",
-  "computer.err.vpsEngine": "Este modelo não consegue usar um VPS próprio. Escolha Claude ou um provedor de modelos ACP, ou mude o backend de nuvem para Boat.",
   "computer.err.vmNotReady": "A VM local não está pronta",
   "computer.err.vmOpenSettings": "{problem}. Abra Configurações → VM local.",
   "computer.err.vpsAlias": "Adicione o alias SSH do VPS em Configurações → Chaves de API.",
@@ -1499,6 +1498,5 @@
   "computer.phase.showSleepingBoat": "O Automático encontrou um computador na nuvem dormindo. Ele não foi acordado nem alterado.",
   "computer.phase.showPendingBoat": "O Automático encontrou um computador na nuvem que não está pronto. Ele não foi alterado.",
   "computer.badge.autoBoat": "computador na nuvem · Automático · somente leitura",
-  "computer.addBoatKey": "Adicione uma chave de API do Boat para dar um computador na nuvem a este bot — ele sobe aqui mesmo.",
-  "call.live.disclosureCloud": "Uma chamada Live envia sua voz para a OpenAI, junto com as mensagens recentes do chat, as respostas do bot e os detalhes de qualquer aprovação que ele solicitar. A chave da OpenAI permanece no My Cloud."
+  "computer.addBoatKey": "Adicione uma chave de API do Boat para dar um computador na nuvem a este bot — ele sobe aqui mesmo."
 }

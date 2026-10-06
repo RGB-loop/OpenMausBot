@@ -1751,7 +1751,6 @@
   "computer.err.localEngine": "這個模型無法控制這台電腦。請選擇 Claude 或 ACP 模型供應商。",
   "computer.err.vmEngine": "這個模型無法使用本機 VM。請選擇 Claude 或 ACP 模型供應商。",
   "computer.err.cloudEngine": "這個模型無法使用電腦。請選擇其他模型，或將「運作位置」設為自動。",
-  "computer.err.vpsEngine": "這個模型無法使用自行架設的 VPS。請選擇 Claude 或 ACP 模型供應商，或將雲端後端切換為 Boat。",
   "computer.err.vmNotReady": "本機 VM 尚未就緒",
   "computer.err.vmOpenSettings": "{problem}。請開啟「設定 → 本機 VM」。",
   "computer.err.vpsAlias": "請在「設定 → API 金鑰」中新增 VPS 的 SSH 設定別名。",
@@ -2434,6 +2433,5 @@
   "computer.phase.showSleepingBoat": "自動模式找到一台休眠中的雲端電腦，並未喚醒或變更它。",
   "computer.phase.showPendingBoat": "自動模式找到一台尚未就緒的現有雲端電腦，並未變更它。",
   "computer.badge.autoBoat": "雲端電腦 · Auto · 唯讀",
-  "computer.addBoatKey": "新增 Boat API 金鑰，即可為這個機器人提供雲端電腦 — 它會直接在這裡啟動。",
-  "call.live.disclosureCloud": "即時通話會將你的語音傳送給 OpenAI，同時傳送的還有此對話的近期訊息、機器人的回覆，以及其要求核准之項目的詳細資訊。OpenAI 金鑰會保留在 My Cloud 上。"
+  "computer.addBoatKey": "新增 Boat API 金鑰，即可為這個機器人提供雲端電腦 — 它會直接在這裡啟動。"
 }

@@ -1114,7 +1114,6 @@
   "computer.err.localEngine": "यह मॉडल इस कंप्यूटर को नियंत्रित नहीं कर सकता। Claude या कोई ACP मॉडल प्रदाता चुनें।",
   "computer.err.vmEngine": "यह मॉडल लोकल VM का उपयोग नहीं कर सकता। Claude या कोई ACP मॉडल प्रदाता चुनें।",
   "computer.err.cloudEngine": "यह मॉडल कंप्यूटर का उपयोग नहीं कर सकता। कोई दूसरा मॉडल चुनें, या “काम करता है” को ऑटो पर सेट करें।",
-  "computer.err.vpsEngine": "यह मॉडल स्वयं-होस्ट किए गए VPS का उपयोग नहीं कर सकता। Claude या कोई ACP मॉडल प्रदाता चुनें, या क्लाउड बैकएंड को Boat पर बदलें।",
   "computer.err.vmNotReady": "लोकल VM तैयार नहीं है",
   "computer.err.vmOpenSettings": "{problem}। सेटिंग्स → लोकल VM खोलें।",
   "computer.err.vpsAlias": "सेटिंग्स → API कुंजियाँ में VPS का SSH कॉन्फ़िग उपनाम जोड़ें।",
@@ -1485,6 +1484,5 @@
   "computer.phase.showSleepingBoat": "ऑटो को एक सोया हुआ क्लाउड कंप्यूटर मिला। उसे न जगाया गया, न बदला गया।",
   "computer.phase.showPendingBoat": "ऑटो को एक मौजूदा क्लाउड कंप्यूटर मिला जो तैयार नहीं है। उसे बदला नहीं गया।",
   "computer.badge.autoBoat": "क्लाउड कंप्यूटर · ऑटो · केवल-पठन",
-  "computer.addBoatKey": "इस बॉट को क्लाउड कंप्यूटर देने के लिए Boat API कुंजी जोड़ें — वह यहीं शुरू हो जाता है।",
-  "call.live.disclosureCloud": "Live कॉल आपकी आवाज़ को OpenAI पर भेजती है, साथ ही चैट के हाल के संदेश, बॉट के जवाब और उसके द्वारा माँगी गई किसी भी स्वीकृति का विवरण भी भेजती है। OpenAI कुंजी My Cloud पर ही रहती है।"
+  "computer.addBoatKey": "इस बॉट को क्लाउड कंप्यूटर देने के लिए Boat API कुंजी जोड़ें — वह यहीं शुरू हो जाता है।"
 }

@@ -1121,7 +1121,6 @@
   "computer.err.localEngine": "Dieses Modell kann diesen Computer nicht steuern. Wähl Claude oder einen ACP-Modellanbieter.",
   "computer.err.vmEngine": "Dieses Modell kann die lokale VM nicht nutzen. Wähl Claude oder einen ACP-Modellanbieter.",
   "computer.err.cloudEngine": "Dieses Modell kann keinen Computer nutzen. Wähl ein anderes Modell oder stell „Arbeitet auf“ auf Auto.",
-  "computer.err.vpsEngine": "Dieses Modell kann keinen selbst gehosteten VPS nutzen. Wähl Claude oder einen ACP-Modellanbieter, oder stell das Cloud-Backend auf Boat um.",
   "computer.err.vmNotReady": "Die lokale VM ist nicht bereit",
   "computer.err.vmOpenSettings": "{problem}. Öffne Einstellungen → Lokale VM.",
   "computer.err.vpsAlias": "Füg den SSH-Config-Alias des VPS unter Einstellungen → API-Schlüssel hinzu.",
@@ -1503,6 +1502,5 @@
   "computer.phase.showSleepingBoat": "Auto hat einen schlafenden Cloud-Computer gefunden. Er wurde weder geweckt noch geändert.",
   "computer.phase.showPendingBoat": "Auto hat einen vorhandenen Cloud-Computer gefunden, der nicht bereit ist. Er wurde nicht geändert.",
   "computer.badge.autoBoat": "Cloud-Computer · Auto · nur lesen",
-  "computer.addBoatKey": "Füg einen Boat-API-Schlüssel hinzu, damit dieser Bot einen Cloud-Computer bekommt — er startet direkt hier.",
-  "call.live.disclosureCloud": "Bei einem Live-Anruf werden deine Stimme sowie die letzten Nachrichten des Chats, die Antworten des Bots und die Details aller von ihm angefragten Freigaben an OpenAI gesendet. Der OpenAI-Schlüssel bleibt auf My Cloud."
+  "computer.addBoatKey": "Füg einen Boat-API-Schlüssel hinzu, damit dieser Bot einen Cloud-Computer bekommt — er startet direkt hier."
 }
