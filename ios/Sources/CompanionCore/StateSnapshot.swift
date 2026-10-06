@@ -45,18 +45,29 @@ public struct StateSnapshot: Codable, Equatable, Sendable {
         public var messagesPerThread: Int
         public var threads: Int
         public var routineRuns: Int
+        /// Characters of a run's `output`, and of its `error`, kept per run.
+        /// A run can print a whole report; the calendar and the Routines
+        /// list show its opening lines, and the rest stays on the computer.
+        public var routineRunOutputChars: Int
         /// The encoded file, all of it.
         public var maxBytes: Int
 
-        public init(messagesPerThread: Int, threads: Int, routineRuns: Int, maxBytes: Int) {
+        public init(
+            messagesPerThread: Int,
+            threads: Int,
+            routineRuns: Int,
+            routineRunOutputChars: Int = 4_000,
+            maxBytes: Int
+        ) {
             self.messagesPerThread = messagesPerThread
             self.threads = threads
             self.routineRuns = routineRuns
+            self.routineRunOutputChars = routineRunOutputChars
             self.maxBytes = maxBytes
         }
 
         public static let standard = Limits(
-            messagesPerThread: 50, threads: 100, routineRuns: 100, maxBytes: 5 * 1_024 * 1_024
+            messagesPerThread: 50, threads: 100, routineRuns: 100, routineRunOutputChars: 4_000, maxBytes: 5 * 1_024 * 1_024
         )
     }
 
@@ -521,14 +532,29 @@ extension StateSnapshot {
         return byteCount()
     }
 
-    /// The `limit` most recent runs, in the order they arrived.
-    static func recentRuns(_ runs: [RoutineRun], limit: Int) -> [RoutineRun] {
-        guard runs.count > limit else { return runs }
-        let kept = runs.indices
-            .sorted { runIsOlder(runs[$1], runs[$0]) }
-            .prefix(max(0, limit))
-            .sorted()
-        return kept.map { runs[$0] }
+    /// The `limit` most recent runs, in the order they arrived, each with
+    /// its output and error cut to `outputChars`.
+    static func recentRuns(_ runs: [RoutineRun], limit: Int, outputChars: Int = .max) -> [RoutineRun] {
+        let kept: [RoutineRun]
+        if runs.count > limit {
+            kept = runs.indices
+                .sorted { runIsOlder(runs[$1], runs[$0]) }
+                .prefix(max(0, limit))
+                .sorted()
+                .map { runs[$0] }
+        } else {
+            kept = runs
+        }
+        return kept.map { run in
+            var run = run
+            run.output = run.output.map { cut($0, to: outputChars) }
+            run.error = run.error.map { cut($0, to: outputChars) }
+            return run
+        }
+    }
+
+    private static func cut(_ text: String, to limit: Int) -> String {
+        text.count > limit ? String(text.prefix(max(0, limit))) : text
     }
 
     private static func runIsOlder(_ lhs: RoutineRun, _ rhs: RoutineRun) -> Bool {
@@ -597,7 +623,7 @@ extension CompanionState {
             rooms: rooms.map(StateSnapshot.CachedRoom.init),
             threads: [:],
             routines: routines,
-            routineRuns: StateSnapshot.recentRuns(routineRuns, limit: limits.routineRuns)
+            routineRuns: StateSnapshot.recentRuns(routineRuns, limit: limits.routineRuns, outputChars: limits.routineRunOutputChars)
         )
         let rosterBytes = snapshot.shedRoster(toFit: limits.maxBytes, activity: activity)
 

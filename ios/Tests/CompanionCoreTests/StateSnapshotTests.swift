@@ -246,6 +246,27 @@ final class StateSnapshotTests: XCTestCase {
         XCTAssertEqual(Set(rows), Set(["main"] + (51 - keptRows...50).map { "row\($0)" }))
     }
 
+    func testARunKeepsTheOpeningOfItsOutputAndErrorOnly() throws {
+        var state = CompanionState()
+        state.bots = [bot("scout", threadId: "main")]
+        state.cursor = "stream:1"
+        var long = run("long", routineId: "daily", scheduledFor: 1)
+        long.output = String(repeating: "report line\n", count: 2_000)
+        long.error = String(repeating: "x", count: 9_000)
+        var short = run("short", routineId: "daily", scheduledFor: 2)
+        short.output = "Done."
+        let snapshot = try XCTUnwrap(state.offlineSnapshot(
+            connectionId: "computer-1", serverEnvironmentId: nil, savedAt: savedAt,
+            routines: [routine("daily")], routineRuns: [long, short]
+        ))
+        let kept = Dictionary(uniqueKeysWithValues: snapshot.routineRuns.map { ($0.id, $0) })
+        XCTAssertEqual(StateSnapshot.Limits.standard.routineRunOutputChars, 4_000)
+        XCTAssertEqual(kept["long"]?.output, String(long.output!.prefix(4_000)))
+        XCTAssertEqual(kept["long"]?.error?.count, 4_000)
+        XCTAssertEqual(kept["short"]?.output, "Done.", "A short output is kept whole.")
+        XCTAssertNil(kept["short"]?.error)
+    }
+
     func testRecentRunsKeepsTheNewestInTheirOriginalOrder() {
         let runs = [run("b", routineId: "r", scheduledFor: 2), run("a", routineId: "r", scheduledFor: 1),
                     run("d", routineId: "r", scheduledFor: 4), run("c", routineId: "r", scheduledFor: 3)]
