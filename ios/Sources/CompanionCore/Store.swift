@@ -128,8 +128,24 @@ public struct CompanionState: Sendable {
     /// Counts writes to `liveCall`, whoever made them: what a lookup that
     /// was out meanwhile checks before it puts its older answer on the line.
     public private(set) var liveCallRevision = 0
+    /// When the offline snapshot this state was rebuilt from was saved, or
+    /// nil for live state. A cached state is display-only: it has no
+    /// cursor, is never written back as a new snapshot, and the next
+    /// hydrate replaces it wholesale. See `StateSnapshot`.
+    public var cachedAt: Date?
 
     public init() {}
+
+    /// Showing the last sync rather than the computer's live state.
+    public var isCached: Bool { cachedAt != nil }
+
+    /// Whether anything on screen may be acted on: sent, answered, stopped,
+    /// run. Never while showing the cache — a saved ask may have expired or
+    /// been answered elsewhere, and a card's own `isPending` cannot know
+    /// that. This is the state's half of the gate; Session combines it with
+    /// being connected, and every composer, card, Stop and routine action
+    /// reads the combined value rather than `isPending` alone.
+    public var canAct: Bool { !isCached }
 
     /// The newest messages a thread keeps in memory however long the app
     /// stays connected. Ten pages of the 50 a chat opens on: far more than
@@ -195,7 +211,9 @@ public struct CompanionState: Sendable {
         return all.last { $0.id == leafId } ?? all.last
     }
 
-    private func activeBranch(forThread threadId: String) -> [Message] {
+    /// The branch the leaf selects, without an edit's stand-in — what the
+    /// offline snapshot keeps of a thread.
+    func activeBranch(forThread threadId: String) -> [Message] {
         let all = transcript(forThread: threadId)
         guard let leafId = activeLeafIds[threadId] ?? bot(forThread: threadId)?.activeLeafId else { return all }
         // An unforked chain — what a thread nobody has edited is — needs no
@@ -318,6 +336,9 @@ public struct CompanionState: Sendable {
 
     /// Every unanswered approval or question, newest first. This is the
     /// screen the whole companion exists for.
+    ///
+    /// A cached state lists the asks as they last stood, so they can read
+    /// as "last known"; offering to answer one is gated on `canAct`.
     public var pendingApprovals: [(threadId: String, message: Message)] {
         // Most threads hold no open card at all, and the fold already knows
         // which do: only those pay for working out which of their cards are
@@ -374,6 +395,8 @@ public struct CompanionState: Sendable {
 
     /// Replace everything from a `GET /api/bots` response.
     public mutating func hydrate(_ fleet: Fleet, waitingThreads: [String: ThreadPage] = [:]) {
+        // The computer answered: whatever the last sync showed is history.
+        cachedAt = nil
         bots = fleet.bots
         rooms = fleet.groups
         transcripts.removeAll()
