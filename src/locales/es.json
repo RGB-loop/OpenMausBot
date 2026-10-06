@@ -1467,7 +1467,6 @@
   "computer.phase.showSleepingBoat": "Automático encontró un equipo en la nube en reposo. No se despertó ni se modificó.",
   "computer.phase.showPendingBoat": "Automático encontró un equipo en la nube que no está listo. No se modificó.",
   "computer.badge.autoBoat": "equipo en la nube · Automático · solo lectura",
-  "call.live.disclosureCloud": "Una llamada en directo envía tu voz a OpenAI, junto con los mensajes recientes del chat, las respuestas del bot y los detalles de cualquier aprobación que solicite. La clave de OpenAI permanece en My Cloud.",
   "place.view.local.line": "Usa tu pantalla, tu ratón y tu teclado.",
   "place.view.vm.line": "Un escritorio Linux privado en este dispositivo, separado de tu propia pantalla.",
   "place.view.browser.short": "Solo páginas web",
