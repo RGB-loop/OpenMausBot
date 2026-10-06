@@ -36,11 +36,11 @@ final class ConnectorLinkMemory {
 /// that page is open (the computer does not poll on its own; asking is what
 /// flips the card and resumes the bot).
 struct ConnectorRequestCardView: View {
-    let chat: Chat
+    let context: TranscriptRowContext
+    let actions: TranscriptActions
     let message: Message
     let request: ConnectorRequest
     let presentation: ConnectorRequestPresentation
-    @EnvironmentObject private var session: Session
     @Environment(\.scenePhase) private var scenePhase
     @State private var busy = false
     @State private var actionGeneration = 0
@@ -69,9 +69,9 @@ struct ConnectorRequestCardView: View {
         let dismissed: Bool?
     }
 
-    private var tint: Color { MausPalette.color(message.from?.color ?? chat.color) }
-    private var requester: String { message.from?.name ?? chat.name }
-    private var linkKey: String { "\(session.connection?.id ?? ""):\(chat.threadId):\(message.id)" }
+    private var tint: Color { MausPalette.color(message.from?.color ?? context.color) }
+    private var requester: String { message.from?.name ?? context.name }
+    private var linkKey: String { "\(context.credentials.connectionId ?? ""):\(context.threadId):\(message.id)" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -105,7 +105,7 @@ struct ConnectorRequestCardView: View {
             // Back from the browser: one look straight away rather than on
             // the next tick, so a finished sign-in shows the moment you return.
             if phase == .active, request.pollsStatus {
-                Task { try? await session.checkConnectorRequest(message, in: chat) }
+                Task { try? await actions.checkConnectorRequest(message) }
             }
         }
     }
@@ -294,7 +294,7 @@ struct ConnectorRequestCardView: View {
                 if reuse, let remembered = ConnectorLinkMemory.shared.link(for: key) {
                     url = remembered
                 } else {
-                    url = try await session.authorizeConnectorRequest(message, in: chat)
+                    url = try await actions.authorizeConnectorRequest(message)
                 }
                 guard generation == actionGeneration, key == linkKey else { return }
                 ConnectorLinkMemory.shared.remember(url, for: key)
@@ -312,7 +312,7 @@ struct ConnectorRequestCardView: View {
         failure = nil
         Task {
             defer { busy = false }
-            do { try await session.resumeConnectorRequest(message, in: chat) }
+            do { try await actions.resumeConnectorRequest(message) }
             catch { failure = Self.failure(for: error) }
         }
     }
@@ -322,7 +322,7 @@ struct ConnectorRequestCardView: View {
         failure = nil
         ConnectorLinkMemory.shared.forget(linkKey)
         Task {
-            do { try await session.dismissConnectorRequest(message, in: chat) }
+            do { try await actions.dismissConnectorRequest(message) }
             catch { failure = Self.failure(for: error) }
         }
     }
@@ -340,7 +340,7 @@ struct ConnectorRequestCardView: View {
         for _ in 0..<ConnectorRequestPolling.maximumChecks {
             do { try await Task.sleep(for: ConnectorRequestPolling.interval) } catch { return }
             if scenePhase != .active { continue }
-            if (try? await session.checkConnectorRequest(message, in: chat)) == true { return }
+            if (try? await actions.checkConnectorRequest(message)) == true { return }
         }
     }
 

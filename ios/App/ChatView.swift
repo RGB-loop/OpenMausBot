@@ -2249,12 +2249,12 @@ struct MessageRow: View, Equatable {
         case .connector:
             // A room card names the member that asked; one that does not
             // cannot be acted on, so it reads as the line it carries.
-            if let request = message.connector, chat.connectorOwner(of: message) != nil {
+            if let request = message.connector, context.isBot || message.from?.botId != nil {
                 if let presentation = ConnectorRequestPresentation.of(request) {
-                    ConnectorRequestCardView(chat: chat, message: message, request: request, presentation: presentation)
+                    ConnectorRequestCardView(context: context, actions: actions, message: message, request: request, presentation: presentation)
                 }
             } else if let text = message.text, !text.isEmpty {
-                TextBubble(message: message, chat: chat, tailed: endsRun, openLink: openLink)
+                bubble(presentation)
             }
         case .unknown:
             // A message kind from a newer computer. Almost everything the
