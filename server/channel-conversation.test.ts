@@ -257,3 +257,18 @@ it("rejects a millisecond-timestamped reply for the previous card in the same se
  expect(await c.handle("delayed","yes",{channel:"imessage",maxReplyCharacters:18000,receivedAt:3000,eventTimestamp:2200})).toContain("STATUS");expect(f.respond).toHaveBeenCalledTimes(1);
  await c.handle("yes-current","yes",{channel:"imessage",maxReplyCharacters:18000,receivedAt:3100,eventTimestamp:3000});expect(f.respond).toHaveBeenCalledTimes(2);
 });
+
+it("exposes only a validated active task for startup channel ownership registration", async () => {
+ const f=fixture(),c=f.make();expect(c.activeThreadId).toBeNull();await c.handle("first","Plan");
+ expect(c.activeThreadId).toBe("thread");expect(f.make().activeThreadId).toBe("thread");
+ writeFileSync(f.file,'{"version":1,"binding":"other"}');expect(f.make().activeThreadId).toBeNull();
+});
+it("reports a terminal budget stop without claiming success or relaxing failed-request guards", async () => {
+ const root=mkdtempSync(join(tmpdir(),"omb-channel-budget-"));roots.push(root);let sendId="";const send=vi.fn(async(_t:string,s:string)=>{sendId=s;});
+ const c=new ChannelConversation({file:join(root,"state.json"),binding:"owner",createAskTask:()=>"thread",send,respond:async()=>({}),snapshot:()=>({messageId:"source",activeLeafId:"failure",activeTurnId:null,executionId:null,phase:"untracked",messages:[
+ {id:"source",role:"user",kind:"text",at:1,sendId},
+ {id:"failure",role:"bot",kind:"activity",at:2,turnId:"turn",requestMessageId:"source",tool:{name:"error: Stopped after 64 steps without a final answer.",ok:false,terminal:true}},
+ ]})});
+ const reply=await c.handle("first","Work");expect(reply).toMatch(/stopped.*budget/i);expect(reply).toContain("NEW");expect(reply).toContain("Mausbot");expect(reply).not.toMatch(/finished|continues in a new task/i);
+ await c.handle("followup","continue");expect(send).toHaveBeenCalledTimes(1);
+});

@@ -14,9 +14,10 @@ it("loads secure routing before ingress and starts provider restore only after t
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const prepare = source.indexOf("await inkboxSetup.prepareRestore()");
   const ingress = source.indexOf("webhookIngress = await listenWebhookIngress");
-  const listen = source.indexOf('server.listen(PORT, "127.0.0.1", () => {');
+  const listen = source.indexOf('server.listen(PORT, "127.0.0.1",');
   const restore = source.indexOf("void inkboxSetup.restore()");
   expect(prepare).toBeGreaterThan(0);
+  expect(listen).toBeGreaterThan(ingress);
   expect(prepare).toBeLessThan(ingress);
   expect(restore).toBeGreaterThan(listen);
   expect(source).not.toContain("await inkboxSetup.restore()");

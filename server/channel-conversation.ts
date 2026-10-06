@@ -7,6 +7,8 @@ import { formatQuestionAnswers } from "../shared/ask-question.ts";
 import { channelQuestions, formatChannelApproval, formatChannelQuestion, parseChannelQuestionReply } from "../shared/channel-replies.ts";
 import { formatChannelText } from "../shared/channel-text.ts";
 import { writeFileAtomic } from "./atomic.ts";
+import { failedTurnCause } from "../shared/failed-turn.ts";
+import { classifyContinuable } from "./turn-continuation.ts";
 
 export interface ChannelSnapshot {
   messageId: string; activeLeafId: string | null; activeTurnId: string | null; executionId: string | null;
@@ -83,6 +85,7 @@ export class ChannelConversation {
     } catch { this.failed = true; }
   }
   get approvalMode(): "ask" | "auto" { return this.failed || this.automaticRevoked ? "ask" : this.state.approvalMode ?? "ask"; }
+  get activeThreadId(): string | null { return this.failed ? null : this.state.active?.threadId ?? null; }
   private now() { return this.options.now?.() ?? Date.now(); }
   private save() {
     try {
@@ -343,7 +346,15 @@ export class ChannelConversation {
         return terminal?.text ? formatChannelText(terminal.text).slice(0, this.state.replyLimit ?? 18000) : "The task has finished. Its result is available in Mausbot.";
       }
       if (snapshot.phase === "waiting") return review;
-      if (snapshot.phase === "untracked") return changed;
+      if (snapshot.phase === "untracked") {
+        const failure = snapshot.messages.findLast(message => message.kind === "activity" && message.tool?.terminal && message.tool.ok === false);
+        const lastTurn = snapshot.messages.findLast(message => message.turnId)?.turnId;
+        if (!snapshot.activeTurnId && failure?.requestMessageId === snapshot.messageId && failure.turnId && failure.turnId === lastTurn &&
+          classifyContinuable(null, failedTurnCause(failure.tool!.name) ?? undefined) === "cap") {
+          return "The bot stopped at its turn budget before finishing. Open this task in Mausbot to review the work, or send NEW followed by what remains to start another task here.";
+        }
+        return changed;
+      }
       await (this.options.sleep?.() ?? new Promise(resolve => setTimeout(resolve, 100)));
     }
     return working;

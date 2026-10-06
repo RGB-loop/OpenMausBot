@@ -6148,10 +6148,11 @@ bus.subscribe((event: RuntimeEvent) => {
   } else if (event.type !== "session.exited") watchdog.touch(event.threadId);
 });
 
-// Automatic continuity: a turn that died on its budget or on tool errors gets
-// a `Continue:` task on the same bot, seeded with the persisted handoff — the
-// work moves forward without a person noticing and re-dispatching.
-bus.subscribe(makeCapContinuationSubscriber({ store, startTurn }));
+// Budget continuity may create a separate app task. Messaging conversations
+// retain their exact registered task so replies cannot lose their owner.
+const messagingOwnedThreads = new Set<string>();
+bus.subscribe(makeCapContinuationSubscriber({ store, startTurn,
+  canContinue: threadId => !messagingOwnedThreads.has(threadId) }));
 
 // Memory journal turn boundary (server/memory-journal.ts). A bot's own
 // file-tool writes to MEMORY.md and memory/ have no hook to tap, so the
@@ -12173,7 +12174,11 @@ const makeInkboxChannel = (config: InkboxConfig | undefined, file: string, activ
   } : null);
   const conversation = new ChannelConversation({
     ...conversationState,
-    createAskTask: () => config ? store.createTask(config.botId, "iMessage / SMS", false, undefined, undefined, "ask")?.threadId ?? null : null,
+    createAskTask: () => {
+      const threadId = config ? store.createTask(config.botId, "iMessage / SMS", false, undefined, undefined, "ask")?.threadId ?? null : null;
+      if (threadId) messagingOwnedThreads.add(threadId);
+      return threadId;
+    },
     send: (threadId, sendId, text, target) => acceptDirectSend({ botId: config!.botId, threadId, sendId, text, trigger: { kind: "user" }, personPresent: true }, async current => {
       // Every channel turn must still own this exact idle Ask branch. Ordinary
       // send admission may steer or queue, neither of which has this request's
@@ -12246,6 +12251,7 @@ const makeInkboxChannel = (config: InkboxConfig | undefined, file: string, activ
       return continuation;
     },
   });
+  if (conversation.activeThreadId) messagingOwnedThreads.add(conversation.activeThreadId);
   channel = new InkboxChannel({
     file, config,
     contactForPhone: phone => trustedContacts.contactForPhone(phone),
