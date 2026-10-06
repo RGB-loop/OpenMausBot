@@ -22,8 +22,15 @@ try {
   let failCreate = true;
   let failTest = false;
   ui = await mountPreview(fixture, {
-    entry: "/scripts/testing/mcp-sign-in-preview.tsx", route: "/__whop.html", title: "Isolated Whop integration",
-    extraRoutes: [{ path: /^\/api\/mcp\/servers(?:\/.*)?$/, handler: async (req, res) => {
+    entry: "/scripts/testing/whop-preview.tsx", route: "/__whop.html", title: "Isolated Whop integration",
+    extraRoutes: [
+      { path: "/api/connectors/catalog", handler: (_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ configured: false, mode: "self-hosted", source: "curated", cards: ["gmail", "slack", "notion"].map((slug) => ({ slug, label: slug === "gmail" ? "Gmail" : slug[0].toUpperCase() + slug.slice(1), blurb: "Connect your account", logo: null, domain: null })) }));
+      } },
+      { path: /^\/api\/connectors(?:\/connected)?$/, handler: (_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ services: {} }));
+      } },
+      { path: /^\/api\/mcp\/servers(?:\/.*)?$/, handler: async (req, res) => {
       const path = req.url!;
       if (req.method === "POST" && path === "/api/mcp/servers" && failCreate) {
         failCreate = false;
@@ -63,7 +70,9 @@ try {
   assert.equal(await page.evaluate(async (code: string) => (await fetch("/api/auth/pair", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code, cookie: true, label: "Whop fixture" }) })).status, pairing.code), 200);
   await page.reload();
   const connect = () => page.getByRole("button", { name: "Connect Whop", exact: true }).click();
-  const row = page.locator('[data-whop-server="whop-2"]');
+  const row = page.locator('[data-app-tile="whop"]');
+  assert.equal(await page.locator('[data-apps-grid] [data-app-tile="whop"]').count(), 1);
+  assert.equal(await page.getByText("Set up Whop", { exact: true }).count(), 0);
   const status = async () => (await api("GET", "/api/mcp/servers")).servers;
   const complete = async () => {
     await page.getByText("Signing in from another computer?", { exact: true }).waitFor();
@@ -88,16 +97,27 @@ try {
   oauth.options.deny = false;
   await connect();
   await complete();
-  await page.getByText("Whop is connected and enabled. Bot access follows each bot’s MCP server selection.", { exact: true }).waitFor();
+  await row.getByText("Connected", { exact: true }).waitFor();
   const connected = (await status()).find((server: any) => server.name === "whop-2");
   assert.equal(connected.auth, "signed-in");
   assert.equal(connected.enabled, true);
   assert.ok(mcp.seenHeaders.some((headers) => oauth.isValid(headers.authorization)));
+  const bearer = mcp.seenHeaders.find((headers) => oauth.isValid(headers.authorization))!.authorization!.replace(/^Bearer /, "");
+  assert.equal(JSON.stringify(connected).includes(bearer), false, "The browser listing never includes the token");
   assert.equal(mcp.calls.length, 0, "Connecting never executes business tools");
   assert.equal((await status()).find((server: any) => server.name === "whop").command, "node");
   const output = process.env.OMB_UI_EVIDENCE_DIR || "/tmp/omb-whop-evidence";
   mkdirSync(output, { recursive: true });
   await page.screenshot({ path: join(output, "connected.png"), fullPage: true });
+  await page.locator('[data-apps-filter="connected"]').click();
+  await row.getByText("Connected", { exact: true }).waitFor();
+  assert.equal(await page.locator('[data-apps-filter="connected"]').innerText(), "Connected 1");
+  assert.equal(await page.locator('[data-app-tile="gmail"]').count(), 0);
+  await row.getByRole("button", { name: "Disconnect Whop", exact: true }).click();
+  await row.waitFor({ state: "hidden" });
+  await page.locator('[data-apps-filter="all"]').click();
+  await connect(); await complete();
+  await row.getByText("Connected", { exact: true }).waitFor();
   await page.reload();
   await row.getByRole("button", { name: "Disconnect Whop", exact: true }).waitFor();
   assert.equal(await page.locator("[data-whop-setup]").count(), 0);
@@ -110,11 +130,19 @@ try {
   // A successful login alone must not claim the tool connection is ready.
   failTest = true;
   await connect(); await complete();
-  await page.getByText("Signed in, but Whop’s tools could not be loaded. Test the connection and turn it on when ready.", { exact: true }).waitFor();
+  await page.getByText("Signed in, but Whop’s tools could not be loaded. Please connect again to retry.", { exact: true }).waitFor();
   assert.equal((await status()).find((server: any) => server.name === "whop-2").enabled, false);
-  await row.getByRole("button", { name: "Test", exact: true }).click();
-  await row.getByText(/list_products/).waitFor();
+  await connect(); await complete();
+  await row.getByText("Connected", { exact: true }).waitFor();
+  const search = page.getByRole("textbox", { name: "Search apps", exact: true });
+  await search.fill("whop");
+  assert.equal(await row.isVisible(), true);
+  assert.equal(await page.locator('[data-app-tile="gmail"]').count(), 0);
+  await search.fill("gmail");
+  assert.equal(await row.isVisible(), false);
+  await search.fill("");
   await page.setViewportSize({ width: 390, height: 844 });
+  await row.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(output, "narrow.png"), fullPage: true });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.deepEqual(errors, []);

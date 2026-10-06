@@ -17,7 +17,7 @@ node --experimental-strip-types scripts/verify-whop.ts
 ```
 
 This launches a disposable fake-engine workspace and synthetic OAuth/MCP
-provider, then drives the real MCP panel in a fresh browser context. Only
+provider, then drives the real Apps modal in a fresh browser context. Only
 fixture middleware maps the official URL to the loopback fake; production code
 has no alternate endpoint or test switch. It checks:
 
@@ -25,6 +25,9 @@ has no alternate endpoint or test switch. It checks:
 - A pre-existing unrelated server named `whop` is never overwritten.
 - Cancellation and denied consent leave the connection disabled.
 - Repeated sign-ins reuse the configured server.
+- Whop connects directly in the same grid as the Composio apps, without a
+  Composio key or a detour to the MCP settings. Connected filtering and its
+  count include Whop; disconnect removes it from that filter.
 - Successful consent plus tool discovery enables the connection; an OAuth
   token reaches the synthetic provider without appearing in the renderer list.
 - Failed post-login tool discovery does not enable the server and is retryable.
@@ -50,7 +53,7 @@ pnpm build
 
 ## Live acceptance (account owner required)
 
-Open Plugins → Set up Whop → Connect Whop. Complete Whop's browser consent;
+Open Plugins → Whop → Connect. Complete Whop's browser consent;
 verify its tools appear and ask a permitted bot to list your products. Do not
 create charges, transfers or refunds as a connection smoke test. Under Bot
 access, open the relevant bot's Access settings and change its MCP selection;

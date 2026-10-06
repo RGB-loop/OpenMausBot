@@ -22,11 +22,11 @@ vi.mock("@/state/store", () => ({
 }));
 import { McpServersPanel } from "./McpServersPanel";
 
-function render(embedded: boolean) {
+function render(embedded: boolean, whopCard = false) {
   function Capture() {
     fixture.index = 0;
     fixture.counting = true;
-    try { return McpServersPanel({ embedded }); } finally { fixture.counting = false; }
+    try { return McpServersPanel({ embedded, whopCard }); } finally { fixture.counting = false; }
   }
   return renderToStaticMarkup(createElement(Capture));
 }
@@ -63,11 +63,14 @@ describe("Your MCP servers inside the Apps pop-up", () => {
 
   it("offers Whop setup with no API key form or forced installation", () => {
     fixture.servers = [];
-    const html = render(true);
-    expect(html).toContain("Connect Whop");
+    const html = render(true, true);
+    expect(html).toContain('data-app-tile="whop"');
+    expect(html).toContain('aria-label="Connect Whop"');
     expect(html).toContain("no API key needed");
     expect(html).toContain("admin access across businesses");
     expect(html).not.toContain("<textarea");
+    expect(html).not.toContain("Your MCP servers");
+    expect(html).not.toContain("Paste config");
   });
 
   it("recognizes an existing Whop URL under any name and exposes access and disconnect", () => {
@@ -82,7 +85,7 @@ describe("Your MCP servers inside the Apps pop-up", () => {
   it("does not brand an unrelated endpoint just because its name is whop", () => {
     fixture.servers = [{ name: "whop", type: "http", url: "https://unrelated.example/mcp", headerKeys: [], enabled: false }];
     const html = render(true);
-    expect(html).toContain("data-whop-setup");
+    expect(html).not.toContain("data-whop-setup");
     expect(html).not.toContain("data-whop-server");
   });
 });

@@ -41,7 +41,9 @@ vi.mock("@/state/store", () => ({
   }),
 }));
 vi.mock("./McpServersPanel", () => ({
-  McpServersPanel: ({ embedded }: { embedded?: boolean }) => createElement("div", { "data-embedded": String(Boolean(embedded)) }, "MCP inventory"),
+  McpServersPanel: ({ embedded, whopCard }: { embedded?: boolean; whopCard?: boolean }) => whopCard
+    ? createElement("div", { "data-whop-card": true }, "Connect Whop")
+    : createElement("div", { "data-embedded": String(Boolean(embedded)) }, "MCP inventory"),
 }));
 vi.mock("./Avatar", () => ({ BotAvatar: ({ bot }: { bot: Bot }) => createElement("span", { "data-avatar": bot.id }) }));
 import { APPS_PREVIEW_COUNT, PluginsPanel, USED_BY_AVATAR_SIZE, botsUsingService } from "./PluginsPanel";
@@ -94,13 +96,19 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Apps pop-up", () => {
-  it("exposes Whop without requiring a Composio connection and routes setup to MCP", () => {
+  it("connects Whop inside the apps grid without a Composio key or MCP detour", () => {
     fixture.overrides.set(CONFIGURED, false);
     const { html, nodes: tree } = render();
-    expect(html).toContain("Set up Whop");
-    const card = tree.find((node) => node.props["data-whop-discovery"] !== undefined)!;
-    nodes(card).find((node) => node.type === "button")!.props.onClick!();
-    expect(fixture.dispatch).toHaveBeenCalledWith({ type: "togglePlugins", open: true, surface: "mcp" });
+    expect(html).toContain("Connect Whop");
+    expect(html).not.toContain("Set up Whop");
+    const grid = tree.find((node) => node.props["data-apps-grid"] !== undefined)!;
+    expect(nodes(grid).some((node) => node.props.whopCard === true)).toBe(true);
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+  });
+  it("counts Whop among connected apps", () => {
+    fixture.overrides.set(18, true);
+    const { html } = render();
+    expect(html).toContain("Connected 2");
   });
   it("keeps a safe explicit authorization link and reopens without creating another account", async () => {
     const url = "https://auth.example.test/flow";
