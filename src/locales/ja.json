@@ -1469,7 +1469,6 @@
   "computer.phase.showSleepingBoat": "自動がスリープ中のクラウドコンピューターを見つけました。起動も変更もしていません。",
   "computer.phase.showPendingBoat": "自動が準備できていない既存のクラウドコンピューターを見つけました。変更していません。",
   "computer.badge.autoBoat": "クラウドコンピューター · 自動 · 読み取り専用",
-  "call.live.disclosureCloud": "ライブ通話では、音声に加えて、チャットの最近のメッセージ、ボットの回答、ボットが求める承認の詳細が OpenAI に送信されます。OpenAI キーは My Cloud に保存されたままです。",
   "place.view.local.line": "あなたの画面、マウス、キーボードを使います。",
   "place.view.vm.line": "この端末上の専用 Linux デスクトップ。あなたの画面とは別です。",
   "place.view.browser.short": "ウェブページのみ",

@@ -2414,7 +2414,6 @@
   "computer.phase.showSleepingBoat": "自動模式找到一台休眠中的雲端電腦，並未喚醒或變更它。",
   "computer.phase.showPendingBoat": "自動模式找到一台尚未就緒的現有雲端電腦，並未變更它。",
   "computer.badge.autoBoat": "雲端電腦 · Auto · 唯讀",
-  "call.live.disclosureCloud": "即時通話會將你的語音傳送給 OpenAI，同時傳送的還有此對話的近期訊息、機器人的回覆，以及其要求核准之項目的詳細資訊。OpenAI 金鑰會保留在 My Cloud 上。",
   "place.view.local.line": "使用你的螢幕、滑鼠與鍵盤。",
   "place.view.vm.line": "位於這台裝置上的私人 Linux 桌面，與你自己的螢幕分開。",
   "place.view.browser.short": "僅限網頁",
