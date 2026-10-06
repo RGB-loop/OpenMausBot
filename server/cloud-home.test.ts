@@ -5,7 +5,7 @@ import type { IncomingMessage } from "node:http";
 import { afterEach, expect, it } from "vitest";
 import {
   CLOUD_BROWSER_SIGN_IN_MAX_TTL_S, CLOUD_HOME_MARKER, CLOUD_IGNORED_KEYS, CLOUD_PAIRING_MAX_TTL_S, CLOUD_PAIRING_NONCE_MS, CLOUD_PAIRING_SKEW_S, cloudHomeConfiguration, cloudHomeConfigured,
-  boatNotConfiguredMessage, CLOUD_HOME_UNOFFERED_PLACE, cloudHomeHost, cloudHomeOffersPlace, cloudPairingSignature, createCloudPairing, firstCloudTurnPatch, prepareCloudHomeVolume,
+  CLOUD_HOME_UNOFFERED_PLACE, cloudHomeHost, cloudHomeOffersPlace, cloudPairingSignature, createCloudPairing, firstCloudTurnPatch, prepareCloudHomeVolume,
   withoutIgnoredCloudKeys,
 } from "./cloud-home.ts";
 import { cloudHomeChildEnvironments, codeTrustProblem, passwdIds, spawnWithSecrets } from "./cloud-home-start.ts";
@@ -107,12 +107,6 @@ it("guards the places it never offers with what is true there, not a setting to 
   // startup), so this is the last guard: a bot asking for one reads it.
   expect(CLOUD_HOME_UNOFFERED_PLACE).toBe("My Cloud has no This computer or Local VM. Its bots use the built-in browser and cloud computers.");
   expect(CLOUD_HOME_UNOFFERED_PLACE).not.toMatch(/Works on|OMB|configure|Computer panel|install|set (?:it|one) up/i);
-});
-
-it("suggests the browser, not a Local VM, when Cloud has no Boat account on a Cloud home", () => {
-  expect(boatNotConfiguredMessage(true)).toBe("Cloud Boat is not configured — add a Boat API key or choose Browser");
-  // Every other server keeps its words.
-  expect(boatNotConfiguredMessage(false)).toBe("Cloud Boat is not configured — add a Boat API key or choose Local VM");
 });
 
 // ── the Admin's signed pairing request ───────────────────────────────────────

@@ -119,13 +119,6 @@ export { cloudHomeOffersPlace } from "../shared/cloud-home.ts";
  * time (index.ts computerPlaceRefusal). */
 export const CLOUD_HOME_UNOFFERED_PLACE = "My Cloud has no This computer or Local VM. Its bots use the built-in browser and cloud computers.";
 
-/** What a turn is told when Cloud is chosen but no Boat account is set up (no
- * key of the person's and no included Boat). A Cloud home has no Local VM to
- * suggest instead. */
-export function boatNotConfiguredMessage(cloudHome: boolean): string {
-  return `Cloud Boat is not configured — add a Boat API key or choose ${cloudHome ? "Browser" : "Local VM"}`;
-}
-
 /** The Cloud's setup checklist (docs/cloud-pro.md) ticks two steps from turns
  * that finish on the machine itself: "try something" once any bot's turn
  * finishes there (`firstTurnAt`), and "Give a bot a cloud computer" once one
