@@ -216,7 +216,7 @@ export function createCloudPairing(options: {
       const ttl = Math.min((ttlSeconds as number | undefined) ?? CLOUD_PAIRING_DEFAULT_TTL_S, browser ? CLOUD_BROWSER_SIGN_IN_MAX_TTL_S : CLOUD_PAIRING_MAX_TTL_S);
       const opened = sessions.openPairing({
         scopes: ["admin", "client"],
-        label: typeof label === "string" && label.trim() ? label.trim() : "OMB Cloud",
+        label: typeof label === "string" && label.trim() ? label.trim() : "OpenMausBot Cloud",
         ttlMs: ttl * 1000,
         browser,
         ...(browser ? { owner: owner as string } : {}),

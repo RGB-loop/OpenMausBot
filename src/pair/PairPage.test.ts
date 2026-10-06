@@ -51,11 +51,12 @@ it("a browser keeps the code in the form for the person to confirm", () => {
   f.effects[0]?.(); expect(f.pair).not.toHaveBeenCalled();
 });
 
-it("an OMB Cloud says where its connection starts, never 'the code shown on the server'", () => {
+it("My Cloud says where its connection starts, never 'the code shown on the server'", () => {
   const cloud = pairIntro({ mode: "code", sent: false, email: "", cloudHome: true });
-  // It names the app's own button, as it is labelled.
+  // It names the app's own button and Settings section, as they are labelled.
   expect(cloud).toContain(`choose ${en["cloudHome.connect"]} in the OpenMausBot app`);
-  expect(cloud).toContain("Settings → OMB Cloud");
+  expect(cloud).toContain(`Settings → ${en["settings.section.cloudAccount"]}`);
+  expect(cloud).toContain("on your Plan page");
   expect(cloud).not.toContain("shown on the server");
   expect(pairIntro({ mode: "code", sent: false, email: "", cloudHome: false })).toContain("shown on the server");
   expect(pairIntro({ mode: "email", sent: true, email: "a@b.test", cloudHome: false })).toContain("a@b.test");
