@@ -205,6 +205,12 @@ final class ConnectorRequestTests: XCTestCase {
         )
         let connected = try XCTUnwrap(messages["conn-connected"])
         XCTAssertNil(Walkie.settledReply(transcript: [connected], baseline: [], busy: false))
+        XCTAssertEqual(
+            Walkie.settledReply(transcript: [required], baseline: [], busy: true),
+            "It needs you to connect GitHub. Open the chat to connect it."
+        )
+        XCTAssertNil(Walkie.settledReply(transcript: [connected], baseline: [], busy: true))
+        XCTAssertNil(Walkie.settledReply(transcript: [required], baseline: [required.id], busy: true))
     }
 
     // MARK: - Requests

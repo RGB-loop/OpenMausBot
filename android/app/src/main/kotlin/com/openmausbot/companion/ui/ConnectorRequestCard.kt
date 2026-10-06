@@ -28,6 +28,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -121,8 +122,15 @@ internal fun ConnectorRequestCardView(chat: Chat, message: Message, request: Con
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var busy by remember(message.id) { mutableStateOf(false) }
+    var actionGeneration by remember(message.id) { mutableStateOf(0) }
     var failure by remember(message.id) { mutableStateOf<ConnectorCardFailure?>(null) }
     val linkKey = "${chat.threadId}:${message.id}"
+    DisposableEffect(linkKey) {
+        onDispose { actionGeneration++; busy = false }
+    }
+    LaunchedEffect(request.dismissed) {
+        if (request.dismissed == true) { actionGeneration++; busy = false }
+    }
 
     // While a sign-in page is open: every four seconds, up to five minutes.
     // A patch that moves the status restarts this; leaving the screen ends it.
@@ -152,17 +160,20 @@ internal fun ConnectorRequestCardView(chat: Chat, message: Message, request: Con
         if (busy) return
         busy = true
         failure = null
+        val generation = ++actionGeneration
         scope.launch {
             try {
                 val url = (if (reuse) ConnectorLinkMemory.link(linkKey) else null)
-                    ?: session.authorizeConnectorRequest(chat, message).also { ConnectorLinkMemory.remember(linkKey, it) }
+                    ?: session.authorizeConnectorRequest(chat, message)
+                if (generation != actionGeneration) return@launch
+                ConnectorLinkMemory.remember(linkKey, url)
                 failure = openInBrowser(context, url)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
-                failure = ConnectorCardFailure.of(error)
+                if (generation == actionGeneration) failure = ConnectorCardFailure.of(error)
             } finally {
-                busy = false
+                if (generation == actionGeneration) busy = false
             }
         }
     }
@@ -197,6 +208,8 @@ internal fun ConnectorRequestCardView(chat: Chat, message: Message, request: Con
             }
         },
         onNotNow = {
+            actionGeneration++
+            busy = false
             failure = null
             ConnectorLinkMemory.forget(linkKey)
             scope.launch {

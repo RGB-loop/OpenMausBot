@@ -43,6 +43,7 @@ struct ConnectorRequestCardView: View {
     @EnvironmentObject private var session: Session
     @Environment(\.scenePhase) private var scenePhase
     @State private var busy = false
+    @State private var actionGeneration = 0
     @State private var failure: Failure?
 
     private enum Failure: Equatable {
@@ -95,6 +96,10 @@ struct ConnectorRequestCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .task(id: PollKey(status: request.status, dismissed: request.dismissed)) {
             await pollWhileSigningIn()
+        }
+        .onDisappear { invalidateAction() }
+        .onValueChange(of: request.dismissed) { dismissed in
+            if dismissed == true { invalidateAction() }
         }
         .onValueChange(of: scenePhase) { phase in
             // Back from the browser: one look straight away rather than on
@@ -279,19 +284,24 @@ struct ConnectorRequestCardView: View {
         guard !busy else { return }
         busy = true
         failure = nil
+        actionGeneration += 1
+        let generation = actionGeneration
+        let key = linkKey
         Task {
-            defer { busy = false }
+            defer { if generation == actionGeneration { busy = false } }
             do {
                 let url: URL
-                if reuse, let remembered = ConnectorLinkMemory.shared.link(for: linkKey) {
+                if reuse, let remembered = ConnectorLinkMemory.shared.link(for: key) {
                     url = remembered
                 } else {
                     url = try await session.authorizeConnectorRequest(message, in: chat)
-                    ConnectorLinkMemory.shared.remember(url, for: linkKey)
                 }
-                if !(await UIApplication.shared.open(url)) { failure = .couldNotOpen }
+                guard generation == actionGeneration, key == linkKey else { return }
+                ConnectorLinkMemory.shared.remember(url, for: key)
+                let opened = await UIApplication.shared.open(url)
+                if generation == actionGeneration, !opened { failure = .couldNotOpen }
             } catch {
-                failure = Self.failure(for: error)
+                if generation == actionGeneration { failure = Self.failure(for: error) }
             }
         }
     }
@@ -308,12 +318,18 @@ struct ConnectorRequestCardView: View {
     }
 
     private func dismiss() {
+        invalidateAction()
         failure = nil
         ConnectorLinkMemory.shared.forget(linkKey)
         Task {
             do { try await session.dismissConnectorRequest(message, in: chat) }
             catch { failure = Self.failure(for: error) }
         }
+    }
+
+    private func invalidateAction() {
+        actionGeneration += 1
+        busy = false
     }
 
     /// While a sign-in page is open: ask every four seconds, up to five
