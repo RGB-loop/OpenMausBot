@@ -825,7 +825,12 @@ private fun LoadedChat(
                     TypedAnswerResult.Answered -> Unit
                     // The question closed before the line reached it: say it
                     // as an ordinary message rather than lose it.
-                    TypedAnswerResult.Gone -> session.send(text, chat)
+                    TypedAnswerResult.Gone -> {
+                        if (!session.send(text, emptyList(), chat) && target.text.isBlank()) {
+                            target.onTypedChange(text)
+                            publishFrom(target)
+                        }
+                    }
                     // Hand the words back, with the reason under them.
                     is TypedAnswerResult.Failed -> {
                         if (target.text.isBlank()) {
