@@ -70,6 +70,7 @@ internal fun QuestionCardView(chat: Chat, message: Message, haptics: Haptics) {
 
     val session = LocalCompanion.current.session
     val scope = rememberCoroutineScope()
+    val canAct = rememberCanAct()
     // Per question: the option labels ticked, the free-text reply, and whether
     // "Other" is open. An open field with nothing in it is not an answer.
     val picked = remember(message.id) { mutableStateMapOf<Int, Set<String>>() }
@@ -238,6 +239,12 @@ internal fun QuestionCardView(chat: Chat, message: Message, haptics: Haptics) {
                     )
                 }
             }
+            return@Column
+        }
+
+        // The saved copy: the question as it last stood, never answered from here.
+        if (!canAct) {
+            ReconnectToAnswer()
             return@Column
         }
 

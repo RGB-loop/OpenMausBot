@@ -222,7 +222,7 @@ fun MessageRow(
                             color = tint,
                             modifier = Modifier
                                 .border(1.dp, tint.copy(alpha = 0.5f), CircleShape)
-                                .clickable {
+                                .clickable(enabled = state.canAct) {
                                     haptics.play(TactileAction.TOGGLE_REACTION)
                                     scope.launch {
                                         session.react(message, chat.threadId, group.emoji)
@@ -251,7 +251,7 @@ fun MessageRow(
                         },
                         modifier = Modifier
                             .size(20.dp)
-                            .clickable(enabled = versionIndex > 0 && !busy) {
+                            .clickable(enabled = versionIndex > 0 && !busy && state.canAct) {
                                 scope.launch {
                                     session.switchVersion(versions[versionIndex - 1], bot)
                                 }
@@ -273,7 +273,7 @@ fun MessageRow(
                         },
                         modifier = Modifier
                             .size(20.dp)
-                            .clickable(enabled = versionIndex + 1 < versions.size && !busy) {
+                            .clickable(enabled = versionIndex + 1 < versions.size && !busy && state.canAct) {
                                 scope.launch {
                                     session.switchVersion(versions[versionIndex + 1], bot)
                                 }
@@ -284,7 +284,8 @@ fun MessageRow(
         }
 
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            if (!isPendingEdit) Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+            // Reacting and editing change the computer's copy: not from the saved one.
+            if (!isPendingEdit && state.canAct) Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                 Reactions.CHOICES.forEach { emoji ->
                     Text(
                         text = emoji,
@@ -323,7 +324,7 @@ fun MessageRow(
             // Attachment messages cannot be reconstructed by a text-only edit.
             // The policy also keeps their private transport paths out of the UI.
             val editableText = MessageActions.editableText(message)
-            if (editableText != null && bot != null && !isPendingEdit) {
+            if (editableText != null && bot != null && !isPendingEdit && state.canAct) {
                 HorizontalDivider()
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.mobile_edit_and_retry_f683a3c2)) },
@@ -1252,6 +1253,9 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
     var showingDetails by remember(message.id) { mutableStateOf(false) }
     val skillRequest = card.skillRequest
     val presentation = card.presentation
+    // A saved copy's ask reads as it last stood, but is never answered from
+    // here: it may have expired or been answered elsewhere.
+    val canAct = rememberCanAct()
 
     Column(
         modifier = Modifier
@@ -1379,7 +1383,8 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
             }
         }
 
-        if (card.isPending) {
+        if (card.isPending && !canAct) ReconnectToAnswer()
+        if (card.isPending && canAct) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 // The buttons are the card's own options, never a string
                 // invented here. Session maps the choice to allow/deny/answer.

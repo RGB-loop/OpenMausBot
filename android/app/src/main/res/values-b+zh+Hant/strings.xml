@@ -796,4 +796,8 @@
     <string name="mobile_density_compact_caption">每個機器人佔一行。擁有多個活躍對話的機器人會顯示對話數量；點按數字即可列出對話。</string>
     <string name="mobile_mention_someone">提及某人</string>
     <string name="mobile_mention_everyone">此對話中的所有人</string>
+    <string name="mobile_offline_banner">未連線 · 上次更新 %1$s</string>
+    <string name="mobile_offline_reconnect_to_send">重新連線後即可傳送</string>
+    <string name="mobile_offline_reconnect_to_answer">重新連線後即可回答</string>
+    <string name="mobile_offline_reconnect_to_change">重新連線後即可變更</string>
 </resources>

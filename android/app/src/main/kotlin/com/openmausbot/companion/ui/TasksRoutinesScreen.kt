@@ -102,7 +102,9 @@ internal fun TasksRoutinesScreen(onBack: () -> Unit, onOpenChat: (Chat) -> Unit)
         loading = false
     }
 
-    LaunchedEffect(Unit) { reload() }
+    // The saved copy's routines until the computer is back, then its own.
+    val canAct = rememberCanAct()
+    LaunchedEffect(canAct) { reload() }
 
     val receipts = remember(runs) { RoutineRules.receipts(runs) }
 
@@ -121,7 +123,8 @@ internal fun TasksRoutinesScreen(onBack: () -> Unit, onOpenChat: (Chat) -> Unit)
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
             )
-            ChromeButton(
+            // Nothing is created, run or changed from the saved copy.
+            if (canAct) ChromeButton(
                 icon = Icons.Filled.Add,
                 contentDescription = stringResource(R.string.mobile_new_routine_32809dc6),
                 onClick = { editor = RoutineEditorTarget.new() },
@@ -129,6 +132,7 @@ internal fun TasksRoutinesScreen(onBack: () -> Unit, onOpenChat: (Chat) -> Unit)
                 glyph = 18.dp,
             )
         }
+        if (!canAct) ReconnectToChange()
         HorizontalDivider()
 
         PullToRefreshBox(
@@ -179,7 +183,8 @@ internal fun TasksRoutinesScreen(onBack: () -> Unit, onOpenChat: (Chat) -> Unit)
                     RoutineRow(
                         routine = routine,
                         bot = state.bot(routine.botId),
-                        onEdit = { editor = RoutineEditorTarget.edit(routine) },
+                        canAct = canAct,
+                        onEdit = { if (canAct) editor = RoutineEditorTarget.edit(routine) },
                         onRunNow = {
                             scope.launch {
                                 session.runRoutine(routine)
@@ -236,7 +241,7 @@ internal fun TasksRoutinesScreen(onBack: () -> Unit, onOpenChat: (Chat) -> Unit)
         }
     }
 
-    editor?.let { target ->
+    editor?.takeIf { canAct }?.let { target ->
         // Positional scoping, per routine: `rememberSaveable` inside the sheet is
         // keyed by where it sits in the composition, and this is what makes
         // "where" differ between one routine and the next at the same call site.
@@ -336,6 +341,7 @@ internal data class RoutineEditorTarget(
 private fun RoutineRow(
     routine: Routine,
     bot: Bot?,
+    canAct: Boolean,
     onEdit: () -> Unit,
     onRunNow: () -> Unit,
     onToggle: () -> Unit,
@@ -404,7 +410,7 @@ private fun RoutineRow(
             }
         }
 
-        Box {
+        if (canAct) Box {
             ChromeButton(
                 icon = Icons.Filled.MoreVert,
                 contentDescription = stringResource(R.string.mobile_actions_for_routine_name_767f1549, routine.name),

@@ -50,6 +50,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -210,7 +212,8 @@ fun RosterScreen(navigator: CompanionNavigator) {
     val createThread: (Bot) -> Unit = { bot ->
         // Hoisted across bot sections, search and both densities, so moving a
         // row cannot permit a second creation while the first is pending.
-        if (bot.id !in creatingThreads) {
+        // Nothing is created from the saved copy (Session refuses it too).
+        if (bot.id !in creatingThreads && state.canAct) {
             creatingThreads = creatingThreads + bot.id
             scope.launch {
                 try {
@@ -537,7 +540,7 @@ fun RosterScreen(navigator: CompanionNavigator) {
                 bar = bar.openSearch()
             },
             onCreateBot = {
-                if (!creatingBot) {
+                if (!creatingBot && state.canAct) {
                     creatingBot = true
                     scope.launch {
                         try {
@@ -576,7 +579,7 @@ fun RosterScreen(navigator: CompanionNavigator) {
         )
     }
 
-    if (showingNewGroup) {
+    if (showingNewGroup && state.canAct) {
         NewGroupSheet(
             onCreated = { room ->
                 showingNewGroup = false
@@ -586,7 +589,7 @@ fun RosterScreen(navigator: CompanionNavigator) {
         )
     }
 
-    if (showingNewSection) {
+    if (showingNewSection && state.canAct) {
         NewSectionSheet(onDismiss = { showingNewSection = false })
     }
 
@@ -1217,6 +1220,14 @@ fun StatusBanner() {
         if (missing.isEmpty()) return@LaunchedEffect
         askedForLocalNetwork = true
         environment.requestPermissions(missing)
+    }
+    // The saved copy says so itself, whatever the stream is doing, until a
+    // live hydrate replaces it; then the usual status line returns.
+    val showingCopy by remember(session) { session.state.map { it.isCached }.distinctUntilChanged() }
+        .collectAsState(initial = session.state.value.isCached)
+    if (showingCopy && status != Session.Status.Unauthorized) {
+        OfflineCopyBanner()
+        return
     }
     val banner: Pair<String, Color>? = when (val current = status) {
         Session.Status.Live, Session.Status.Unpaired -> null

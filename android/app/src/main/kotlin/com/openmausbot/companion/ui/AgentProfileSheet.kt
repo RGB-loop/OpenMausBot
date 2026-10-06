@@ -124,6 +124,8 @@ internal fun AgentProfileSheet(bot: Bot, onDismiss: () -> Unit, onOpenOverview: 
     var voices by remember { mutableStateOf<List<Voice>>(emptyList()) }
     var config by remember { mutableStateOf<ConfigStatus?>(null) }
     var busy by remember { mutableStateOf(false) }
+    // The saved copy can be read here, not changed (MOCA-296).
+    val locked = busy || !state.canAct
     var switchingEngine by remember { mutableStateOf(false) }
     // Read-only facts from the overview route; reloads on reopen, so plain
     // remember — there is nothing here a rotation needs to defend.
@@ -348,7 +350,7 @@ internal fun AgentProfileSheet(bot: Bot, onDismiss: () -> Unit, onOpenOverview: 
                         ActionRow(
                             text = "Apply model",
                             icon = Icons.Filled.Check,
-                            enabled = !busy && currentTask != null && ModelRules.canApply(
+                            enabled = !locked && currentTask != null && ModelRules.canApply(
                                 loaded = modelsLoaded,
                                 botBusy = currentTask?.busy,
                                 instance = selectedInstance,
@@ -407,7 +409,7 @@ internal fun AgentProfileSheet(bot: Bot, onDismiss: () -> Unit, onOpenOverview: 
                     ActionRow(
                         text = "Upload image",
                         icon = Icons.Filled.AddCircle,
-                        enabled = !busy,
+                        enabled = !locked,
                         onClick = { pickImage.launch(AvatarImagePicker.request()) },
                     )
 
@@ -415,7 +417,7 @@ internal fun AgentProfileSheet(bot: Bot, onDismiss: () -> Unit, onOpenOverview: 
                         ActionRow(
                             text = "Use mascot",
                             icon = Icons.Filled.Delete,
-                            enabled = !busy,
+                            enabled = !locked,
                             destructive = true,
                             onClick = {
                                 scope.launch {
@@ -457,7 +459,7 @@ internal fun AgentProfileSheet(bot: Bot, onDismiss: () -> Unit, onOpenOverview: 
                     ActionRow(
                         text = "Generate on computer",
                         painter = R.drawable.ic_sparkles,
-                        enabled = ProfileRules.canGenerate(busy, config, prompt),
+                        enabled = ProfileRules.canGenerate(locked, config, prompt),
                         onClick = {
                             scope.launch {
                                 busy = true
@@ -534,7 +536,7 @@ internal fun AgentProfileSheet(bot: Bot, onDismiss: () -> Unit, onOpenOverview: 
                         // The desktop's Voice engine group: one field of the
                         // ordinary config write, then a fresh voice list,
                         // because every engine names its own voices.
-                        if (switchingEngine || config?.voiceProvider == next) return@VoiceSection
+                        if (switchingEngine || !state.canAct || config?.voiceProvider == next) return@VoiceSection
                         scope.launch {
                             switchingEngine = true
                             try {
@@ -574,7 +576,7 @@ internal fun AgentProfileSheet(bot: Bot, onDismiss: () -> Unit, onOpenOverview: 
                     ActionRow(
                         text = "Preview voice",
                         painter = R.drawable.ic_volume_up,
-                        enabled = ProfileRules.canPreview(busy, config, form.voice) && !liveCall.holdsMedia,
+                        enabled = ProfileRules.canPreview(locked, config, form.voice) && !liveCall.holdsMedia,
                         onClick = {
                             // Disabled is how it looks; this is what stops a tap that
                             // reaches the click action anyway.
@@ -618,7 +620,7 @@ internal fun AgentProfileSheet(bot: Bot, onDismiss: () -> Unit, onOpenOverview: 
                 FormSection(header = null) {
                     ActionRow(
                         text = "Save profile changes",
-                        enabled = ProfileRules.canSave(form, busy),
+                        enabled = ProfileRules.canSave(form, locked),
                         onClick = {
                             scope.launch {
                                 busy = true

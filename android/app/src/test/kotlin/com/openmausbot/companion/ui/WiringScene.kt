@@ -16,6 +16,9 @@ import com.openmausbot.companion.core.Connection
 import com.openmausbot.companion.core.ConnectionStore
 import com.openmausbot.companion.core.Fleet
 import com.openmausbot.companion.core.Session
+import com.openmausbot.companion.core.SnapshotStorage
+import com.openmausbot.companion.core.SnapshotStore
+import com.openmausbot.companion.core.StateSnapshot
 import com.openmausbot.companion.core.StreamFrame
 import com.openmausbot.companion.core.TokenStore
 import com.openmausbot.companion.dictation.SpeechDictation
@@ -74,6 +77,8 @@ internal class WiringScene(
     liveClock: () -> Long = System::currentTimeMillis,
     /** Whether this phone already made a Live call (the first-call disclosure is behind it), with [liveTransports]. */
     liveDisclosureShown: Boolean = true,
+    /** A saved copy of [connection]'s last sync, shown until a hydrate replaces it (MOCA-296). */
+    snapshot: StateSnapshot? = null,
     /** The body of the nth stream (1-based). Hangs by default, like a live SSE. */
     private val events: (Int) -> Flow<StreamFrame> = { flow { awaitCancellation() } },
 ) {
@@ -102,6 +107,11 @@ internal class WiringScene(
         eventsFn = { _, _, _ -> flow { emitAll(events(streamStarts.incrementAndGet())) } },
         hydrateFn = { _, _ -> fleet },
         metadataFn = { throw APIError.Status(404) },
+        snapshotStore = snapshot?.let { saved ->
+            val storage = MemorySnapshots().apply { blobs[SnapshotStore.fileName(saved.connectionId)] = saved.encoded() }
+            SnapshotStore(storage, scope, Dispatchers.Main.immediate)
+        },
+        snapshotDispatcher = Dispatchers.Main.immediate,
     )
 
     /** The call manager, built before the players so they can ask it, as the app does. */
@@ -153,6 +163,18 @@ internal class WiringScene(
         alwaysOnEnabled = MutableStateFlow(false),
         onToggleAlwaysOn = {},
     )
+
+    private class MemorySnapshots : SnapshotStorage {
+        val blobs = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+        override fun read(name: String): ByteArray? = blobs[name]
+        override fun write(name: String, bytes: ByteArray) {
+            blobs[name] = bytes
+        }
+        override fun delete(name: String) {
+            blobs.remove(name)
+        }
+        override fun deleteAll() = blobs.clear()
+    }
 
     private object SilentDiscovery : CompanionDiscovery {
         override fun discover(): Flow<DiscoveryState> = emptyFlow()

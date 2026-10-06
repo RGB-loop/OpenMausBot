@@ -253,6 +253,7 @@ internal fun UpdatesSheet(onOpen: (Chat) -> Unit, onDismiss: () -> Unit) {
 @Composable
 private fun UpdateRow(update: ChatUpdate, face: MausState, onOpen: () -> Unit) {
     val session = LocalCompanion.current.session
+    val canAct = rememberCanAct()
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
     var answering by remember(update.id) { mutableStateOf(false) }
@@ -290,7 +291,9 @@ private fun UpdateRow(update: ChatUpdate, face: MausState, onOpen: () -> Unit) {
             )
 
             if (update.kind == UpdateKind.NEEDS_YOU && card != null && card.isPending) {
-                if (card.skillRequest != null) {
+                if (!canAct) {
+                    ReconnectToAnswer(modifier = Modifier.padding(top = 6.dp))
+                } else if (card.skillRequest != null) {
                     Text(
                         stringResource(R.string.mobile_open_the_chat_to_review_skill_md_6225775b),
                         fontSize = 12.sp,

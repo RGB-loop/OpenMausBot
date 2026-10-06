@@ -180,14 +180,14 @@ fun TaskSheet(
                     Icon(
                         imageVector = Icons.Filled.Add,
                         contentDescription = stringResource(R.string.mobile_new_thread_02057e28),
-                        tint = if (TaskRules.canCreate(current)) {
+                        tint = if (state.canAct && TaskRules.canCreate(current)) {
                             MaterialTheme.colorScheme.onSurface
                         } else {
                             secondaryTint.copy(alpha = 0.4f)
                         },
                         modifier = Modifier
                             .size(48.dp)
-                            .clickable(enabled = !saving && TaskRules.canCreate(current)) {
+                            .clickable(enabled = !saving && state.canAct && TaskRules.canCreate(current)) {
                                 saving = true
                                 error = null
                                 scope.launch {
@@ -268,6 +268,7 @@ fun TaskSheet(
                                 onDelete = { error = null; pendingDelete = task },
                                 onArchive = (current as? Chat.BotChat)?.let { archiveHandler },
                                 onPin = pinHandler,
+                                writable = state.canAct,
                             )
                         }
                     }
@@ -309,6 +310,7 @@ fun TaskSheet(
                                 onDelete = { error = null; pendingDelete = task },
                                 onArchive = (current as? Chat.BotChat)?.let { archiveHandler },
                                 onPin = pinHandler,
+                                writable = state.canAct,
                             )
                         }
                     }
@@ -468,11 +470,15 @@ private fun TaskRow(
     onDelete: () -> Unit,
     onArchive: ((BotTask) -> Unit)? = null,
     onPin: (BotTask) -> Unit,
+    /** False while the phone shows its saved copy: the thread can still be read, not changed. */
+    writable: Boolean = true,
 ) {
     val current = TaskRules.isCurrent(task, chat)
-    val canSwitch = enabled && TaskRules.canSwitch(task, chat)
-    val canDelete = enabled && TaskRules.canDelete(task, chat)
-    val canArchive = enabled && TaskRules.canArchive(task, chat)
+    // A bot's thread opens locally; a channel's switch is a write on the computer.
+    val canSwitch = enabled && TaskRules.canSwitch(task, chat) && (writable || chat is Chat.BotChat)
+    val changes = enabled && writable
+    val canDelete = changes && TaskRules.canDelete(task, chat)
+    val canArchive = changes && TaskRules.canArchive(task, chat)
 
     Row(
         modifier = Modifier
@@ -491,9 +497,9 @@ private fun TaskRow(
             text = pinLabel,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            color = if (enabled) secondaryTint else secondaryTint.copy(alpha = 0.4f),
+            color = if (changes) secondaryTint else secondaryTint.copy(alpha = 0.4f),
             modifier = Modifier
-                .clickable(enabled = enabled) { onPin(task) }
+                .clickable(enabled = changes) { onPin(task) }
                 .localizedSemantics(contentDescription = {
                     stringResource(R.string.mobile_pinlabel_taskrules_title_task_5545ef6f, pinLabel, TaskRules.title(task))
                 })
@@ -524,7 +530,7 @@ private fun TaskRow(
             tint = secondaryTint,
             modifier = Modifier
                 .size(48.dp)
-                .clickable(enabled = enabled && TaskRules.canRename(chat), onClick = onRename)
+                .clickable(enabled = changes && TaskRules.canRename(chat), onClick = onRename)
                 .padding(14.dp),
         )
 
@@ -532,11 +538,11 @@ private fun TaskRow(
             Icon(
                 imageVector = Icons.Filled.Notifications,
                 contentDescription = "Snooze ${TaskRules.title(task)}",
-                tint = if (enabled && !TaskRules.isWorking(task)) secondaryTint
+                tint = if (changes && !TaskRules.isWorking(task)) secondaryTint
                 else secondaryTint.copy(alpha = 0.4f),
                 modifier = Modifier
                     .size(48.dp)
-                    .clickable(enabled = enabled && !TaskRules.isWorking(task), onClick = onSnooze)
+                    .clickable(enabled = changes && !TaskRules.isWorking(task), onClick = onSnooze)
                     .padding(14.dp),
             )
         }

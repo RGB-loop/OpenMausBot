@@ -98,7 +98,9 @@ internal fun RoutineCalendarScreen(onBack: () -> Unit, onOpenChat: (Chat) -> Uni
         runs = loaded.runs
         loading = false
     }
-    LaunchedEffect(Unit) { reload() }
+    // The saved copy's routines until the computer is back, then its own.
+    val canAct = rememberCanAct()
+    LaunchedEffect(canAct) { reload() }
 
     val selected = LocalDate.ofEpochDay(selectedDay)
     val today = LocalDate.now(zone)
@@ -125,7 +127,8 @@ internal fun RoutineCalendarScreen(onBack: () -> Unit, onOpenChat: (Chat) -> Uni
                     Text(stringResource(R.string.mobile_calendar_today))
                 }
             }
-            ChromeButton(
+            // Nothing is created, run or changed from the saved copy.
+            if (canAct) ChromeButton(
                 icon = Icons.Filled.Add,
                 contentDescription = stringResource(R.string.mobile_new_routine_32809dc6),
                 onClick = { editor = RoutineEditorTarget.new() },
@@ -133,6 +136,7 @@ internal fun RoutineCalendarScreen(onBack: () -> Unit, onOpenChat: (Chat) -> Uni
                 glyph = 18.dp,
             )
         }
+        if (!canAct) ReconnectToChange()
 
         Row(
             modifier = Modifier
@@ -195,7 +199,7 @@ internal fun RoutineCalendarScreen(onBack: () -> Unit, onOpenChat: (Chat) -> Uni
                             // A run opens the thread its results went to.
                             scope.launch { session.openNotification(target)?.let(onOpenChat) }
                         } else {
-                            item.routine?.let { editor = RoutineEditorTarget.edit(it) }
+                            if (canAct) item.routine?.let { editor = RoutineEditorTarget.edit(it) }
                         }
                     },
                 )
@@ -204,7 +208,7 @@ internal fun RoutineCalendarScreen(onBack: () -> Unit, onOpenChat: (Chat) -> Uni
         }
     }
 
-    editor?.let { target ->
+    editor?.takeIf { canAct }?.let { target ->
         key(target.stateKey) {
             RoutineEditorSheet(
                 target = target,

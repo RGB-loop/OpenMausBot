@@ -738,7 +738,7 @@ private fun LoadedChat(
             ChatActionId.SETTINGS -> if (bot != null) showingProfile = true
             ChatActionId.SHARE_MARKDOWN -> share(scope, environment, threadId, ShareFormat.MARKDOWN)
             ChatActionId.SHARE_JSON -> share(scope, environment, threadId, ShareFormat.JSON)
-            ChatActionId.INTERRUPT -> if (bot != null) scope.launch { session.interrupt(bot) }
+            ChatActionId.INTERRUPT -> if (bot != null && state.canAct) scope.launch { session.interrupt(bot) }
         }
         Unit
     }
@@ -883,6 +883,8 @@ private fun LoadedChat(
             .horizontalBackSwipe(onBack = { latestBackBySwipe.value() }),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
+            // The saved copy, not the computer: say so above everything.
+            OfflineCopyBanner()
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -1036,7 +1038,7 @@ private fun LoadedChat(
                             if (liveCalls.disclosureDue) pendingLiveCall = call else startLiveCall(call)
                         }
                     },
-                    showCall = LiveCallRules.offersCall(liveCall, state.liveCall),
+                    showCall = state.canAct && LiveCallRules.offersCall(liveCall, state.liveCall),
                     // A bot's face and its name pill are both the door to its
                     // profile; a room has no profile, so its pill opens the same
                     // sheet the + does.
@@ -1065,7 +1067,13 @@ private fun LoadedChat(
                     .padding(horizontal = 12.dp),
             )
 
-            Composer(
+            // Nothing is sent, stopped or dictated from the saved copy: no
+            // field, no Stop, no +, just why.
+            if (!state.canAct) OfflineComposer(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .widthIn(max = CHAT_CONTENT_MAX_WIDTH),
+            ) else Composer(
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
                     .widthIn(max = CHAT_CONTENT_MAX_WIDTH),
