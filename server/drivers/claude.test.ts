@@ -390,6 +390,40 @@ describe("ClaudeDriver.decodeConfig", () => {
   );
 
   it.skipIf(process.platform === "win32")(
+    "keeps a large non-ASCII ask whole across socket reads",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "omb-broker-utf8-"));
+      const socketPath = join(dir, "broker.sock");
+      const asks: Array<{ input: unknown }> = [];
+      const broker = await createPermissionBroker({
+        socketPaths: [socketPath],
+        onAsk: (ask) => asks.push(ask),
+        onResolve: () => {},
+      });
+      try {
+        // A Write ask carries the whole file, so one line spans many reads,
+        // and most read boundaries fall inside a three-byte character.
+        const content = "中文ok€".repeat(150_000);
+        const conn = connect(socketPath);
+        await new Promise<void>((resolve, reject) => {
+          conn.on("connect", resolve);
+          conn.on("error", reject);
+        });
+        conn.write(JSON.stringify({ t: "ask", id: "ask-utf8", tool: "Write", input: { file_path: "notes.md", content } }) + "\n");
+        await expect.poll(() => asks.length, { timeout: 20_000 }).toBe(1);
+        const received = (asks[0]!.input as { content: string }).content;
+        expect(received.includes("\uFFFD")).toBe(false);
+        expect(received === content).toBe(true);
+        conn.destroy();
+      } finally {
+        broker.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
     "rejects instead of returning an occupied path when every candidate is unavailable",
     async () => {
       const dir = mkdtempSync(join(tmpdir(), "omb-broker-unavailable-"));
@@ -1530,6 +1564,23 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await instance.adapter.sendTurn({ threadId: "t-unsnapshotted", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(JSON.parse(readFileSync(dump, "utf8")).argv).not.toContain("--autocompact");
+  });
+
+  it("reads --help once for snapshots that overlap", async () => {
+    // The server's own engine read at start can overlap the app's first one.
+    const probes = join(scratch, "probes.log");
+    const release = join(scratch, "release-help");
+    await create(undefined, { FAKE_CLAUDE_PROBE_LOG: probes, FAKE_CLAUDE_HOLD_HELP: release });
+    const both = Promise.all([instance.snapshot(), instance.snapshot()]);
+    await vi.waitFor(() => {
+      const log = readFileSync(probes, "utf8");
+      expect(log.match(/^version /gm)).toHaveLength(2);
+      expect(log).toMatch(/^help /m);
+    }, { timeout: 10_000 });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    writeFileSync(release, "");
+    expect(await both).toMatchObject([{ state: "available" }, { state: "available" }]);
+    expect(readFileSync(probes, "utf8").match(/^help /gm)).toHaveLength(1);
   });
 
   it("maps a CLI version onto the flags it accepts", () => {

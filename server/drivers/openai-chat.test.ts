@@ -176,6 +176,8 @@ describe("createOpenAIChatRuntime tool approvals", () => {
       const withheld = bodies[1].messages.find((message: any) => message.role === "tool" && message.tool_call_id === "withheld");
       expect(JSON.parse(withheld.content)).toMatchObject({ ok: false });
       expect(withheld.content).toMatch(/tool selection excludes/i);
+      // A withheld (failed) tool result ends the turn: the final answer is not
+      // an execution receipt.
       expect(events.at(-1)).toMatchObject({ type: "turn.completed", ok: false });
     } finally { await instance.dispose(); }
   }, 20_000);
@@ -264,6 +266,66 @@ describe("createOpenAIChatRuntime tool approvals", () => {
     expect(toolMessage).toMatchObject({ role: "tool", tool_call_id: "ask1" });
     expect(JSON.parse(toolMessage.content)).toEqual({ ok: true, result: reply });
     expect(events.at(-1)).toMatchObject({ type: "turn.completed", ok: true });
+  }, 20_000);
+
+  it("ends the turn on a failed tool call, never asks the model to run it again, and does not continue it by itself", async () => {
+    // A failed or denied tool op ends the turn with tool_error, even when the
+    // model then writes a confident final answer. No corrective round asks it
+    // to re-run the operation (it may be one a person refused), and a
+    // tool_error is not continued in a new unattended thread.
+    const dir = mkdtempSync(join(tmpdir(), "omb-chat-toolerr-")); mcpDir.push(dir);
+    const script = join(dir, "fake-fail-mcp.mjs");
+    writeFileSync(script, `#!/usr/bin/env node
+      const send = (m) => process.stdout.write(JSON.stringify(m) + "\\n");
+      let buffer = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let nl;
+        while ((nl = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, nl); buffer = buffer.slice(nl + 1);
+          const m = JSON.parse(line);
+          if (m.method === "initialize") send({jsonrpc:"2.0",id:m.id,result:{protocolVersion:"2024-11-05",capabilities:{tools:{}}}});
+          else if (m.method === "tools/list") send({jsonrpc:"2.0",id:m.id,result:{tools:[{name:"write",description:"Fixture write",inputSchema:{type:"object",properties:{},additionalProperties:false}}]}});
+          else if (m.method === "tools/call") send({jsonrpc:"2.0",id:m.id,result:{isError:true,content:[{type:"text",text:"boom"}]}});
+        }
+      });
+    `);
+    chmodSync(script, 0o755);
+    const callBody = 'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"fx_write","arguments":"{}"}}]}}]}\n\n'
+      + 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n';
+    const finalBody = 'data: {"choices":[{"index":0,"delta":{"content":"Done after failure."}}]}\n\n'
+      + 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n';
+    const bodies: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: unknown, init?: RequestInit) => {
+      if (!String(input).endsWith("/chat/completions")) return new Response(JSON.stringify({ data: [] }));
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(bodies.length === 1 ? callBody : finalBody, { headers: { "content-type": "text/event-stream" } });
+    }));
+    const instance = await OpenAICompatDriver.create({
+      instanceId: "toolerr", displayName: "Synthetic", enabled: true,
+      config: OpenAICompatDriver.decodeConfig({ url: "https://api.example.test/v1", apiKeyEnv: "K", model: "fixture" }),
+      environment: { K: "synthetic" },
+    });
+    const events: RuntimeEvent[] = [];
+    instance.adapter.onEvent((event) => events.push(event));
+    try {
+      await instance.adapter.sendTurn({
+        threadId: "toolerr", text: "Use the tool, then answer.", approvalMode: "full",
+        integrations: { custom: { fx: { command: script, args: [], env: {} } } },
+      });
+      await vi.waitFor(() => expect(events.some((event) => event.type === "turn.completed")).toBe(true), { timeout: 10_000 });
+      // Two requests: the tool call, then the model's answer to its result.
+      expect(bodies).toHaveLength(2);
+      expect(bodies.flatMap((body) => body.messages).some((message: any) => message.role === "user" && /re-run the failed/i.test(String(message.content)))).toBe(false);
+      const completed = events.find((event) => event.type === "turn.completed") as any;
+      expect(completed.ok).toBe(false);
+      expect(completed.stopReason).toBe("tool_error");
+      expect(events.some((event) => event.type === "runtime.error" && /One or more tool operations failed/.test((event as any).message ?? ""))).toBe(true);
+      expect(events.some((event) => event.type === "cap.exhausted")).toBe(false);
+    } finally {
+      await instance.dispose();
+    }
   }, 20_000);
 });
 

@@ -18,6 +18,7 @@ import type { CredentialTargetId } from "./credential-request.ts";
 import type { TeamSetupRequest } from "./team-setup.ts";
 import type { RoutineRequestCardData } from "./routine-request.ts";
 import type { ProfileRequestCardData } from "./profile-request.ts";
+import type { PlaceRow } from "./place-view.ts";
 import type { ModelRequestCardData } from "./model-request.ts";
 import type { SkillRequestCardData } from "./skill-request.ts";
 import type { QuestionRequestCardData } from "./ask-question.ts";
@@ -422,6 +423,8 @@ export interface WireMessage {
     /** error rows: the installed Claude Code is too old for the model, and
      * the UI can offer to update it in place. */
     claudeUpdate?: boolean;
+    /** error rows: the place this turn could not use (shared/place-view.ts). */
+    place?: PlaceRow;
     /** Provider item identity, scoped to the owning turn. */
     itemId?: string;
     /** Whether the harness captured the full redacted result. Private
@@ -750,7 +753,10 @@ export type ServerFrame =
   | { kind: "webhook.deleted"; webhookId: string }
   | { kind: "runtime"; event: RuntimeEvent }
   | { kind: "screen"; botId: string; threadId: string; png: string; mime?: string }
-  | { kind: "computer"; botId: string; state: "provisioning" | "waking" }
+  /** A bot's computer is being set up or woken for a turn; the chat shows
+   * one progress line until its first screen frame. `place` names a cloud
+   * computer (absent: a Local VM). */
+  | { kind: "computer"; botId: string; state: "provisioning" | "waking"; place?: "cloud" }
   | { kind: "computer-control"; botId: string; held: boolean; helpReason: string | null }
   | { kind: "bot.deleted"; botId: string }
   | { kind: "live.call"; botId: string; threadId: string; call: LiveCallState | null }
