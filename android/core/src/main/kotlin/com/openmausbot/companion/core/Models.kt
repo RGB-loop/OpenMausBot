@@ -106,6 +106,10 @@ data class OptionCard(
     /** Present on "Remember this for the team?" cards. */
     val teamMemoryRequest: TeamMemoryRequest? = null,
 ) {
+    /**
+     * The card as it was last seen. Whether this phone may answer it now is
+     * [CompanionState.canAct] too, which is false for a cached copy.
+     */
     val isPending: Boolean get() =
         requestId != null && answered == null && dismissed != true && expired != true
     val isPermission: Boolean get() = tool != null

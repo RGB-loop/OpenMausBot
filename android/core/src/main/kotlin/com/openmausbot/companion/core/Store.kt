@@ -71,7 +71,29 @@ data class CompanionState(
      * ([applyLiveCallLookup]).
      */
     val liveCallRevision: Long = 0,
+    /**
+     * Set only on a state rebuilt from the phone's saved copy
+     * (`CompanionState(snapshot)`): when that copy was saved, in epoch
+     * milliseconds. Display only — nothing may be sent or answered from it —
+     * and a hydrate replaces it wholesale and clears this. See [StateSnapshot].
+     */
+    val cachedAt: Long? = null,
 ) {
+    /** This is the saved copy, not the computer's live state. */
+    val isCached: Boolean
+        get() = cachedAt != null
+
+    /**
+     * Whether anything on screen may be acted on: sent, answered, stopped,
+     * run. Never while showing the cache — a saved ask may have expired or
+     * been answered elsewhere, and a card's own `isPending` cannot know that.
+     * This is the state's half of the gate; Session combines it with being
+     * connected, and every composer, card, Stop and routine action reads the
+     * combined value rather than `isPending` alone.
+     */
+    val canAct: Boolean
+        get() = !isCached
+
     /** Threads holding at least one queued send. The row label, the Updates
      * pill, and the closed-thread fold all read this, never task activity. */
     val queuedThreadIds: Set<String>
@@ -230,6 +252,11 @@ data class CompanionState(
     val botChats: List<Room>
         get() = rooms.filter { it.dm == true }
 
+    /**
+     * Every unanswered approval or question, newest first. A cached state
+     * lists the asks as they last stood, so they can read as "last known";
+     * offering to answer one is gated on [canAct].
+     */
     val pendingApprovals: List<PendingApproval>
         get() = (bots.flatMap { bot -> listOf(bot.threadId) + bot.tasks.orEmpty().map(BotTask::threadId) } +
             rooms.map(Room::threadId)).distinct()
@@ -267,6 +294,8 @@ data class CompanionState(
             messages = hydratedMessages,
             hasMore = hydratedHasMore,
             activeLeafIds = fleet.bots.associate { it.threadId to it.activeLeafId },
+            // The computer answered: whatever the saved copy showed is gone.
+            cachedAt = null,
         )
             .let { state -> fleet.botQueuedMessages?.let { state.replaceBotQueues(it) } ?: state }
             .reconcileAllQueued()
