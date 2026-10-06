@@ -355,6 +355,8 @@ data class StateSnapshot(
         val turnId: String? = null,
         val turnTerminal: Boolean? = null,
         val via: String? = null,
+        /** A connect-an-app card: app, reason and status. Its sign-in link is never stored. */
+        val connector: ConnectorRequest? = null,
     ) {
         constructor(message: Message) : this(
             id = message.id,
@@ -382,6 +384,7 @@ data class StateSnapshot(
             turnId = message.turnId,
             turnTerminal = message.turnTerminal,
             via = message.via,
+            connector = message.connector,
         )
 
         val message: Message
@@ -408,6 +411,7 @@ data class StateSnapshot(
                 turnId = turnId,
                 turnTerminal = turnTerminal,
                 via = via,
+                connector = connector,
             )
     }
 

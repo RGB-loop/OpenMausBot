@@ -116,7 +116,9 @@ internal sealed interface ConnectorCardFailure {
  * the card and resumes the bot. Mirrors iOS ConnectorRequestCardView.
  */
 @Composable
-internal fun ConnectorRequestCardView(chat: Chat, message: Message, request: ConnectorRequest, canAct: Boolean = true) {
+internal fun ConnectorRequestCardView(chat: Chat, message: Message, request: ConnectorRequest) {
+    // The last sync never acts (MOCA-296).
+    val canAct = rememberCanAct()
     val presentation = ConnectorRequestPresentation.of(request) ?: return
     val session = LocalCompanion.current.session
     val context = LocalContext.current

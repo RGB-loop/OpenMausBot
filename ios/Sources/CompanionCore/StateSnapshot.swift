@@ -340,6 +340,8 @@ public struct StateSnapshot: Codable, Equatable, Sendable {
         public var steered: Bool?
         public var from: Sender?
         public var via: String?
+        /// A connect-an-app card: app, reason and status. Its sign-in link is never stored.
+        public var connector: ConnectorRequest?
         public var reactions: [Reaction]?
         public var comm: CommChip?
         public var hasImage: Bool?
@@ -367,6 +369,7 @@ public struct StateSnapshot: Codable, Equatable, Sendable {
             steered = message.steered
             from = message.from
             via = message.via
+            connector = message.connector
             reactions = message.reactions
             comm = message.comm
             // The server's own rule for a slimmed screen message: the pixels
@@ -401,6 +404,7 @@ public struct StateSnapshot: Codable, Equatable, Sendable {
             message.steered = steered
             message.from = from
             message.via = via
+            message.connector = connector
             message.reactions = reactions
             message.comm = comm
             message.hasImage = hasImage

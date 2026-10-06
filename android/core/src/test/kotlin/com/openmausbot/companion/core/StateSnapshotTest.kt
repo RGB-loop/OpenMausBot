@@ -706,6 +706,8 @@ class StateSnapshotTest {
          * run's `output` are transcript text, the latter capped per run.
          */
         val NESTED_FIELDS: Map<String, Set<String>> = mapOf(
+            // A connect-an-app card: no link or key, only what the card shows.
+            "com.openmausbot.companion.core.ConnectorRequest" to setOf("alias", "description", "dismissed", "error", "label", "resumeKey", "resumed", "slug", "status"),
             "com.openmausbot.companion.core.ModelSelection" to setOf("effort", "instanceId", "model"),
             "com.openmausbot.companion.core.ThreadOpener" to setOf("at", "botId", "delegationId", "name"),
             "com.openmausbot.companion.core.ThreadCloser" to setOf("at", "botId", "name"),

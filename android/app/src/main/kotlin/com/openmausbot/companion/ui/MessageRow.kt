@@ -488,7 +488,7 @@ private fun MessageContent(
         Message.Kind.CONNECTOR -> {
             val request = message.connector
             if (request != null && chat.connectorOwner(message) != null) {
-                ConnectorRequestCardView(chat, message, request, canAct = state.canAct)
+                ConnectorRequestCardView(chat, message, request)
             } else if (!message.text.isNullOrEmpty()) {
                 TextBubble(chat.threadId, message, endsRun, openLink, openAttachment)
             }

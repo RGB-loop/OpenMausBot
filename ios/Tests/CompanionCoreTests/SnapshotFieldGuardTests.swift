@@ -44,7 +44,11 @@ final class SnapshotFieldGuardTests: XCTestCase {
         "CachedMessage": [
             "id", "role", "kind", "at", "text", "turnId", "turnTerminal", "card", "secret", "tool", "threadRef",
             "compaction", "routineRun", "parentId", "queueId", "steered", "from", "via", "reactions", "comm",
-            "hasImage", "mime", "attachments",
+            "hasImage", "mime", "attachments", "connector",
+        ],
+        // A connect-an-app card: no link or key, only what the card shows.
+        "ConnectorRequest": [
+            "slug", "label", "description", "status", "resumeKey", "alias", "error", "dismissed", "resumed",
         ],
         "ModelSelection": ["instanceId", "model", "effort"],
         "BotProject": ["id", "name", "emoji"],
@@ -98,6 +102,8 @@ final class SnapshotFieldGuardTests: XCTestCase {
     private static let leaves: Set<String> = [
         "String", "Int", "Int64", "Double", "Bool", "Date",
         "AvatarCrop", "Role", "Kind",
+        // ConnectorRequest.Status: required, authorizing, connected, failed.
+        "Status",
     ]
 
     func testEveryTypeInTheFileHasReviewedFields() throws {
@@ -205,6 +211,7 @@ final class SnapshotFieldGuardTests: XCTestCase {
             try decode(AskQuestionOption.self, #"{"label":"A"}"#),
             try decode(OutboundRequest.self, #"{}"#),
             try decode(OutboundCall.self, #"{"label":"Send"}"#),
+            try decode(ConnectorRequest.self, #"{"slug":"github","label":"GitHub","status":"required"}"#),
             try decode(TeamMemoryRequest.self, #"{}"#),
             try decode(SecretRequestCardData.self, #"{}"#),
             try decode(ToolActivity.self, #"{"name":"Bash"}"#),
