@@ -56,6 +56,12 @@ data class StateSnapshot(
         val messagesPerThread: Int,
         val threads: Int,
         val routineRuns: Int,
+        /**
+         * Of each saved run's `output` and `error`. A run's output is a whole
+         * report, and a hundred of them would crowd threads out of the file;
+         * the card only ever shows its opening lines. The same cap on iOS.
+         */
+        val routineRunOutputChars: Int,
         /** The encoded file, all of it. */
         val maxBytes: Int,
     ) {
@@ -64,6 +70,7 @@ data class StateSnapshot(
                 messagesPerThread = 50,
                 threads = 100,
                 routineRuns = 100,
+                routineRunOutputChars = 4_000,
                 maxBytes = 5 * 1_024 * 1_024,
             )
         }
@@ -497,14 +504,30 @@ data class StateSnapshot(
         fun decode(bytes: ByteArray): StateSnapshot =
             CompanionJson.decodeFromString(serializer(), bytes.decodeToString())
 
-        /** The [limit] most recent runs, in the order they arrived. */
-        internal fun recentRuns(runs: List<RoutineRun>, limit: Int): List<RoutineRun> {
-            if (runs.size <= limit) return runs
-            val kept = runs.indices
-                .sortedWith { a, b -> runOrder(runs[b], runs[a]) }
-                .take(maxOf(0, limit))
-                .sorted()
-            return kept.map(runs::get)
+        /** The [limit] most recent runs, in the order they arrived, their output and error cut to [outputChars]. */
+        internal fun recentRuns(runs: List<RoutineRun>, limit: Int, outputChars: Int = Int.MAX_VALUE): List<RoutineRun> {
+            val recent = if (runs.size <= limit) {
+                runs
+            } else {
+                runs.indices
+                    .sortedWith { a, b -> runOrder(runs[b], runs[a]) }
+                    .take(maxOf(0, limit))
+                    .sorted()
+                    .map(runs::get)
+            }
+            return recent.map { run ->
+                val output = run.output?.let { cut(it, outputChars) }
+                val error = run.error?.let { cut(it, outputChars) }
+                if (output === run.output && error === run.error) run else run.copy(output = output, error = error)
+            }
+        }
+
+        /** The first [limit] characters, never ending on half of a surrogate pair. */
+        private fun cut(text: String, limit: Int): String {
+            if (text.length <= limit) return text
+            val end = maxOf(0, limit)
+            val trimmed = if (end > 0 && Character.isHighSurrogate(text[end - 1])) end - 1 else end
+            return text.substring(0, trimmed)
         }
 
         /** Older first: by scheduled time, then by when the run was made. */
@@ -563,7 +586,7 @@ internal fun CompanionState.encodedOfflineSnapshot(
         bots = bots.map { StateSnapshot.CachedBot(it) },
         rooms = rooms.map { StateSnapshot.CachedRoom(it) },
         routines = routines,
-        routineRuns = StateSnapshot.recentRuns(routineRuns, limits.routineRuns),
+        routineRuns = StateSnapshot.recentRuns(routineRuns, limits.routineRuns, limits.routineRunOutputChars),
     ).shedRoster(limits.maxBytes, activity)
 
     // Opened means a page was fetched: a live tail alone is not a page, and

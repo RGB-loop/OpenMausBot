@@ -2,9 +2,12 @@ package com.openmausbot.companion.core
 
 import java.net.URI
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -20,6 +23,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 
@@ -79,6 +83,14 @@ class Session(
     },
     /** Test seam for the handoff between a completed transfer and its caller. */
     private val afterAttachmentDownload: suspend () -> Unit = {},
+    /**
+     * Where the last sync of each paired computer is kept, so the phone can
+     * show it while the computer is out of reach (MOCA-296). Null keeps
+     * nothing — every launch starts empty, as it always did.
+     */
+    private val snapshotStore: SnapshotStore? = null,
+    /** Where a loaded copy is rebuilt into a state: never the main thread. Overridden in tests. */
+    private val snapshotDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     sealed interface Status {
         data object Unpaired : Status
@@ -174,6 +186,42 @@ class Session(
     private val inviteLock = Any()
     private var pairingInFlight = false
     private var deferredInvite: PairingInvite? = null
+
+    /**
+     * Bumped whenever what [state] shows stops being "nothing yet" for the
+     * active computer: a hydrate landed, the runtime stopped, the active
+     * computer changed, or its saved copy was wiped. A saved copy loaded
+     * under an older value is dropped rather than shown, so the cache can
+     * never land on top of the live state it was only standing in for.
+     */
+    private val liveEpoch = AtomicLong(0)
+
+    /**
+     * Held, briefly and never across a suspension, by every step that bumps
+     * [liveEpoch] and replaces the state, and by the one that publishes a
+     * saved copy — so "nothing live landed yet" is checked and acted on as
+     * one step, whatever thread the scope runs on.
+     */
+    private val cacheLock = Any()
+
+    /** The routines and runs last loaded for one computer, so a save can carry them and an offline Home can show them. */
+    private class RememberedRoutines(val connectionId: String, val response: RoutinesResponse)
+
+    @Volatile private var rememberedRoutines: RememberedRoutines? = null
+
+    /** The one pending stream-batch save; see [scheduleOfflineSave]. Guarded by [saveLock]. */
+    private var pendingSave: Job? = null
+    private val saveLock = Any()
+
+    /**
+     * The client for anything that changes something on the computer, or
+     * null while the phone shows its saved copy ([CompanionState.canAct]).
+     * Every write below goes through this, so nothing a person taps on a
+     * stale screen — a send, an answer, a Stop, a rename — leaves the phone
+     * until a live hydrate has replaced the copy. Reads keep [client].
+     */
+    private val writableClient: CompanionClient?
+        get() = client?.takeIf { _state.value.canAct }
 
     init {
         // No Exception other than cancellation leaves this launch: it is a root
@@ -286,6 +334,9 @@ class Session(
                     throw error
                 }
 
+                // A fresh pairing starts from nothing: whatever an earlier
+                // pairing with this computer left on the phone is gone.
+                snapshotStore?.wipe(stored.id)
                 stopActiveRuntimeLocked()
                 registry = updatedRegistry
                 _connections.value = registry.connections
@@ -561,10 +612,13 @@ class Session(
     private suspend fun unpairLocked() {
         val id = _connection.value?.id ?: registry.activeConnectionId
         stopActiveRuntimeLocked()
+        if (id != null) snapshotStore?.wipe(id)
         if (id != null) tokenStore.remove(id)
         registry = id?.let(registry::remove) ?: ConnectionRegistry()
         _connections.value = registry.connections
         connectionStore.saveRegistry(registry)
+        // Nothing left paired: no copy of any computer may outlive that.
+        if (registry.connections.isEmpty()) snapshotStore?.wipeAll()
         if (registry.connections.isEmpty()) {
             // The pairing that earned the education step is gone, so its marker
             // goes too. Removing one of several computers must not consume the
@@ -628,6 +682,7 @@ class Session(
                 if (registry.connection(id) == null) return@withLock
                 val wasActive = registry.activeConnectionId == id
                 if (wasActive) stopActiveRuntimeLocked()
+                snapshotStore?.wipe(id)
                 tokenStore.remove(id)
                 registry = registry.remove(id)
                 _connections.value = registry.connections
@@ -646,6 +701,11 @@ class Session(
 
     private fun stopActiveRuntimeLocked() {
         attachmentDownloads.clear()
+        synchronized(saveLock) {
+            pendingSave?.cancel()
+            pendingSave = null
+        }
+        rememberedRoutines = null
         streamGeneration += 1
         streamJob?.cancel()
         streamJob = null
@@ -657,7 +717,11 @@ class Session(
         client = null
         token = null
         rotation = CandidateRotation(emptyList())
-        _state.value = CompanionState()
+        synchronized(cacheLock) {
+            // A copy of this computer still being read must not land after it stopped.
+            liveEpoch.incrementAndGet()
+            _state.value = CompanionState()
+        }
         notificationSink.setBadge(0)
     }
 
@@ -777,6 +841,8 @@ class Session(
                     _status.value = Status.Offline(
                         if (stored.locked) "Unlock this phone to reach your computer." else stored.message,
                     )
+                    // The token is locked away, not the last sync: show it.
+                    loadOfflineCopy(saved)
                     return
                 }
                 TokenStore.ReadResult.Missing -> {
@@ -794,6 +860,9 @@ class Session(
 
     private fun configureActiveConnectionLocked(saved: Connection, storedToken: String) {
         _connection.value = saved
+        // Started before the stream, never waited on: connecting is not held
+        // up by the disk, and a hydrate that wins the race simply wins.
+        loadOfflineCopy(saved)
         token = storedToken
         // A restored pairing walks the desktop's advertised priority, and it walks
         // it credential-safely: a connection already on a protected route never
@@ -905,6 +974,106 @@ class Session(
         streamJob = job
     }
 
+    // MARK: - The offline copy (MOCA-296)
+
+    /**
+     * Show [saved]'s last sync while its stream comes up, if the phone has
+     * one: read and decoded on the store's writer, rebuilt off the main
+     * thread, published once — and only if nothing live has landed for this
+     * computer in the meantime ([liveEpoch]).
+     */
+    private fun loadOfflineCopy(saved: Connection) {
+        val store = snapshotStore ?: return
+        val epoch = synchronized(cacheLock) { liveEpoch.incrementAndGet() }
+        scope.launch {
+            val snapshot = try {
+                store.load(saved.id, saved.serverEnvironmentId)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                null
+            } ?: return@launch
+            if (liveEpoch.get() != epoch) return@launch
+            val cached = withContext(snapshotDispatcher) { CompanionState(snapshot) }
+            val published = synchronized(cacheLock) {
+                val current = _state.value
+                val showable = liveEpoch.get() == epoch &&
+                    _connection.value?.id == saved.id &&
+                    _status.value != Status.Unauthorized &&
+                    !current.isCached &&
+                    current.cursor == null
+                if (showable) _state.value = cached
+                showable
+            }
+            if (published) {
+                rememberedRoutines = RememberedRoutines(
+                    saved.id,
+                    RoutinesResponse(snapshot.routines, snapshot.routineRuns),
+                )
+            }
+        }
+    }
+
+    /**
+     * Keep the state as it stands now as this computer's offline copy. Only a
+     * live state is kept — a cached one would restamp old data as a new sync —
+     * and the work (building, encoding, encrypting, writing) all happens on
+     * the store's writer: this only hands over the immutable state. Also what
+     * the app calls on its way to the background.
+     */
+    fun saveOfflineCopy() {
+        val store = snapshotStore ?: return
+        val connection = _connection.value ?: return
+        if (_status.value != Status.Live) return
+        val state = _state.value
+        if (state.isCached) return
+        val routines = rememberedRoutines?.takeIf { it.connectionId == connection.id }?.response
+        store.save(
+            state = state,
+            connectionId = connection.id,
+            serverEnvironmentId = connection.serverEnvironmentId,
+            routines = routines?.routines.orEmpty(),
+            routineRuns = routines?.runs.orEmpty(),
+        )
+    }
+
+    /**
+     * A save after a burst of stream frames: at most one every
+     * [OFFLINE_SAVE_INTERVAL_MILLIS], as one pending delayed job — never one
+     * per frame.
+     */
+    private fun scheduleOfflineSave() {
+        if (snapshotStore == null) return
+        synchronized(saveLock) {
+            if (pendingSave?.isActive == true) return
+            pendingSave = scope.launch {
+                delay(OFFLINE_SAVE_INTERVAL_MILLIS)
+                val self = currentCoroutineContext()[Job]
+                synchronized(saveLock) {
+                    if (pendingSave === self) pendingSave = null
+                }
+                saveOfflineCopy()
+            }
+        }
+    }
+
+    /**
+     * The computer refused this phone (a 401), or the address now serves a
+     * different server. Either way its saved copy is not this phone's to show
+     * any more: it is wiped, and a cached state on screen goes with it.
+     */
+    private fun markUnauthorized() {
+        _status.value = Status.Unauthorized
+        val id = _connection.value?.id ?: return
+        snapshotStore?.wipe(id)
+        val wasCached = synchronized(cacheLock) {
+            // A copy still being read is dropped as well as the one on screen.
+            liveEpoch.incrementAndGet()
+            _state.value.isCached.also { cached -> if (cached) _state.value = CompanionState() }
+        }
+        if (wasCached) rememberedRoutines = null
+    }
+
     /** Called when the app leaves the screen — deliberate disconnect so the cursor is known. */
     fun disconnect() {
         streamJob?.cancel()
@@ -931,7 +1100,7 @@ class Session(
                 activeClient.connection.serverEnvironmentId?.let { expected ->
                     // Fail closed before sending the bearer if the address serves a new workspace.
                     if (activeClient.environment().environmentId != expected) {
-                        _status.value = Status.Unauthorized
+                        markUnauthorized()
                         return
                     }
                 }
@@ -947,6 +1116,8 @@ class Session(
                                     _state.update { it.resetCursor(payload.cursor) }
                                 }
                                 _status.value = Status.Live
+                                // A fresh hydrate is the best copy there is: keep it now.
+                                if (!payload.resumed) saveOfflineCopy()
                                 promoteWorkingRoute()
                                 refreshConnectionMetadata(activeClient)
                             }
@@ -961,6 +1132,7 @@ class Session(
                                 }
                                 notificationSink.setBadge(_state.value.unreadCount)
                                 _state.update { it.advance(frame.seq) }
+                                scheduleOfflineSave()
                             }
                         }
                     }
@@ -976,7 +1148,7 @@ class Session(
                 }
                 val apiError = error as? APIError
                 if (apiError?.isUnauthorized == true) {
-                    _status.value = Status.Unauthorized
+                    markUnauthorized()
                     return
                 }
                 _status.value = Status.Offline(failureMessage(error))
@@ -991,7 +1163,11 @@ class Session(
     private suspend fun hydrate(generation: Int) {
         val activeClient = client ?: return
         val fleet = hydrateFn(activeClient, 50)
-        _state.update { it.hydrate(fleet) }
+        // Live now: a saved copy still being read must not land on top.
+        synchronized(cacheLock) {
+            liveEpoch.incrementAndGet()
+            _state.update { it.hydrate(fleet) }
+        }
         notificationSink.setBadge(_state.value.unreadCount)
         // Deliberately off hydrate's critical path: this only words the
         // composer, and the cursor commit — and with it the whole stream —
@@ -1266,7 +1442,7 @@ class Session(
     /** True only when the computer confirmed cancellation, so an
      * edit never hands back words that already joined a turn. */
     suspend fun cancelQueued(send: QueuedSend, chat: Chat): Boolean {
-        val activeClient = client ?: return false
+        val activeClient = writableClient ?: return false
         val destination = when (chat) {
             is Chat.BotChat -> MessageDestination.Bot(chat.bot.id, chat.threadId)
             is Chat.RoomChat -> MessageDestination.Room(chat.room.id, chat.threadId)
@@ -1280,7 +1456,7 @@ class Session(
             throw error
         } catch (error: APIError) {
             if (client !== activeClient) return false
-            if (error.isUnauthorized) _status.value = Status.Unauthorized
+            if (error.isUnauthorized) markUnauthorized()
             _actionError.value = error.message
             return false
         }
@@ -1293,13 +1469,13 @@ class Session(
      * person — "stop the running turn first") on failure.
      */
     suspend fun updateClaude(instanceId: String): ClaudeUpdateResult {
-        val activeClient = client ?: return ClaudeUpdateResult.Failed("This computer is offline.")
+        val activeClient = writableClient ?: return ClaudeUpdateResult.Failed("This computer is offline.")
         return try {
             ClaudeUpdateResult.Updated(activeClient.updateClaude(instanceId))
         } catch (error: CancellationException) {
             throw error
         } catch (error: APIError) {
-            if (error.isUnauthorized) _status.value = Status.Unauthorized
+            if (error.isUnauthorized) markUnauthorized()
             ClaudeUpdateResult.Failed(error.message ?: "Claude Code could not be updated.")
         }
     }
@@ -1325,7 +1501,7 @@ class Session(
      * this returns true.
      */
     suspend fun send(text: String, attachments: List<PendingMessageAttachment>, to: Chat): Boolean {
-        val activeClient = client ?: run {
+        val activeClient = writableClient ?: run {
             _actionError.value = "This computer is offline."
             return false
         }
@@ -1394,7 +1570,7 @@ class Session(
             if (error.isUnauthorized) {
                 gate.withLock {
                     if (connectionId != null && _connection.value?.id == connectionId) {
-                        _status.value = Status.Unauthorized
+                        markUnauthorized()
                     }
                 }
             }
@@ -1460,7 +1636,7 @@ class Session(
             if (error.isUnauthorized) {
                 gate.withLock {
                     if (connectionId != null && _connection.value?.id == connectionId) {
-                        _status.value = Status.Unauthorized
+                        markUnauthorized()
                     }
                 }
             }
@@ -1479,7 +1655,7 @@ class Session(
      * ids, so replaying this lambda cannot create duplicate server objects.
      */
     suspend fun <T> withShareClient(connectionId: String, action: suspend (CompanionClient) -> T): T {
-        val first = client ?: throw IllegalStateException("Connect to the selected computer before sharing.")
+        val first = writableClient ?: throw IllegalStateException("Connect to the selected computer before sharing.")
         if (_connection.value?.id != connectionId) {
             throw IllegalStateException("The selected computer changed. Choose the destination again.")
         }
@@ -1491,7 +1667,7 @@ class Session(
             val retry = gate.withLock {
                 if (_connection.value?.id != connectionId) null else {
                     // Only the live computer's 401 may mark this session revoked.
-                    if (error.isUnauthorized) _status.value = Status.Unauthorized
+                    if (error.isUnauthorized) markUnauthorized()
                     advanceRouteLocked(error)
                     client
                 }
@@ -1625,7 +1801,7 @@ class Session(
     }
 
     suspend fun createBot(): Bot? {
-        val activeClient = client ?: return null
+        val activeClient = writableClient ?: return null
         return try {
             val bot = activeClient.createBot()
             _state.update { it.apply(Frame.Bot(bot)) }
@@ -1637,7 +1813,7 @@ class Session(
     }
 
     suspend fun createRoom(name: String?, memberIds: List<String>): Room? {
-        val activeClient = client ?: return null
+        val activeClient = writableClient ?: return null
         return try {
             val room = activeClient.createRoom(name, memberIds)
             _state.update { it.apply(Frame.Room(room)) }
@@ -1654,7 +1830,7 @@ class Session(
      * returned bot snapshots and let SSE reconcile later desktop-side changes.
      */
     suspend fun assignSection(name: String, botIds: List<String>): List<Bot>? {
-        val activeClient = client ?: return null
+        val activeClient = writableClient ?: return null
         return try {
             activeClient.assignSection(name, botIds).also { updatedBots ->
                 _state.update { state ->
@@ -1680,7 +1856,7 @@ class Session(
     }
 
     suspend fun cloudDesktop(forBot: Bot): URI {
-        val activeClient = client ?: throw APIError.Transport("This computer is offline.")
+        val activeClient = writableClient ?: throw APIError.Transport("This computer is offline.")
         val connectionId = _connection.value?.id
         return try {
             activeClient.cloudDesktop(forBot.id).url
@@ -1689,7 +1865,7 @@ class Session(
                 gate.withLock {
                     // Only the live computer's 401 may mark this session revoked.
                     if (connectionId != null && _connection.value?.id == connectionId) {
-                        _status.value = Status.Unauthorized
+                        markUnauthorized()
                     }
                 }
             }
@@ -1755,7 +1931,7 @@ class Session(
         val connectionId = _connection.value?.id
         val readAt = _state.value.liveCallRevision
         val call = try {
-            liveCallRequest { liveCallFn(it) }
+            liveCallRequest(write = false) { liveCallFn(it) }
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
@@ -1771,8 +1947,9 @@ class Session(
     suspend fun updateLiveSettings(patch: LiveSettingsPatch): LiveSettings =
         liveCallRequest { it.updateLiveSettings(patch) }
 
-    private suspend fun <T> liveCallRequest(body: suspend (CompanionClient) -> T): T {
-        val activeClient = client ?: throw APIError.Transport(OFFLINE_MESSAGE)
+    /** [write]: whether [body] changes anything on the computer, which waits until the phone is live again. */
+    private suspend fun <T> liveCallRequest(write: Boolean = true, body: suspend (CompanionClient) -> T): T {
+        val activeClient = (if (write) writableClient else client) ?: throw APIError.Transport(OFFLINE_MESSAGE)
         val connectionId = _connection.value?.id
         return try {
             body(activeClient)
@@ -1781,7 +1958,7 @@ class Session(
                 gate.withLock {
                     // Only the live computer's 401 may mark this session revoked.
                     if (connectionId != null && _connection.value?.id == connectionId) {
-                        _status.value = Status.Unauthorized
+                        markUnauthorized()
                     }
                 }
             }
@@ -1805,7 +1982,9 @@ class Session(
             _state.update { it.merge(page, threadId) }
         } catch (error: Throwable) {
             if (error is kotlinx.coroutines.CancellationException) throw error
-            _actionError.value = error.message
+            // Showing the saved copy already says the computer is out of
+            // reach; a thread it did not keep fails quietly.
+            if (!_state.value.isCached) _actionError.value = error.message
         }
     }
 
@@ -1852,6 +2031,8 @@ class Session(
                 val bot = _state.value.bot(botId)?.forTask(hit.threadId)
                     ?: throw APIError.Status(404, THREAD_GONE_MESSAGE)
                 if (!hit.onActivePath) {
+                    // Switching the branch is a write; the saved copy cannot.
+                    if (!_state.value.canAct) return null
                     val leaf = activeClient.setActiveBranch(bot.id, hit.messageId, hit.threadId)
                     _state.update { it.apply(Frame.Thread(hit.threadId, leaf)) }
                 }
@@ -1864,6 +2045,7 @@ class Session(
             if (groupId != null) {
                 var room = _state.value.rooms.firstOrNull { it.id == groupId } ?: return null
                 if (room.threadId != hit.threadId) {
+                    if (!_state.value.canAct) return null
                     room = activeClient.switchRoomTask(room.id, hit.threadId)
                     _state.update { it.apply(Frame.Room(room)) }
                 }
@@ -1937,6 +2119,8 @@ class Session(
         threadId: String,
     ): Chat.RoomChat {
         if (room.threadId == threadId) return Chat.RoomChat(room)
+        // Switching a channel's thread is a write, which waits for a live state.
+        if (!_state.value.canAct) throw APIError.Transport(OFFLINE_MESSAGE)
         val switched = activeClient.switchRoomTask(room.id, threadId)
         currentCoroutineContext().ensureActive()
         if (client !== activeClient) throw CancellationException("The active computer changed.")
@@ -1992,7 +2176,7 @@ class Session(
      * contract directly.
      */
     internal suspend fun <T> mutateTask(offline: T, mutation: suspend (CompanionClient) -> T): T {
-        val activeClient = client ?: return offline
+        val activeClient = writableClient ?: return offline
         return try {
             mutation(activeClient)
         } catch (error: Throwable) {
@@ -2054,7 +2238,7 @@ class Session(
      * rename does.
      */
     suspend fun snoozeTask(task: BotTask, forBot: Bot, snoozedUntil: Long?): Boolean {
-        val activeClient = client ?: return false
+        val activeClient = writableClient ?: return false
         return try {
             activeClient.snoozeTask(forBot.id, task.threadId, snoozedUntil)
             refresh()
@@ -2094,7 +2278,7 @@ class Session(
     }
 
     suspend fun updateProfile(patch: BotProfilePatch, forBot: Bot): Bot? {
-        val activeClient = client ?: return null
+        val activeClient = writableClient ?: return null
         return try {
             val updated = activeClient.updateProfile(forBot.id, patch)
             currentCoroutineContext().ensureActive()
@@ -2123,7 +2307,7 @@ class Session(
     }
 
     suspend fun updateModel(selection: ModelSelection, forBot: Bot): Bot? {
-        val activeClient = client ?: return null
+        val activeClient = writableClient ?: return null
         return try {
             val updated = activeClient.updateModel(forBot.id, selection, forBot.threadId)
             currentCoroutineContext().ensureActive()
@@ -2142,7 +2326,7 @@ class Session(
         forBot: Bot,
         crop: AvatarCrop,
     ): Bot? {
-        val activeClient = client ?: return null
+        val activeClient = writableClient ?: return null
         return try {
             val avatarUrl = activeClient.uploadAvatar(data, mime)
             currentCoroutineContext().ensureActive()
@@ -2162,7 +2346,7 @@ class Session(
     }
 
     suspend fun generateAvatar(prompt: String, forBot: Bot): Bot? {
-        val activeClient = client ?: return null
+        val activeClient = writableClient ?: return null
         return try {
             val updated = activeClient.generateAvatar(forBot.id, prompt)
             currentCoroutineContext().ensureActive()
@@ -2219,7 +2403,7 @@ class Session(
      * afterwards, because every engine names its own voices.
      */
     suspend fun switchVoiceProvider(provider: VoiceProvider): ConfigStatus? {
-        val activeClient = client ?: return null
+        val activeClient = writableClient ?: return null
         return try {
             activeClient.updateVoiceProvider(provider)
         } catch (error: Throwable) {
@@ -2252,7 +2436,7 @@ class Session(
     }
 
     suspend fun authorizeConnector(slug: String, alias: String?): URI? {
-        val activeClient = client ?: return null
+        val activeClient = writableClient ?: return null
         return try {
             activeClient.authorizeConnector(slug, alias)
         } catch (error: Throwable) {
@@ -2262,10 +2446,25 @@ class Session(
         }
     }
 
+    /**
+     * The computer's routines and recent runs. While the phone shows its saved
+     * copy these are the ones saved with it, so the calendar and the routine
+     * list still read offline; a live load is remembered for the next save.
+     */
     suspend fun loadRoutines(): RoutinesResponse {
+        val connectionId = _connection.value?.id
+        if (_state.value.isCached) {
+            return rememberedRoutines?.takeIf { it.connectionId == connectionId }?.response
+                ?: RoutinesResponse(emptyList(), emptyList())
+        }
         val activeClient = client ?: return RoutinesResponse(emptyList(), emptyList())
         return try {
-            activeClient.routines()
+            activeClient.routines().also { loaded ->
+                if (connectionId != null && _connection.value?.id == connectionId && client === activeClient) {
+                    rememberedRoutines = RememberedRoutines(connectionId, loaded)
+                    scheduleOfflineSave()
+                }
+            }
         } catch (error: Throwable) {
             if (error is kotlinx.coroutines.CancellationException) throw error
             _actionError.value = error.message
@@ -2308,7 +2507,7 @@ class Session(
     }
 
     suspend fun saveRoutine(input: RoutineInput, id: String?): Routine? {
-        val activeClient = client ?: return null
+        val activeClient = writableClient ?: return null
         return try {
             if (id == null) activeClient.createRoutine(input) else activeClient.updateRoutine(id, input)
         } catch (error: Throwable) {
@@ -2319,7 +2518,7 @@ class Session(
     }
 
     suspend fun setRoutineEnabled(routine: Routine, enabled: Boolean): Routine? {
-        val activeClient = client ?: return null
+        val activeClient = writableClient ?: return null
         return try {
             activeClient.setRoutineEnabled(routine.id, enabled)
         } catch (error: Throwable) {
@@ -2330,7 +2529,7 @@ class Session(
     }
 
     suspend fun runRoutine(routine: Routine): RoutineRun? {
-        val activeClient = client ?: return null
+        val activeClient = writableClient ?: return null
         return try {
             activeClient.runRoutine(routine.id)
         } catch (error: Throwable) {
@@ -2341,7 +2540,7 @@ class Session(
     }
 
     suspend fun deleteRoutine(routine: Routine): Boolean {
-        val activeClient = client ?: return false
+        val activeClient = writableClient ?: return false
         return try {
             activeClient.deleteRoutine(routine.id)
             true
@@ -2353,7 +2552,7 @@ class Session(
     }
 
     suspend fun react(to: Message, inThreadId: String, emoji: String) {
-        val activeClient = client ?: return
+        val activeClient = writableClient ?: return
         try {
             val patched = activeClient.toggleReaction(inThreadId, to.id, emoji)
             _state.update { it.apply(Frame.MessagePatch(inThreadId, patched)) }
@@ -2369,7 +2568,7 @@ class Session(
      * edit simply drops the stand-in, so the old branch returns.
      */
     suspend fun edit(message: Message, forBot: Bot, text: String) {
-        if (client == null) return
+        if (writableClient == null) return
         val threadId = forBot.threadId
         val connectionId = _connection.value?.id
         val pending = PendingEdit(message.id, text, baseLeafId = _state.value.botForThread(threadId)?.activeLeafId)
@@ -2389,7 +2588,7 @@ class Session(
     }
 
     suspend fun switchVersion(to: Message, forBot: Bot) {
-        val activeClient = client ?: return
+        val activeClient = writableClient ?: return
         try {
             val leaf = activeClient.setActiveBranch(forBot.id, to.id, forBot.threadId)
             _state.update { it.apply(Frame.Thread(forBot.threadId, leaf)) }
@@ -2409,8 +2608,9 @@ class Session(
         }
     }
 
+    /** Every action through here changes something on the computer, so it waits for a live state ([writableClient]). */
     private suspend fun perform(quietly: Boolean = false, body: suspend (CompanionClient) -> Unit) {
-        val activeClient = client ?: return
+        val activeClient = writableClient ?: return
         val connectionId = _connection.value?.id
         try {
             body(activeClient)
@@ -2419,7 +2619,7 @@ class Session(
                 gate.withLock {
                     // Only the live computer's 401 may mark this session revoked.
                     if (connectionId != null && _connection.value?.id == connectionId) {
-                        _status.value = Status.Unauthorized
+                        markUnauthorized()
                     }
                 }
             } else if (!quietly) {
@@ -2439,6 +2639,9 @@ class Session(
             "That pairing invitation is not valid. Start pairing again on your computer."
         const val THREAD_GONE_MESSAGE = "That thread is no longer on your computer."
         const val OFFLINE_MESSAGE = "This computer is offline."
+
+        /** The most a stream burst may wait before its offline copy is saved. */
+        internal const val OFFLINE_SAVE_INTERVAL_MILLIS = 5_000L
 
         /** Empty resumes in a row before the stream starts over without a cursor. */
         internal const val EMPTY_RESUMES_BEFORE_FRESH_START = 2

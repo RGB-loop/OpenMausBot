@@ -1,6 +1,9 @@
 package com.openmausbot.companion.core
 
 import java.util.Base64
+import kotlinx.serialization.descriptors.PolymorphicKind
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.StructureKind
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
@@ -625,5 +628,108 @@ class StateSnapshotTest {
         val message = snapshotLine("a", 1.0).copy(attachments = listOf(attachment))
 
         assertEquals(listOf(attachment), StateSnapshot.CachedMessage(message).attachments)
+    }
+
+    @Test
+    fun `a saved run keeps at most four thousand characters of output and error`() {
+        val long = snapshotRun("long", 2.0, output = "o".repeat(4_500)).copy(error = "e".repeat(4_001))
+        val short = snapshotRun("short", 1.0, output = "fine")
+        // A surrogate pair straddling the cut is not split in half.
+        val emoji = snapshotRun("emoji", 3.0, output = "a".repeat(3_999) + "\uD83D\uDE00" + "tail")
+
+        val kept = CompanionState().snapshot(routineRuns = listOf(long, short, emoji)).routineRuns.associateBy(RoutineRun::id)
+
+        assertEquals(4_000, limits.routineRunOutputChars)
+        assertEquals("o".repeat(4_000), kept.getValue("long").output)
+        assertEquals("e".repeat(4_000), kept.getValue("long").error)
+        assertEquals(short, kept.getValue("short"))
+        assertEquals("a".repeat(3_999), kept.getValue("emoji").output)
+        // Everything else about the run is untouched.
+        assertEquals(long.copy(output = null, error = null), kept.getValue("long").copy(output = null, error = null))
+    }
+
+    @Test
+    fun `every type the snapshot writes lists its fields on purpose`() {
+        // Every class reachable from the file, by serial name, with the fields
+        // it may write. A field added to any of them, or a new type reachable
+        // from them, fails here until someone decides it belongs on disk.
+        val cached = mapOf(
+            "com.openmausbot.companion.core.StateSnapshot" to setOf(
+                "schemaVersion", "connectionId", "serverEnvironmentId", "savedAt", "bots", "rooms", "threads", "routines", "routineRuns",
+            ),
+            "com.openmausbot.companion.core.StateSnapshot.CachedThread" to setOf("messages", "hasMore", "activeLeafId"),
+            // Pinned field for field against their wire types in the test above.
+            "com.openmausbot.companion.core.StateSnapshot.CachedBot" to StateSnapshot.CachedBot.serializer().descriptor.names(),
+            "com.openmausbot.companion.core.StateSnapshot.CachedRoom" to StateSnapshot.CachedRoom.serializer().descriptor.names(),
+            "com.openmausbot.companion.core.StateSnapshot.CachedTask" to StateSnapshot.CachedTask.serializer().descriptor.names(),
+            "com.openmausbot.companion.core.StateSnapshot.CachedMessage" to StateSnapshot.CachedMessage.serializer().descriptor.names(),
+        )
+        val walked = reachableClasses(StateSnapshot.serializer().descriptor)
+
+        cached.forEach { (name, fields) -> assertEquals(fields, walked[name], name) }
+        val nested = walked - cached.keys
+        assertEquals(
+            NESTED_FIELDS.keys.sorted(),
+            nested.keys.sorted(),
+            "the types the snapshot writes changed: " + nested.entries.joinToString("; ") { "${it.key}=${it.value.sorted()}" },
+        )
+        NESTED_FIELDS.forEach { (name, fields) -> assertEquals(fields, nested[name], name) }
+    }
+
+    private fun SerialDescriptor.names(): Set<String> = (0 until elementsCount).map(::getElementName).toSet()
+
+    /** Every class-shaped descriptor under [root], by serial name. Lists, maps and nullables are looked through. */
+    private fun reachableClasses(root: SerialDescriptor): Map<String, Set<String>> {
+        val found = LinkedHashMap<String, Set<String>>()
+        fun visit(descriptor: SerialDescriptor) {
+            when (descriptor.kind) {
+                StructureKind.CLASS, StructureKind.OBJECT, is PolymorphicKind -> {
+                    val name = descriptor.serialName.removeSuffix("?")
+                    if (name in found) return
+                    found[name] = descriptor.names()
+                    (0 until descriptor.elementsCount).forEach { visit(descriptor.getElementDescriptor(it)) }
+                }
+                StructureKind.LIST, StructureKind.MAP ->
+                    (0 until descriptor.elementsCount).forEach { visit(descriptor.getElementDescriptor(it)) }
+                else -> Unit
+            }
+        }
+        visit(root)
+        return found
+    }
+
+    private companion object {
+        /**
+         * Reviewed for MOCA-296: nothing here is a credential, a byte payload
+         * or live state. Attachment paths are server paths (inline `data:`
+         * ones are dropped when a message is cached); a tool's `output` and a
+         * run's `output` are transcript text, the latter capped per run.
+         */
+        val NESTED_FIELDS: Map<String, Set<String>> = mapOf(
+            "com.openmausbot.companion.core.ModelSelection" to setOf("effort", "instanceId", "model"),
+            "com.openmausbot.companion.core.ThreadOpener" to setOf("at", "botId", "delegationId", "name"),
+            "com.openmausbot.companion.core.ThreadCloser" to setOf("at", "botId", "name"),
+            "com.openmausbot.companion.core.BotProject" to setOf("emoji", "id", "name"),
+            "com.openmausbot.companion.core.GroupResponder" to setOf("botId", "kind"),
+            "com.openmausbot.companion.core.OptionCard" to setOf("allowKey", "answered", "answeredText", "dismissed", "expired", "held", "heldCode", "options", "outboundRequest", "questionRequest", "requestId", "requestType", "skillRequest", "subtitle", "teamMemoryRequest", "title", "tool"),
+            "com.openmausbot.companion.core.SkillRequestCardData" to setOf("action", "botId", "createdAt", "gist", "name", "preview", "requestId", "sha256", "source", "stagedId", "threadId", "version", "warnings"),
+            "com.openmausbot.companion.core.QuestionRequestCardData" to setOf("origin", "questions", "version"),
+            "com.openmausbot.companion.core.AskQuestion" to setOf("header", "multiSelect", "options", "question"),
+            "com.openmausbot.companion.core.AskQuestionOption" to setOf("description", "label"),
+            "com.openmausbot.companion.core.OutboundRequest" to setOf("app", "calls", "tool"),
+            "com.openmausbot.companion.core.OutboundCall" to setOf("app", "label"),
+            "com.openmausbot.companion.core.TeamMemoryRequest" to setOf("entryId", "kind", "section"),
+            "com.openmausbot.companion.core.ToolActivity" to setOf("claudeUpdate", "name", "ok", "output", "setup", "spoken"),
+            "com.openmausbot.companion.core.ThreadRef" to setOf("botId", "threadId", "title"),
+            "com.openmausbot.companion.core.Compaction" to setOf("summary", "tokensBefore"),
+            "com.openmausbot.companion.core.RoutineRunCard" to setOf("deferredAt", "error", "executionThreadId", "goalStatus", "routineId", "routineName", "runId", "scheduledFor", "status", "summary"),
+            "com.openmausbot.companion.core.Sender" to setOf("botId", "color", "name"),
+            "com.openmausbot.companion.core.Reaction" to setOf("by", "emoji"),
+            "com.openmausbot.companion.core.CommChip" to setOf("groupId", "withBotId", "withColor", "withName"),
+            "com.openmausbot.companion.core.MessageImageAttachment" to setOf("durationMs", "kind", "mime", "name", "path"),
+            "com.openmausbot.companion.core.Routine" to setOf("botId", "createdAt", "durationMinutes", "enabled", "id", "name", "nextRunAt", "prompt", "runOn", "schedule", "timeoutMinutes", "updatedAt"),
+            "com.openmausbot.companion.core.RoutineSchedule" to setOf("anchorAt", "at", "everyMinutes", "time", "type", "weekdays"),
+            "com.openmausbot.companion.core.RoutineRun" to setOf("botId", "createdAt", "durationMinutes", "error", "finishedAt", "id", "manual", "output", "prompt", "routineId", "routineName", "runOn", "scheduledFor", "seenAt", "startedAt", "status", "threadId", "timeoutMinutes", "triggerSource"),
+        )
     }
 }
