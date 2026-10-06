@@ -537,7 +537,7 @@ private fun TaskRow(
         if (onSnooze != null) {
             Icon(
                 imageVector = Icons.Filled.Notifications,
-                contentDescription = "Snooze ${TaskRules.title(task)}",
+                contentDescription = stringResource(R.string.mobile_snooze_task_rules_title, TaskRules.title(task)),
                 tint = if (changes && !TaskRules.isWorking(task)) secondaryTint
                 else secondaryTint.copy(alpha = 0.4f),
                 modifier = Modifier

@@ -1407,7 +1407,7 @@ private fun ChatHeader(
                 Spacer(Modifier.width(8.dp))
                 ChromeButton(
                     icon = Icons.Filled.Call,
-                    contentDescription = "Call ${chat.name}",
+                    contentDescription = stringResource(R.string.mobile_chat_call_bot, chat.name),
                     onClick = onCall,
                 )
             }
@@ -1878,7 +1878,7 @@ private fun Composer(
         // What is in flight, in the order iOS stacks them: the send or the
         // import, then a file on its way, then whatever went wrong.
         if (inFlight) {
-            ComposerStatusLine(if (preparing) "Preparing attachments…" else "Sending…")
+            ComposerStatusLine(stringResource(if (preparing) R.string.mobile_preparing_attachments_343475f3 else R.string.mobile_sending_cf765512))
         }
         if (openingFileName != null) {
             ComposerStatusLine(stringResource(R.string.mobile_chat_opening_file, openingFileName))
@@ -1963,7 +1963,7 @@ private fun Composer(
         ) {
             TouchTarget(
                 onClick = onTogglePlus,
-                contentDescription = if (plusOpen) "Close" else "More",
+                contentDescription = stringResource(if (plusOpen) R.string.mobile_a11y_close else R.string.mobile_more_4bab2d8f),
             ) {
                 Box(
                     modifier = Modifier
@@ -2095,7 +2095,7 @@ private fun Composer(
                 // field about 60dp wide. A dictation already running keeps
                 // its mic so it can be stopped.
                 if (stoppable) {
-                    TouchTarget(onClick = onStop, contentDescription = "Stop the current turn") {
+                    TouchTarget(onClick = onStop, contentDescription = stringResource(R.string.mobile_action_stop_turn)) {
                         Box(
                             modifier = Modifier
                                 .size(32.dp)
