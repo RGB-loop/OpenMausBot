@@ -630,6 +630,39 @@ private struct InstanceCapabilityResponse: Decodable {
     let instances: [Entry]
 }
 
+/// Shut while the phone is showing its offline snapshot (MOCA-296), so no
+/// change can leave it until the computer has answered with live state. The
+/// screens already gate every action on `CompanionState.canAct`; this is the
+/// floor under them: any request but a read is refused before it is sent,
+/// whichever button or path asked for it.
+public final class OfflineWriteGate: @unchecked Sendable {
+    /// What a refused request throws, as `APIError.transport`.
+    public static let refusal = "Reconnect to your computer to do that."
+
+    private let lock = NSLock()
+    private var shut = false
+
+    public init() {}
+
+    public var isShut: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return shut
+    }
+
+    public func set(shut: Bool) {
+        lock.lock()
+        self.shut = shut
+        lock.unlock()
+    }
+
+    /// Reads are the only requests a cached view may make.
+    static func allows(_ request: URLRequest) -> Bool {
+        let method = (request.httpMethod ?? "GET").uppercased()
+        return method == "GET" || method == "HEAD"
+    }
+}
+
 public struct CompanionClient: Sendable {
     public static let maximumImageUploadBytes = AttachmentPolicy.maximumImageBytes
     public static let maximumFileUploadBytes = AttachmentPolicy.maximumFileBytes
@@ -639,17 +672,20 @@ public struct CompanionClient: Sendable {
     private let token: String?
     private let session: URLSession
     private let requestTimeout: TimeInterval
+    private let writeGate: OfflineWriteGate?
 
     public init(
         connection: Connection,
         token: String?,
         session: URLSession = .shared,
-        requestTimeout: TimeInterval = 20
+        requestTimeout: TimeInterval = 20,
+        writeGate: OfflineWriteGate? = nil
     ) {
         self.connection = connection
         self.token = token
         self.session = session
         self.requestTimeout = min(max(requestTimeout, 1), 150)
+        self.writeGate = writeGate
     }
 
     // MARK: - Requests
@@ -720,6 +756,9 @@ public struct CompanionClient: Sendable {
     }
 
     func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        if let writeGate, writeGate.isShut, !OfflineWriteGate.allows(request) {
+            throw APIError.transport(OfflineWriteGate.refusal)
+        }
         do {
             return try await session.data(for: request)
         } catch {
