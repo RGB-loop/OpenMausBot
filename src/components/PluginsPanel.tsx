@@ -16,6 +16,7 @@ import { managedConnectorUnavailableReason } from "../../shared/connector-availa
 import { connectorServiceAccess, isConnectorToolGrantShape } from "@/lib/connector-grants";
 import { BotAvatar } from "./Avatar";
 import { McpServersPanel } from "./McpServersPanel";
+import { WhopIcon } from "./WhopIcon";
 
 export interface ToolkitCard {
   slug: string;
@@ -610,6 +611,7 @@ export function PluginsPanel() {
   );
   const isConnected = (slug: string) => Boolean(status[slug]?.connected || status[slug]?.accounts?.length);
   const filter: AppsFilter = surface === "mcp" ? "mcp" : tab === "connected" ? "connected" : "all";
+  const showWhopDiscovery = filter === "all" && (!search || `whop ${t("whop.description")}`.toLowerCase().includes(search.toLowerCase().trim()));
   // Connected apps lead the grid, so the ones you use are never a scroll away.
   const visible = (filter === "connected" ? matching.filter((card) => isConnected(card.slug)) : matching)
     .map((card, index) => ({ card, index }))
@@ -794,6 +796,14 @@ export function PluginsPanel() {
           )}
           {error && <div role="alert" className="mb-2 mt-1 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{typeof error === "string" ? error : t(error.key)}</div>}
 
+          {showWhopDiscovery && (
+            <div data-whop-discovery className="mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-hairline/50 bg-card p-4">
+              <WhopIcon />
+              <div className="min-w-0 flex-[1_1_200px]"><div className="text-[14px] font-medium text-ink">Whop</div><p className="mt-1 text-[12px] text-ink-secondary">{t("whop.description")}</p></div>
+              <button type="button" onClick={() => chooseFilter("mcp")} className="rounded-lg bg-control px-3 py-2 text-[12.5px] font-medium text-ink hover:bg-raised-hover">{t("whop.setup")}</button>
+            </div>
+          )}
+
           {filter !== "mcp" && (
             <section data-apps-grid aria-labelledby="apps-grid-title" className="@container pt-3">
               {/* @container: the tile columns follow the pop-up's width, not the window's (3, then 2, then 1) */}
@@ -838,7 +848,7 @@ export function PluginsPanel() {
                   </button>
                 </div>
               )}
-              {cards !== null && visible.length === 0 && (
+              {cards !== null && visible.length === 0 && !showWhopDiscovery && (
                 <div className="flex min-h-40 flex-col items-center justify-center text-center">
                   <div className="text-[14px] font-medium text-ink">
                     {filter === "connected" ? connectedEmptyCopy.title : t("connectors.noAppsFound")}

@@ -94,6 +94,14 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Apps pop-up", () => {
+  it("exposes Whop without requiring a Composio connection and routes setup to MCP", () => {
+    fixture.overrides.set(CONFIGURED, false);
+    const { html, nodes: tree } = render();
+    expect(html).toContain("Set up Whop");
+    const card = tree.find((node) => node.props["data-whop-discovery"] !== undefined)!;
+    nodes(card).find((node) => node.type === "button")!.props.onClick!();
+    expect(fixture.dispatch).toHaveBeenCalledWith({ type: "togglePlugins", open: true, surface: "mcp" });
+  });
   it("keeps a safe explicit authorization link and reopens without creating another account", async () => {
     const url = "https://auth.example.test/flow";
     fixture.overrides.set(STATUS, { gmail: { connected: false, pending: true } });

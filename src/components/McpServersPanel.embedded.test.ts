@@ -60,4 +60,29 @@ describe("Your MCP servers inside the Apps pop-up", () => {
     expect(html).toContain("overflow-y-auto");
     expect(html).toContain("Add server");
   });
+
+  it("offers Whop setup with no API key form or forced installation", () => {
+    fixture.servers = [];
+    const html = render(true);
+    expect(html).toContain("Connect Whop");
+    expect(html).toContain("no API key needed");
+    expect(html).toContain("admin access across businesses");
+    expect(html).not.toContain("<textarea");
+  });
+
+  it("recognizes an existing Whop URL under any name and exposes access and disconnect", () => {
+    fixture.servers = [{ name: "business", type: "http", url: "https://mcp.whop.com/mcp", headerKeys: [], enabled: true, auth: "signed-in" }];
+    const html = render(true);
+    expect(html).toContain('data-whop-server="business"');
+    expect(html).toContain("Disconnect Whop");
+    expect(html).toContain("Bot access");
+    expect(html).not.toContain("data-whop-setup");
+  });
+
+  it("does not brand an unrelated endpoint just because its name is whop", () => {
+    fixture.servers = [{ name: "whop", type: "http", url: "https://unrelated.example/mcp", headerKeys: [], enabled: false }];
+    const html = render(true);
+    expect(html).toContain("data-whop-setup");
+    expect(html).not.toContain("data-whop-server");
+  });
 });
