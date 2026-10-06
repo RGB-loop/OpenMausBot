@@ -214,14 +214,17 @@ describe("threadModelFallback", () => {
     expect(threadModelFallback(spare, sonnet, engines({}))).toBeNull();
   });
 
-  it("gives way when the engine is gone, disabled, unavailable, refused, or no longer offers the model", () => {
+  it("gives way when the engine is gone, disabled, unavailable, or not allowed", () => {
     expect(threadModelFallback(spare, sonnet, engines({ spare: undefined }))).toBe("unavailable");
     expect(threadModelFallback(spare, sonnet, engines({ spare: engine("spare", { enabled: false }) }))).toBe("unavailable");
     expect(threadModelFallback(spare, sonnet, engines({ spare: engine("spare", { snapshot: { state: "unavailable", reason: "missing" } }) }))).toBe("unavailable");
     expect(threadModelFallback(spare, sonnet, engines({}), { refusal: (instance) => instance.instanceId === "spare" ? "not allowed" : undefined })).toBe("unavailable");
-    expect(threadModelFallback({ ...spare, model: "claude-retired-4" }, sonnet, engines({}))).toBe("unavailable");
-    expect(threadModelFallback({ ...spare, variant: "low" }, sonnet, engines({}))).toBe("unavailable");
     expect(threadModelFallback(spare, sonnet, engines({}), { allows: (selection) => selection.instanceId !== "spare" })).toBe("unavailable");
+  });
+
+  it("runs a model its engine's catalog does not list as picked: IDs are free-form", () => {
+    expect(threadModelFallback({ ...spare, model: "claude-sonnet-4-6[1m]" }, sonnet, engines({}))).toBeNull();
+    expect(threadModelFallback({ ...spare, variant: "low" }, sonnet, engines({}))).toBeNull();
   });
 
   it("gives way to a signed-out engine only when the bot's model is on another engine that can run", () => {
@@ -233,7 +236,7 @@ describe("threadModelFallback", () => {
     // The bot's engine can't run either: nothing better to run on.
     expect(threadModelFallback(spare, sonnet, engines({ spare: signedOut, claude: claudeOut }))).toBeNull();
     expect(threadModelFallback(spare, sonnet, engines({ spare: signedOut, claude: undefined }))).toBeNull();
-    expect(threadModelFallback(spare, { ...sonnet, model: "claude-retired-4" }, engines({ spare: signedOut }))).toBeNull();
+    expect(threadModelFallback(spare, sonnet, engines({ spare: signedOut, claude: engine("claude", { enabled: false }) }))).toBeNull();
     // A custom endpoint brings its own credential: its sign-in state does not count.
     expect(threadModelFallback(spare, sonnet, engines({ spare: { ...signedOut, access: "custom" } }))).toBeNull();
   });

@@ -33,13 +33,6 @@ export function readyToRun(instance: SelectableInstance, context: DefaultSelecti
   return instance.snapshot.state === "available" && context.refusal?.(instance) === undefined && !signedOut(instance);
 }
 
-/** The engine still offers this model, and its variant where one is set. A
- * saved default and a thread's own model (thread-model.ts) both ask it. */
-export function offersSelection(instance: Pick<SelectableInstance, "models" | "capabilities">, selection: ModelSelection): boolean {
-  return (selection.variant === undefined || instance.capabilities?.modelVariants === true) &&
-    (instance.models.default === selection.model || instance.models.options.some((model) => model.id === selection.model));
-}
-
 /** The engine a new bot gets, and the one a bot moved off a removed engine
  * gets (computer-engine-removal.ts): one picker for both.
  *
@@ -61,7 +54,8 @@ export function selectDefaultModelSelection(
       // An organisation that disallows the saved engine makes it unusable,
       // exactly like an unavailable one: setup, never another provider.
       context.refusal?.(instance) !== undefined ||
-      !offersSelection(instance, preferred)
+      (preferred.variant !== undefined && !instance.capabilities?.modelVariants) ||
+      !(instance.models.default === preferred.model || instance.models.options.some((model) => model.id === preferred.model))
     ) {
       return { instanceId: "", model: "" };
     }

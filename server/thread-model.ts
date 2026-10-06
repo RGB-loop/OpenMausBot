@@ -2,10 +2,15 @@
 // that thread. A picked model that can't run here gives way to the bot's: the
 // turn runs on the bot's model, the thread follows the bot from then on, and
 // one line in it says so (index.ts healThreadModel). Whether an engine can
-// run is the readiness rule a saved default meets (default-model-selection.ts);
+// run is the readiness rule a new bot's engine meets (default-model-selection.ts);
 // this decides only when the bot's model stands in.
+//
+// A model missing from its engine's catalog is not a reason: model IDs are
+// free-form at the API boundary, and several engines run IDs their catalog
+// does not list (a 1M-context variant, a custom or local model) or learn
+// their catalog only once a turn starts. The turn tries the model as picked.
 import type { ModelSelection } from "./contracts.ts";
-import { offersSelection, readyToRun, signedOut, type DefaultSelectionContext, type SelectableInstance } from "./default-model-selection.ts";
+import { readyToRun, signedOut, type DefaultSelectionContext, type SelectableInstance } from "./default-model-selection.ts";
 import { sameModelSelection } from "../shared/thread-model.ts";
 
 /** An engine as a turn's start sees it, without waiting on its CLI: whether
@@ -22,13 +27,13 @@ export interface ThreadModelContext extends DefaultSelectionContext {
 
 function canRunOn(engine: ThreadEngine | undefined, selection: ModelSelection, context: ThreadModelContext): engine is ThreadEngine {
   return Boolean(engine?.enabled) && engine!.snapshot.state === "available" && context.refusal?.(engine!) === undefined &&
-    context.allows?.(selection) !== false && offersSelection(engine!, selection);
+    context.allows?.(selection) !== false;
 }
 
 /** Why this thread's own model gives way to its bot's, or null when the turn
  * runs on it as picked:
- * - "unavailable": its engine is gone, disabled, unavailable or not allowed,
- *   or no longer offers the model;
+ * - "unavailable": its engine is gone, disabled, unavailable or not allowed
+ *   (by the organisation, or a hosted workspace's assigned models);
  * - "signed-out": its engine is signed out and the bot's model is on another
  *   engine that can run. On the same engine the turn runs as picked, so the
  *   engine's own sign-in prompt shows; a fallback never hides it. */
