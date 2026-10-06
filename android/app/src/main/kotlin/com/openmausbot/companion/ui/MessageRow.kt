@@ -86,6 +86,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -114,6 +115,7 @@ import com.openmausbot.companion.core.outboundApp
 import com.openmausbot.companion.core.outcome
 import com.openmausbot.companion.core.presentation
 import com.openmausbot.companion.core.showsHeldNote
+import com.openmausbot.companion.core.stacksOptions
 import com.openmausbot.companion.core.summaryLine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.CancellationException
@@ -792,6 +794,9 @@ private fun SharedImageAttachment(
 /** The fitted frame an inline image is drawn in; tests measure it. */
 internal const val SHARED_IMAGE_FRAME_TAG = "shared-image-frame"
 
+/** A card's answers when they stack one under another; tests find it. */
+internal const val STACKED_OPTIONS_TAG = "card-options-stacked"
+
 @Composable
 private fun AttachmentLoadFailure(label: String, foreground: Color = BubbleColor.mineText, onRetry: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1380,36 +1385,49 @@ private fun CardView(chat: Chat, message: Message, haptics: Haptics) {
         }
 
         if (card.isPending) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                // The buttons are the card's own options, never a string
-                // invented here. Session maps the choice to allow/deny/answer.
-                card.options.forEach { option ->
-                    val refusal = ApprovalChoices.emphasis(option) == OptionEmphasis.SECONDARY
-                    Button(
-                        onClick = {
-                            haptics.play(TactileAction.CHOOSE_APPROVAL)
-                            answering = true
-                            scope.launch {
-                                ApprovalAnswers.choose(session, chat, card, option)
-                                answering = false
-                            }
-                        },
-                        enabled = !answering && (
-                            skillRequest == null ||
-                                refusal ||
-                                skillRequest.reviewedSha256 != null
-                            ),
-                        // Same `isRefusal` that picks the allow choice picks the
-                        // weight, so the most sensible action on the most
-                        // sensitive screen is not the same shape as the refusal.
-                        colors = if (refusal) {
-                            ButtonDefaults.filledTonalButtonColors()
-                        } else {
-                            ButtonDefaults.buttonColors()
-                        },
-                    ) {
-                        Text(option)
-                    }
+            // The buttons are the card's own options, never a string invented
+            // here. Session maps the choice to allow/deny/answer.
+            val optionButton: @Composable (String, Modifier) -> Unit = { option, buttonModifier ->
+                val refusal = ApprovalChoices.emphasis(option) == OptionEmphasis.SECONDARY
+                Button(
+                    onClick = {
+                        haptics.play(TactileAction.CHOOSE_APPROVAL)
+                        answering = true
+                        scope.launch {
+                            ApprovalAnswers.choose(session, chat, card, option)
+                            answering = false
+                        }
+                    },
+                    modifier = buttonModifier,
+                    enabled = !answering && (
+                        skillRequest == null ||
+                            refusal ||
+                            skillRequest.reviewedSha256 != null
+                        ),
+                    // Same `isRefusal` that picks the allow choice picks the
+                    // weight, so the most sensible action on the most
+                    // sensitive screen is not the same shape as the refusal.
+                    colors = if (refusal) {
+                        ButtonDefaults.filledTonalButtonColors()
+                    } else {
+                        ButtonDefaults.buttonColors()
+                    },
+                ) {
+                    Text(option, textAlign = TextAlign.Center)
+                }
+            }
+            if (card.stacksOptions) {
+                // A question's answers are sentences: one under another, full
+                // width, wrapping, instead of a row that cuts them off.
+                Column(
+                    modifier = Modifier.fillMaxWidth().testTag(STACKED_OPTIONS_TAG),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    card.options.forEach { option -> optionButton(option, Modifier.fillMaxWidth()) }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    card.options.forEach { option -> optionButton(option, Modifier) }
                 }
             }
 
