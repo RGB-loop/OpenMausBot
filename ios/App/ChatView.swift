@@ -850,6 +850,9 @@ struct ChatView: View {
                     }
                     .buttonStyle(.plain)
                     .glassCapsule()
+                    // The thread you are on, now that the pill under the
+                    // face that named it is gone.
+                    .accessibilityValue(Text(verbatim: current.threadTitle))
                     .accessibilityIdentifier("header-threads")
                 }
                 if case .bot = current {
@@ -883,16 +886,16 @@ struct ChatView: View {
         )
     }
 
-    /// The bot's face over its name pill, floating over the transcript
-    /// between the two buttons.
+    /// The seat for the bot's face, floating over the transcript between the
+    /// two buttons. The thread it is on is the Threads button's to say.
     private var headerFace: some View {
-        VStack(spacing: 6) {
-            // Always here, following the island's face while that one is
-            // the source: when the island lets go, this one flies home.
-            // The face itself is drawn by the island layer above so there is
-            // still only one animated avatar. This transparent seat becomes
-            // its independent profile button once the opening transition has
-            // settled.
+        // Always here, following the island's face while that one is
+        // the source: when the island lets go, this one flies home.
+        // The face itself is drawn by the island layer above so there is
+        // still only one animated avatar. This transparent seat becomes
+        // its independent profile button once the opening transition has
+        // settled.
+        Group {
             if case .bot = current {
                 Button { showingProfile = true } label: {
                     Color.clear
@@ -904,38 +907,15 @@ struct ChatView: View {
                 .accessibilityHidden(islandVisible)
                 .accessibilityLabel("Open \(current.name) settings")
                 .accessibilityHint("Changes this bot's model, profile, notifications, and voice")
-            } else {
-                Color.clear.frame(width: 60, height: 60)
+            } else if case let .room(room) = current {
+                // A room's face says whose room this is: the header has no
+                // other place for its name and members.
+                Color.clear
+                    .frame(width: 60, height: 60)
+                    .accessibilityElement()
+                    .accessibilityLabel("\(room.name), \(room.memberIds.count) bots")
+                    .accessibilityIdentifier("header-room")
             }
-            Button {
-                if current.supportsTasks { showingTasks = true }
-                else { showingPlus = true }
-            } label: {
-                HStack(spacing: 6) {
-                    Text(current.name)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color.primary)
-                        .lineLimit(1)
-                    if current.supportsTasks || !current.subtitle.isEmpty {
-                        Text(current.supportsTasks ? current.threadTitle : current.subtitle)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Color.secondary)
-                            .lineLimit(1)
-                    }
-                    Image(systemName: current.supportsTasks ? "chevron.down" : "ellipsis")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Color.secondary)
-                }
-                .padding(.leading, 12)
-                .padding(.trailing, 10)
-                .frame(height: 32)
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .glassCapsule()
-            .accessibilityLabel(current.supportsTasks ? "Switch thread: \(current.threadTitle)" : "Open \(current.name) thread options")
-            .accessibilityHint("Choose a conversation or start a new thread")
-            .accessibilityIdentifier("thread-switcher")
         }
         .padding(.top, -4)
     }
