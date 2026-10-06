@@ -7,6 +7,7 @@ import com.openmausbot.companion.audio.VoicePreviewPlayer
 import com.openmausbot.companion.audio.VoiceNotePlayer
 import com.openmausbot.companion.avatar.AvatarImageStore
 import com.openmausbot.companion.core.Session
+import com.openmausbot.companion.core.SnapshotStore
 import com.openmausbot.companion.discovery.NsdDiscovery
 import com.openmausbot.companion.lifecycle.AlwaysOnConnectionService
 import com.openmausbot.companion.lifecycle.AlwaysOnConnectionState
@@ -18,6 +19,7 @@ import com.openmausbot.companion.permissions.CompanionPermissions
 import com.openmausbot.companion.sharing.ShareInbox
 import com.openmausbot.companion.storage.AlwaysOnPreferences
 import com.openmausbot.companion.storage.DataStoreConnectionStore
+import com.openmausbot.companion.storage.EncryptedSnapshotStorage
 import com.openmausbot.companion.storage.OnboardingPreferences
 import com.openmausbot.companion.storage.KeystoreTokenStore
 import com.openmausbot.companion.ui.FilePreviews
@@ -90,6 +92,10 @@ class OpenMausApp : Application() {
                     ?: android.os.Build.MODEL
             },
             notificationSink = notifications,
+            // Each computer's last sync, shown while it is out of reach
+            // (MOCA-296). Every read, build, seal and write runs on the
+            // store's IO writer, never on this Main scope.
+            snapshotStore = SnapshotStore(EncryptedSnapshotStorage(this), appScope),
         )
         avatars = AvatarImageStore(fetch = session::avatarData)
         // Live calls hold media across screens, and end when the process

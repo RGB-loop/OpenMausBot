@@ -98,6 +98,10 @@ class SessionLingerController(
 
     override fun onStop(owner: LifecycleOwner) {
         foreground = false
+        // Leaving the screen is the moment to keep the last sync (MOCA-296):
+        // the process may not come back. Cheap here — the store builds and
+        // writes on its own IO writer.
+        session.saveOfflineCopy()
         // AlwaysOnConnectionService is already holding the process open for as
         // long as the user left it enabled — this window would only ever be
         // redundant (service still running) or premature (service between

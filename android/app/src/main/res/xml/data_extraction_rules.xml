@@ -9,7 +9,9 @@
   asked, so carrying ours across would misread a re-askable install as one that
   had spent its prompt. The onboarding markers travel the same way and are
   excluded for the same reason: they say which first-run steps this install has
-  already shown.
+  already shown. The offline snapshots (filesDir/snapshots/) hold each paired
+  computer's last sync, sealed with a device-bound Keystore key: they never
+  travel, in a backup or to a new phone.
 -->
 <data-extraction-rules>
     <cloud-backup>
@@ -22,6 +24,9 @@
         <exclude
             domain="sharedpref"
             path="openmaus.onboarding.xml" />
+        <exclude
+            domain="file"
+            path="snapshots/" />
     </cloud-backup>
     <device-transfer>
         <exclude
@@ -33,5 +38,8 @@
         <exclude
             domain="sharedpref"
             path="openmaus.onboarding.xml" />
+        <exclude
+            domain="file"
+            path="snapshots/" />
     </device-transfer>
 </data-extraction-rules>
