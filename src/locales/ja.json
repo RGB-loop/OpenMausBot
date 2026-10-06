@@ -119,7 +119,7 @@
   "settings.updates.title": "アップデート",
   "settings.updates.checking": "確認中…",
   "settings.updates.downloading": "{percent}% をダウンロード中",
-  "settings.updates.ready": "{version} の準備ができました — 再起動で適用されます",
+  "settings.updates.ready": "{app} {version} の準備ができました — アプリを再起動すると適用されます",
   "settings.updates.failed": "アップデートに失敗しました: {message}",
   "settings.updates.unknownError": "不明なエラー",
   "settings.updates.latest": "把握している中で最新のバージョンです。",
@@ -136,7 +136,7 @@
   "settings.analytics.aria": "利用状況の分析を送る",
   "settings.updates.startingDownload": "ダウンロードを開始中…",
   "settings.updates.preparing": "ダウンロードが完了しました。macOS がアップデートを準備しています。",
-  "settings.updates.readyInstall": "{version} の準備ができました — ターミナルでインストール",
+  "settings.updates.readyInstall": "{app} {version} の準備ができました — ターミナルでインストール",
   "settings.updates.openingTerminal": "ターミナルを開いています…",
   "settings.updates.restarting": "更新のため再起動中…",
   "settings.updates.handedOff": "コマンドをコピーしました — ターミナルで更新を完了してください。",
@@ -255,7 +255,7 @@
   "sidebar.menu.feedback": "フィードバックを送る",
   "sidebar.update.startingDownload": "ダウンロードを開始中…",
   "sidebar.update.downloading": "ダウンロード中… {percent}%",
-  "sidebar.update.ready": "バージョン {version} の準備ができました — 再起動",
+  "sidebar.update.ready": "{app} {version} の準備ができました — 再起動",
   "sidebar.update.installing": "更新のため再起動中…",
   "sidebar.update.checking": "アップデートを確認中…",
   "sidebar.update.handedOff": "アップデートはターミナルで完了してください",
@@ -277,7 +277,7 @@
   "sidebar.phone.staleOne": "デバイスはペアリング済み — 最近の動作なし",
   "sidebar.phone.staleMany": "デバイス {count} 台がペアリング済み — 最近の動作はなし",
   "sidebar.update.preparing": "アップデートを準備中…",
-  "sidebar.update.readyInstall": "バージョン {version} の準備ができました — インストール",
+  "sidebar.update.readyInstall": "{app} {version} の準備ができました — インストール",
   "sidebar.update.openingTerminal": "ターミナルを開いています…",
   "chat.day.today": "今日",
   "chat.day.yesterday": "昨日",
@@ -1486,6 +1486,5 @@
   "computer.phase.showSleepingBoat": "自動がスリープ中のクラウドコンピューターを見つけました。起動も変更もしていません。",
   "computer.phase.showPendingBoat": "自動が準備できていない既存のクラウドコンピューターを見つけました。変更していません。",
   "computer.badge.autoBoat": "クラウドコンピューター · 自動 · 読み取り専用",
-  "computer.addBoatKey": "Boat の API キーを追加すると、このボットにクラウドコンピューターが用意されます。ここで起動します。",
-  "call.live.disclosureCloud": "ライブ通話では、音声に加えて、チャットの最近のメッセージ、ボットの回答、ボットが求める承認の詳細が OpenAI に送信されます。OpenAI キーは My Cloud に保存されたままです。"
+  "computer.addBoatKey": "Boat の API キーを追加すると、このボットにクラウドコンピューターが用意されます。ここで起動します。"
 }

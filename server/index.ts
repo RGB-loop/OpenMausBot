@@ -347,6 +347,7 @@ import { createLiveSession, liveAttachUrl, LiveSessionError, type LiveBot, type 
 import { LiveCallController, LiveCallSignedOutError, type LiveSocket } from "./live-call-controller.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { turnStartLogLine } from "./turn-log.ts";
+import { makeCapContinuationSubscriber } from "./turn-continuation.ts";
 import { buildRecoveryText, buildTurnContext, engineIsFresh, NATIVELY_REPLAYING_DRIVER_KINDS, peerMessageText } from "./turn-context.ts";
 import { Handoffs, handedStateUsable, recordHanded, renderUnseen, sessionStart, unseenMessages, withUnseenMessages, type ContextMessage } from "./delta-context.ts";
 import { extractTurnImages } from "./turn-images.ts";
@@ -464,6 +465,7 @@ import {
   browserEngineStatus,
   browserSessionId,
   describeBrowserEngine,
+  setBrowserViewport,
 } from "./browser-engine.ts";
 import { createScreenFrameSource, type ScreenCapture } from "./screen-frame-source.ts";
 import { screenFrameHash, screenSurfaceForTool, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
@@ -623,6 +625,7 @@ import { localDesktopTarget, localVmViewerStatus, viewerTargetId } from "./deskt
 import { createAntigravityLeftoverRoutes } from "./routes/antigravity-leftovers.ts";
 import { findAntigravityLeftovers, removeAntigravityLeftovers } from "./drivers/antigravity-temp.ts";
 import { createLiveRoutes } from "./routes/live.ts";
+import { withScopeHint } from "./connector-scope-hint.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const WEBHOOK_PORT = Number(process.env.OMB_WEBHOOK_PORT || PORT + 1);
@@ -2975,6 +2978,7 @@ const browserRuntime = new BrowserRuntime({
     if (closed) browserLive.closeForSession(session);
     return closed;
   },
+  applyViewport: (spec) => setBrowserViewport(spec.command, spec.env),
 });
 const browserLive = new BrowserLive({ runtime: browserRuntime });
 // Temporary profiles last for this server run, but are never saved to disk.
@@ -3290,6 +3294,7 @@ async function moveOffComputerEngine(): Promise<void> {
   const engine = instance?.displayName ?? instance?.driverKind ?? replacement.instanceId;
   const moves = store.retireInstances(removed, replacement, {
     driverKind: instance?.driverKind,
+    canWorkOnCloud: canWorkOnCloud(cloudEngine(instance)),
     keepCloud: (bot) => boat.boatConfigured(cfg) && bot.cloudBackend !== "vps" && !inheritedTeamComputer(bot),
   });
   for (const move of moves) {
@@ -3299,12 +3304,15 @@ async function moveOffComputerEngine(): Promise<void> {
   }
 }
 let computerEngineMoveRunning: Promise<void> | null = null;
-/** The move again, once at a time; it returns at once when nothing names the
- * removed engine any more. */
-function retryComputerEngineMove(): void {
+/** The move, once at a time; it returns at once when nothing names the
+ * removed engine any more. A failure is logged and never rejects, so it never
+ * stops this server from listening. Bots whose save failed are unchanged and
+ * move the next time the engines are read (describeInstances). */
+function retryComputerEngineMove(): Promise<void> {
   computerEngineMoveRunning ??= moveOffComputerEngine()
     .catch((error) => console.warn(`[engines] moving bots off the removed Computer engine failed: ${error instanceof Error ? error.message : String(error)}`))
     .finally(() => { computerEngineMoveRunning = null; });
+  return computerEngineMoveRunning;
 }
 
 function checkedModelSelection(
@@ -3619,7 +3627,7 @@ const teamComputers = new TeamComputers(join(DATA_DIR, "team-computers.json"), E
 let followupsReady = false;
 const sendSequencer = new SendSequencer();
 // Before the new-bot default is read: a saved default may name the engine.
-await moveOffComputerEngine();
+await retryComputerEngineMove();
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
 hostedModels?.reconcile(store);
@@ -6045,6 +6053,11 @@ bus.subscribe((event: RuntimeEvent) => {
     }
   } else if (event.type !== "session.exited") watchdog.touch(event.threadId);
 });
+
+// Automatic continuity: a turn that died on its budget or on tool errors gets
+// a `Continue:` task on the same bot, seeded with the persisted handoff — the
+// work moves forward without a person noticing and re-dispatching.
+bus.subscribe(makeCapContinuationSubscriber({ store, startTurn }));
 
 // Memory journal turn boundary (server/memory-journal.ts). A bot's own
 // file-tool writes to MEMORY.md and memory/ have no hook to tap, so the
@@ -15247,7 +15260,7 @@ async function describeInstances() {
   // Reading the engines is where this server learns one became available
   // (an install, a sign-in, a key or a Company engine), so a bot still on the
   // removed Computer engine moves now rather than at the next start.
-  retryComputerEngineMove();
+  void retryComputerEngineMove();
   return (await registry.describe()).map((instance) => {
     const entry = configs[instance.instanceId];
     const described = {
@@ -18655,7 +18668,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         };
         if (upstream.transportSessionId) headers["mcp-session-id"] = upstream.transportSessionId;
         res.writeHead(upstream.status, headers);
-        return res.end(Buffer.from(upstream.bytes));
+        // A missing OAuth permission gets a note on what fixes it (MOCA-273).
+        return res.end(Buffer.from(withScopeHint(upstream.bytes, upstream.contentType, connectorCalls.map((call) => call.slug))));
       }
       // ── computer control: proxies read the hold, bots plead for help ──
       if (path === "/api/internal/computer-control") {

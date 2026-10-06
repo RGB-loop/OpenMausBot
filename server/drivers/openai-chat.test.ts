@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ensureDirs, NATIVE_DIR } from "../config.ts";
 import type { RuntimeEvent } from "../contracts.ts";
 import { GrokDriver } from "./grok.ts";
 import { MinimaxDriver } from "./minimax.ts";
@@ -15,8 +16,13 @@ import { MistralDriver } from "./mistral.ts";
 
 afterEach(() => vi.unstubAllGlobals());
 
-async function runTurn(body: string, driver: "openai-compat" | "minimax" = "openai-compat") {
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } })));
+const sse = (body: string) => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+
+/** `body` is the stream every request gets, or a factory for each chat
+ * completion request (the model catalog fetch then gets a 404). */
+async function runTurn(body: string | (() => Response), driver: "openai-compat" | "minimax" = "openai-compat") {
+  vi.stubGlobal("fetch", vi.fn(async (url: string | URL) => typeof body === "string" ? sse(body)
+    : String(url).endsWith("/chat/completions") ? body() : new Response("", { status: 404 })));
   const instance = driver === "minimax"
     ? await MinimaxDriver.create({
         instanceId: "minimax", displayName: "MiniMax", enabled: true,
@@ -170,7 +176,10 @@ describe("createOpenAIChatRuntime tool approvals", () => {
       const withheld = bodies[1].messages.find((message: any) => message.role === "tool" && message.tool_call_id === "withheld");
       expect(JSON.parse(withheld.content)).toMatchObject({ ok: false });
       expect(withheld.content).toMatch(/tool selection excludes/i);
-      expect(events.at(-1)).toMatchObject({ type: "turn.completed", ok: false });
+      // A withheld (failed) tool result must not end the turn: the runtime
+      // feeds it back and accepts the model's final answer.
+      expect(events.some((event) => event.type === "runtime.error" && /One or more tool operations failed/.test((event as any).message ?? ""))).toBe(false);
+      expect(events.at(-1)).toMatchObject({ type: "turn.completed", ok: true });
     } finally { await instance.dispose(); }
   }, 20_000);
 
@@ -258,6 +267,64 @@ describe("createOpenAIChatRuntime tool approvals", () => {
     expect(toolMessage).toMatchObject({ role: "tool", tool_call_id: "ask1" });
     expect(JSON.parse(toolMessage.content)).toEqual({ ok: true, result: reply });
     expect(events.at(-1)).toMatchObject({ type: "turn.completed", ok: true });
+  }, 20_000);
+
+  it("does not end the turn on a failed tool call — it feeds the failure back and accepts the final answer", async () => {
+    // A failed tool op used to terminate the whole turn with tool_error even
+    // when the model then produced a final answer. It must instead get one
+    // corrective round and complete ok.
+    const dir = mkdtempSync(join(tmpdir(), "omb-chat-toolerr-")); mcpDir.push(dir);
+    const script = join(dir, "fake-fail-mcp.mjs");
+    writeFileSync(script, `#!/usr/bin/env node
+      const send = (m) => process.stdout.write(JSON.stringify(m) + "\\n");
+      let buffer = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let nl;
+        while ((nl = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, nl); buffer = buffer.slice(nl + 1);
+          const m = JSON.parse(line);
+          if (m.method === "initialize") send({jsonrpc:"2.0",id:m.id,result:{protocolVersion:"2024-11-05",capabilities:{tools:{}}}});
+          else if (m.method === "tools/list") send({jsonrpc:"2.0",id:m.id,result:{tools:[{name:"write",description:"Fixture write",inputSchema:{type:"object",properties:{},additionalProperties:false}}]}});
+          else if (m.method === "tools/call") send({jsonrpc:"2.0",id:m.id,result:{isError:true,content:[{type:"text",text:"boom"}]}});
+        }
+      });
+    `);
+    chmodSync(script, 0o755);
+    const callBody = 'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"fx_write","arguments":"{}"}}]}}]}\n\n'
+      + 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n';
+    const finalBody = 'data: {"choices":[{"index":0,"delta":{"content":"Done after failure."}}]}\n\n'
+      + 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n';
+    const bodies: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: unknown, init?: RequestInit) => {
+      if (!String(input).endsWith("/chat/completions")) return new Response(JSON.stringify({ data: [] }));
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(bodies.length === 1 ? callBody : finalBody, { headers: { "content-type": "text/event-stream" } });
+    }));
+    const instance = await OpenAICompatDriver.create({
+      instanceId: "toolerr", displayName: "Synthetic", enabled: true,
+      config: OpenAICompatDriver.decodeConfig({ url: "https://api.example.test/v1", apiKeyEnv: "K", model: "fixture" }),
+      environment: { K: "synthetic" },
+    });
+    const events: RuntimeEvent[] = [];
+    instance.adapter.onEvent((event) => events.push(event));
+    try {
+      await instance.adapter.sendTurn({
+        threadId: "toolerr", text: "Use the tool, then answer.", approvalMode: "full",
+        integrations: { custom: { fx: { command: script, args: [], env: {} } } },
+      });
+      await vi.waitFor(() => expect(bodies.length).toBeGreaterThanOrEqual(3), { timeout: 10_000 });
+      const corrective = bodies[2]!.messages.findLast((message: any) => message.role === "user");
+      expect(String(corrective?.content)).toMatch(/tool operations .*failed|ok:false/i);
+      await vi.waitFor(() => expect(events.some((event) => event.type === "turn.completed")).toBe(true), { timeout: 10_000 });
+      const completed = events.find((event) => event.type === "turn.completed") as any;
+      expect(completed.ok).toBe(true);
+      expect(completed.stopReason).not.toBe("tool_error");
+      expect(events.some((event) => event.type === "runtime.error" && /One or more tool operations failed/.test((event as any).message ?? ""))).toBe(false);
+    } finally {
+      await instance.dispose();
+    }
   }, 20_000);
 });
 
@@ -493,5 +560,77 @@ describe("createOpenAIChatRuntime stream termination", () => {
       .toEqual(["reasoning_text", "assistant_text"]);
     expect(events.find((event) => event.type === "item.completed")).toMatchObject({ text: "Hello!" });
     expect(events.at(-1)).toMatchObject({ type: "turn.completed", ok: true, usage: { input: 5, output: 9 } });
+  });
+});
+
+describe("createOpenAIChatRuntime refused tool calls", () => {
+  // Groq's reply when gpt-oss calls a tool it was never offered (#2166).
+  const refusal = {
+    message: "Tool call validation failed: tool call validation failed: attempted to call tool 'JSON' which was not in request",
+    type: "invalid_request_error",
+    code: "tool_use_failed",
+    failed_generation: '{"name":"JSON","arguments":{"restam":7}}',
+  };
+  const refusedStream = () => sse(
+    `data: ${JSON.stringify({ choices: [{ index: 0, delta: { reasoning: "They want JSON." } }] })}\n\n` +
+      `data: ${JSON.stringify({ error: refusal })}\n\n`,
+  );
+  const refusedRequest = () => new Response(JSON.stringify({ error: refusal }), { status: 400, headers: { "content-type": "application/json" } });
+  const answer = () => sse('data: {"choices":[{"index":0,"finish_reason":"stop","delta":{"content":"{\\"restam\\":7}"}}]}\n\ndata: [DONE]\n\n');
+
+  it.each([
+    ["mid-stream", refusedStream],
+    ["as HTTP 400", refusedRequest],
+  ])("sends the request again when the provider refuses a made-up tool call %s", async (_label, refused) => {
+    let requests = 0;
+    const events = await runTurn(() => ++requests === 1 ? refused() : answer());
+    expect(requests).toBe(2);
+    expect(events.find((event) => event.type === "turn.retrying")).toMatchObject({ attempt: 1, delayMs: 0, reason: "tool_use_failed" });
+    expect(events.some((event) => event.type === "runtime.error")).toBe(false);
+    expect(events.find((event) => event.type === "item.completed")).toMatchObject({ text: '{"restam":7}' });
+    expect(events.at(-1)).toMatchObject({ type: "turn.completed", ok: true });
+  });
+
+  it("stops after three refusals, says what happened and what to do, and logs each refusal whole", async () => {
+    ensureDirs();
+    const log = join(NATIVE_DIR, "thread.ndjson");
+    rmSync(log, { force: true });
+    let requests = 0;
+    const events = await runTurn(() => (requests++, refusedStream()));
+    expect(requests).toBe(3);
+    expect(events.filter((event) => event.type === "turn.retrying").map((event) => event.type === "turn.retrying" && event.attempt)).toEqual([1, 2]);
+    expect(events.find((event) => event.type === "runtime.error")).toMatchObject({
+      message: `The model tried to use a tool it was not given ("JSON"). Nothing ran. Retry; if it keeps happening, rephrase the request or choose another model. Provider: ${refusal.message}`,
+    });
+    expect(events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "error" });
+    const refusals = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((entry) => entry.msg?.refused);
+    expect(refusals.map((entry) => entry.msg)).toEqual([1, 2, 3].map((attempt) => ({ refused: "tool_use_failed", attempt, error: refusal })));
+  });
+
+  it("does not claim a tool was made up when the provider rejected its arguments", async () => {
+    const invalid = { ...refusal, message: "Tool call validation failed: parameters for tool ask_user did not match schema: errors: [missing properties: 'questions']" };
+    const events = await runTurn(() => sse(`data: ${JSON.stringify({ error: invalid })}\n\n`));
+    expect(events.find((event) => event.type === "runtime.error")).toMatchObject({
+      message: `The model made a tool call the provider rejected. Nothing ran. Retry; if it keeps happening, rephrase the request or choose another model. Provider: ${invalid.message}`,
+    });
+  });
+
+  it("does not resend once answer text has streamed, so attempts never join in one reply", async () => {
+    let requests = 0;
+    const events = await runTurn(() => (requests++, sse(
+      'data: {"choices":[{"index":0,"delta":{"content":"Sobram"}}]}\n\n' +
+        `data: ${JSON.stringify({ error: refusal })}\n\n`,
+    )));
+    expect(requests).toBe(1);
+    expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
+    expect(events.find((event) => event.type === "runtime.error")?.message).toMatch(/^The model tried to use a tool it was not given \("JSON"\)/);
+  });
+
+  it("does not resend other provider errors", async () => {
+    let requests = 0;
+    const events = await runTurn(() => (requests++, sse(`data: ${JSON.stringify({ error: { ...refusal, code: "invalid_request_error" } })}\n\n`)));
+    expect(requests).toBe(1);
+    expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: "turn.completed", ok: false });
   });
 });
