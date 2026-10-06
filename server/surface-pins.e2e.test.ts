@@ -135,7 +135,7 @@ describe("surface pin provenance against the real server", () => {
       // A turn on the cloud computer uses it: its first computer call is
       // what reaches the Boat, as with a real model.
       environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_DUMP: dumpFile, FAKE_CLAUDE_SLOW_FINISH_GATE: finishFile, FAKE_CLAUDE_USES_CLOUD_COMPUTER: "1" },
-    }, computer: { driver: "boxAgent", config: { pollMs: 10 } } } }));
+    } } }));
   });
   afterAll(async () => {
     await stop();

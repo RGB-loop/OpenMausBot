@@ -214,9 +214,9 @@ describe("local computer UI eligibility", () => {
     expect(busyBoatView("resuming", false)).toEqual({ line: "computer.phase.starting", spinner: true });
   });
 
-  it("never gives the box-native engine a passive Auto creation exception", () => {
+  it("never gives any engine a passive Auto creation exception", () => {
     // Engine kind intentionally is not an input: every engine follows the
-    // same read-only Auto rule, including boxAgent.
+    // same read-only Auto rule.
     expect(resolveBoatPanelAction({
       computer: undefined,
       configured: true,

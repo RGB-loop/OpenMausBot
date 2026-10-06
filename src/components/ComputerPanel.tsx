@@ -413,13 +413,11 @@ export function ComputerPanel({
     (instance) => instance.instanceId === bot.modelSelection.instanceId,
   );
   // "Works on: Browser" needs the same things as the browser switch minus
-  // the switch itself — picking it turns the switch on. The boat-native
-  // Computer engine runs inside the boat, so it has no browser-only mode.
+  // the switch itself — picking it turns the switch on.
   const browserSelectable =
     builtInBrowserEnabled(state.config) &&
     browserAvailableHere &&
-    selectedInstance?.capabilities?.browserMcp === true &&
-    selectedInstance.driverKind !== "boxAgent";
+    selectedInstance?.capabilities?.browserMcp === true;
   const browserDisabledReason = !browserAvailableHere
     ? browserUnavailableReason(state.config)
     : !builtInBrowserEnabled(state.config)
@@ -477,11 +475,10 @@ export function ComputerPanel({
   }, [bot.id, bot.computer]);
   const vmSupported = Boolean(
     selectedInstance?.snapshot.state === "available" &&
-      selectedInstance.capabilities?.computerMcp &&
-      selectedInstance.driverKind !== "boxAgent",
+      selectedInstance.capabilities?.computerMcp,
   );
-  const vpsSupported = canWorkOnCloud(cloudEngineOf(selectedInstance), "vps");
-  const cloudSupported = canWorkOnCloud(cloudEngineOf(selectedInstance), cloudBackend === "vps" ? "vps" : "box");
+  // One rule for both cloud backends (shared/cloud-computer.ts).
+  const cloudSupported = canWorkOnCloud(cloudEngineOf(selectedInstance));
   const botRoutines = state.routines
     .filter((routine) => routine.botId === bot.id)
     .sort((a, b) => Number(b.enabled) - Number(a.enabled) || (a.nextRunAt ?? Infinity) - (b.nextRunAt ?? Infinity));
@@ -601,11 +598,6 @@ export function ComputerPanel({
     }
     if (bot.computer !== "cloud" && !capabilitiesReady) return;
     if (cloudBackend === "vps") {
-      if (!vpsSupported) {
-        setError(new LocalizedPanelError("computer.err.vpsEngine"));
-        setPhase("error");
-        return;
-      }
       api(threadPath("computer"))
         .then((rawStatus) => {
           if (!alive) return;
@@ -744,7 +736,6 @@ export function ComputerPanel({
     selectedInstance?.driverKind,
     vmSupported,
     cloudSupported,
-    vpsSupported,
     state.config?.vps?.sshAlias,
     panelView,
     computerSelectionPersisted,
@@ -1971,7 +1962,6 @@ export function ComputerPanel({
               <CloudBackendPicker
                 compact
                 value={cloudBackend}
-                vpsSupported={vpsSupported}
                 onChange={(backend) => updateComputerSelection({ cloudBackend: backend })}
               />
             </>

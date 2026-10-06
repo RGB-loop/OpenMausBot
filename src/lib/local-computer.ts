@@ -91,7 +91,8 @@ const SLEEPING_BOAT_STATES = new Set(["archived", "stopped"]);
  * or opens a Boat: with Cloud computer chosen the bot's first computer call
  * starts it, and the panel says so (cloud-new, cloud-asleep) next to the
  * person's own button to start it now. Auto only reports an existing Boat's
- * current state. This is deliberately independent of the engine. */
+ * current state. This is deliberately independent of the engine: every engine
+ * needs an explicit Cloud choice before anything may provision. */
 export function resolveBoatPanelAction({
   computer,
   configured,

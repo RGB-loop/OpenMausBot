@@ -139,16 +139,9 @@ const PLACE_ACTION: Record<PlaceSource, { sentence: string; clause: string }> = 
  * place's source, or null when it can (shared/cloud-computer.ts holds the
  * rule). Checked before anything is provisioned, so a turn that cannot run
  * never creates or wakes a machine. */
-export function cloudPlaceDriverError(
-  engine: CloudEngine,
-  backend: "box" | "vps",
-  source: PlaceSource = "works-on",
-): string | null {
-  if (canWorkOnCloud(engine, backend)) return null;
-  const next = `Choose another model, or ${PLACE_ACTION[source].clause}.`;
-  return engine.driverKind === "boxAgent"
-    ? `The Computer engine runs on Boat and can't use a self-hosted VPS. ${next}`
-    : `This model can't use a computer. ${next}`;
+export function cloudPlaceDriverError(engine: CloudEngine, source: PlaceSource = "works-on"): string | null {
+  if (canWorkOnCloud(engine)) return null;
+  return `This model can't use a computer. Choose another model, or ${PLACE_ACTION[source].clause}.`;
 }
 
 /** Why this bot's Tool selection keeps it off a computer, or null: one line,
@@ -156,10 +149,9 @@ export function cloudPlaceDriverError(
  * place (a turn's refusal and select_computer's reason alike). Engines reach
  * every desktop through the "computer" MCP server, so a selection without it
  * has nothing to work with there. Checked with the engine rule, before
- * anything is created or woken. The Computer engine runs its whole turn on
- * Boat and has no such server. */
-export function computerToolsError(engine: CloudEngine, toolScope: unknown, botName: string): string | null {
-  if (engine.driverKind === "boxAgent" || canUseMcpServer(toolScope, "computer")) return null;
+ * anything is created or woken. */
+export function computerToolsError(toolScope: unknown, botName: string): string | null {
+  if (canUseMcpServer(toolScope, "computer")) return null;
   return `${botName}'s Tool selection leaves out the computer. Allow it in ${botName}'s Access settings.`;
 }
 

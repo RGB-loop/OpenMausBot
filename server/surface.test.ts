@@ -215,36 +215,31 @@ it("does not instruct use of a selected browser when no surface is mounted", () 
 });
 
 describe("cloudPlaceDriverError", () => {
-  it("lets every engine with computer tools use either cloud backend, and the Computer engine only Boat", () => {
-    expect(cloudPlaceDriverError({ driverKind: "claude", computerMcp: true }, "box")).toBeNull();
-    expect(cloudPlaceDriverError({ driverKind: "claude", computerMcp: true }, "vps")).toBeNull();
-    expect(cloudPlaceDriverError({ driverKind: "boxAgent" }, "box")).toBeNull();
-    expect(cloudPlaceDriverError({ driverKind: "boxAgent" }, "vps")).toMatch(/^The Computer engine runs on Boat and can't use a self-hosted VPS\./);
+  it("lets every engine with computer tools use the cloud computer, whatever it runs on", () => {
+    expect(cloudPlaceDriverError({ computerMcp: true })).toBeNull();
+    expect(cloudPlaceDriverError({ computerMcp: true }, "routine")).toBeNull();
   });
 
   it("refuses an engine without computer tools with one message and the control that changes it", () => {
-    expect(cloudPlaceDriverError({ driverKind: "openaiCompat", computerMcp: false }, "box")).toBe("This model can't use a computer. Choose another model, or set Works on to Auto.");
-    expect(cloudPlaceDriverError({}, "vps", "pin")).toBe("This model can't use a computer. Choose another model, or clear this conversation's place in the composer.");
-    expect(cloudPlaceDriverError({}, "box", "routine")).toBe("This model can't use a computer. Choose another model, or change where this routine runs.");
+    expect(cloudPlaceDriverError({ computerMcp: false })).toBe("This model can't use a computer. Choose another model, or set Works on to Auto.");
+    expect(cloudPlaceDriverError({}, "pin")).toBe("This model can't use a computer. Choose another model, or clear this conversation's place in the composer.");
+    expect(cloudPlaceDriverError({}, "routine")).toBe("This model can't use a computer. Choose another model, or change where this routine runs.");
   });
 });
 
 describe("computerToolsError", () => {
   it("refuses a Tool selection without the computer with one action: the setting that changes it", () => {
-    const claude = { driverKind: "claudeAgent", computerMcp: true };
     const line = "Scout's Tool selection leaves out the computer. Allow it in Scout's Access settings.";
-    expect(computerToolsError(claude, { deny: ["mcp:computer:*"] }, "Scout")).toBe(line);
+    expect(computerToolsError({ deny: ["mcp:computer:*"] }, "Scout")).toBe(line);
     // The same one action whatever chose the place: never a second one, and
     // never "Set Works on to Auto".
-    expect(computerToolsError(claude, { allow: ["native:*"] }, "Scout")).toBe(line);
+    expect(computerToolsError({ allow: ["native:*"] }, "Scout")).toBe(line);
   });
 
-  it("lets every selection that keeps a computer tool through, and the Computer engine always", () => {
-    const claude = { driverKind: "claudeAgent", computerMcp: true };
-    expect(computerToolsError(claude, undefined, "Scout")).toBeNull();
-    expect(computerToolsError(claude, { allow: ["native:*", "mcp:computer:screenshot"] }, "Scout")).toBeNull();
-    expect(computerToolsError(claude, { deny: ["mcp:computer:exec"] }, "Scout")).toBeNull();
-    expect(computerToolsError({ driverKind: "boxAgent" }, { allow: [] }, "Scout")).toBeNull();
+  it("lets every selection that keeps a computer tool through", () => {
+    expect(computerToolsError(undefined, "Scout")).toBeNull();
+    expect(computerToolsError({ allow: ["native:*", "mcp:computer:screenshot"] }, "Scout")).toBeNull();
+    expect(computerToolsError({ deny: ["mcp:computer:exec"] }, "Scout")).toBeNull();
   });
 });
 
