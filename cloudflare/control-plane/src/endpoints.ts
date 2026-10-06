@@ -7,7 +7,7 @@ import {
 } from "./cloudflare-api";
 import type { ControlPlaneConfig } from "./config";
 import { errorResponse, HTTPError, json } from "./http";
-import { requireInstallation } from "./installations";
+import { requireInstallation, requireInstallationAndRead } from "./installations";
 import { idleTunnelReason } from "./tunnel-activity";
 import {
   CAPACITY_RETRY_AFTER_SECONDS,
@@ -105,7 +105,7 @@ function endpointJSON(row: EndpointRow) {
   };
 }
 
-async function endpointRow(env: Env, installationId: string): Promise<EndpointRow | null> {
+function endpointRowStatement(env: Env, installationId: string): D1PreparedStatement {
   return env.DB.prepare(
     `SELECT installation_id, hostname, tunnel_name, tunnel_id, dns_record_id,
             status, generation, lease_owner, lease_expires_at,
@@ -114,7 +114,11 @@ async function endpointRow(env: Env, installationId: string): Promise<EndpointRo
             created_at, updated_at
        FROM installation_endpoints
       WHERE installation_id = ?`,
-  ).bind(installationId).first<EndpointRow>();
+  ).bind(installationId);
+}
+
+async function endpointRow(env: Env, installationId: string): Promise<EndpointRow | null> {
+  return endpointRowStatement(env, installationId).first<EndpointRow>();
 }
 
 async function ensureEndpointRow(
@@ -833,8 +837,11 @@ async function deleteClaim(
 }
 
 export async function getManagedEndpoint(request: Request, env: Env): Promise<Response> {
-  const installation = await requireInstallation(request, env);
-  const row = await endpointRow(env, installation.installation_id);
+  const { row } = await requireInstallationAndRead<EndpointRow>(
+    request,
+    env,
+    (installationId) => endpointRowStatement(env, installationId),
+  );
   if (!row || row.status === "deleted") return json({ endpoint: null });
   return json({ endpoint: endpointJSON(row) });
 }
@@ -879,7 +886,7 @@ export async function provisionManagedEndpoint(
       capacity,
     }));
     if (capacity) {
-      await recordCapacityRejection(env, code).catch(() => undefined);
+      await recordCapacityRejection(env, config, code).catch(() => undefined);
       return capacityResponse();
     }
     if (code === "cf_rate_limited") return rateLimitedResponse(retryAfterSeconds(error));
@@ -1074,7 +1081,7 @@ export async function sweepManagedEndpointCleanup(
   ));
 
   if (summary.deleted > 0) {
-    await clearCapacityRejection(env).catch(() => undefined);
+    await clearCapacityRejection(env, config).catch(() => undefined);
   }
   if (summary.candidates > 0) {
     console.log(JSON.stringify({
