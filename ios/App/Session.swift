@@ -395,6 +395,14 @@ final class Session: ObservableObject {
                let pages = try? JSONDecoder().decode([String: ThreadPage].self, from: pagesData) {
                 for (threadID, page) in pages { state.merge(page, intoThread: threadID) }
             }
+            // With -chat-presentation-preview: a connection card in each
+            // state the phone draws — required, authorizing and connected.
+            if arguments.contains("-connector-preview"),
+               let cardsURL = Bundle.main.url(forResource: "ConnectorPreview", withExtension: "json"),
+               let cardsData = try? Data(contentsOf: cardsURL),
+               let cards = try? JSONDecoder().decode([Message].self, from: cardsData) {
+                for card in cards { state.apply(.message(threadId: "preview-gmail", message: card)) }
+            }
             if arguments.contains("-reset-list-density") {
                 // The fresh-install default is checked in UI tests; an
                 // earlier run on the same simulator may have saved a choice.
@@ -3089,6 +3097,42 @@ final class Session: ObservableObject {
         guard let client else { return nil }
         do { return try await client.authorizeConnector(slug: slug, alias: alias) }
         catch { actionError = error.localizedDescription; return nil }
+    }
+
+    // MARK: - In-chat connection cards
+    //
+    // A bot paused on "Connect to GitHub". These throw rather than set
+    // `actionError`: the card says what went wrong in place, as desktop's
+    // does. See ConnectorRequestCardView.
+
+    /// The sign-in page for one card, as an https link.
+    func authorizeConnectorRequest(_ message: Message, in chat: Chat) async throws -> URL {
+        let (client, botId) = try connectorRequestCall(message, in: chat)
+        return try await client.authorizeConnectorRequest(botId: botId, messageId: message.id, threadId: chat.threadId)
+    }
+
+    /// Ask whether sign-in finished. The answer also reaches the card as a
+    /// patch; this call is what makes the computer look.
+    @discardableResult
+    func checkConnectorRequest(_ message: Message, in chat: Chat) async throws -> Bool {
+        let (client, botId) = try connectorRequestCall(message, in: chat)
+        return try await client.connectorRequestStatus(botId: botId, messageId: message.id, threadId: chat.threadId).connected
+    }
+
+    func resumeConnectorRequest(_ message: Message, in chat: Chat) async throws {
+        let (client, botId) = try connectorRequestCall(message, in: chat)
+        try await client.resumeConnectorRequest(botId: botId, messageId: message.id, threadId: chat.threadId)
+    }
+
+    func dismissConnectorRequest(_ message: Message, in chat: Chat) async throws {
+        let (client, botId) = try connectorRequestCall(message, in: chat)
+        try await client.dismissConnectorRequest(botId: botId, messageId: message.id, threadId: chat.threadId)
+    }
+
+    private func connectorRequestCall(_ message: Message, in chat: Chat) throws -> (CompanionClient, String) {
+        guard let client else { throw ConnectorRequestCallError.noComputer }
+        guard let botId = chat.connectorOwner(of: message) else { throw APIError.badURL }
+        return (client, botId)
     }
 
     func refreshNotificationAuthorization() async {

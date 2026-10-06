@@ -18,6 +18,7 @@ public enum Walkie {
         let fresh = transcript.filter { $0.role == .bot && !baseline.contains($0.id) }
         if busy {
             return fresh.last(where: { $0.kind == .options }).flatMap(spoken(_:))
+                ?? fresh.last(where: { $0.kind == .connector && $0.connector?.isPending == true }).flatMap(spoken(_:))
         }
         let parts = fresh.compactMap(spoken(_:))
         return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
@@ -41,6 +42,11 @@ public enum Walkie {
             // and the first thing it said. The full report is on screen.
             let line = message.routineRun?.previewLine ?? message.text ?? ""
             return line.isEmpty ? nil : line
+        case .connector:
+            // Like a credential, it cannot be done by voice: say what the
+            // bot is waiting on and where to do it, once.
+            guard let connector = message.connector, connector.isPending else { return nil }
+            return "It needs you to connect \(connector.displayName). Open the chat to connect it."
         case .activity, .screen, .digest, .compaction:
             return nil
         }

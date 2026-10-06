@@ -45,10 +45,14 @@ class ChineseLocalizationTest {
     @Test
     fun bothChineseCatalogsKeepResourceNamesAndFormatArguments() {
         val root = File("src/main/res").takeIf(File::isDirectory) ?: File("app/src/main/res")
-        val english = strings(File(root, "values/strings.xml"))
+        // Every string file in values/ (strings.xml, and feature files such as
+        // connector_card_strings.xml), merged as Android merges them.
+        val files = File(root, "values").listFiles { file -> file.name.endsWith("strings.xml") }!!.map { it.name }
+        assertEquals(true, "strings.xml" in files)
+        val english = files.map { strings(File(root, "values/$it")) }.reduce { all, next -> all + next }
         val arguments = Regex("%(?:\\d+\\$)?[a-zA-Z]")
         for (folder in listOf("values-b+zh+Hans", "values-b+zh+Hant")) {
-            val translated = strings(File(root, "$folder/strings.xml"))
+            val translated = files.map { strings(File(root, "$folder/$it")) }.reduce { all, next -> all + next }
             assertEquals(english.keys, translated.keys, folder)
             for ((name, value) in english) {
                 assertEquals(

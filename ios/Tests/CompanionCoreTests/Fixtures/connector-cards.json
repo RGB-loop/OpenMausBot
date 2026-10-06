@@ -1,0 +1,100 @@
+{
+  "messages": [
+    {
+      "id": "conn-required",
+      "at": 1786742441223,
+      "parentId": "5d92912c-d2f7-40cf-878b-341464cce922",
+      "role": "bot",
+      "kind": "connector",
+      "text": "Connect GitHub to continue.",
+      "connector": {
+        "slug": "github",
+        "label": "GitHub",
+        "description": "Connect GitHub so the bot can continue",
+        "status": "required",
+        "resumeKey": "resume-fixture-123"
+      }
+    },
+    {
+      "id": "conn-authorizing",
+      "at": 1786742441224,
+      "parentId": "conn-required",
+      "role": "bot",
+      "kind": "connector",
+      "text": "Connect Gmail as “work” to continue.",
+      "from": { "botId": "bot-2", "name": "Robyn", "color": "purple" },
+      "connector": {
+        "slug": "gmail",
+        "label": "Gmail",
+        "description": "Connect Gmail as “work” so the bot can continue",
+        "status": "authorizing",
+        "resumeKey": "resume-fixture-123",
+        "alias": "work",
+        "dismissed": false
+      }
+    },
+    {
+      "id": "conn-failed",
+      "at": 1786742441225,
+      "parentId": "conn-authorizing",
+      "role": "bot",
+      "kind": "connector",
+      "text": "Connect Slack to continue.",
+      "connector": {
+        "slug": "slack",
+        "label": "Slack",
+        "description": "Connect Slack so the bot can continue",
+        "status": "failed",
+        "resumeKey": "resume-fixture-123",
+        "error": "Connection EXPIRED"
+      }
+    },
+    {
+      "id": "conn-connected",
+      "at": 1786742441226,
+      "parentId": "conn-failed",
+      "role": "bot",
+      "kind": "connector",
+      "text": "Connect Linear to continue.",
+      "connector": {
+        "slug": "linear",
+        "label": "Linear",
+        "description": "Connect Linear so the bot can continue",
+        "status": "connected",
+        "resumeKey": "resume-fixture-456",
+        "resumed": true
+      }
+    },
+    {
+      "id": "conn-dismissed",
+      "at": 1786742441227,
+      "parentId": "conn-connected",
+      "role": "bot",
+      "kind": "connector",
+      "text": "Connect Notion to continue.",
+      "connector": {
+        "slug": "notion",
+        "label": "Notion",
+        "description": "Connect Notion so the bot can continue",
+        "status": "required",
+        "resumeKey": "resume-fixture-789",
+        "dismissed": true
+      }
+    },
+    {
+      "id": "conn-newer",
+      "at": 1786742441228,
+      "parentId": "conn-dismissed",
+      "role": "bot",
+      "kind": "connector",
+      "connector": {
+        "slug": "jira",
+        "label": "Jira",
+        "description": "Connect Jira so the bot can continue",
+        "status": "verifying-scopes",
+        "resumeKey": "resume-fixture-789"
+      }
+    }
+  ],
+  "hasMore": false
+}

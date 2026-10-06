@@ -94,6 +94,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openmausbot.companion.audio.VoiceNoteController
 import com.openmausbot.companion.core.Chat
+import com.openmausbot.companion.core.connectorOwner
 import com.openmausbot.companion.core.AttachedMessageContent
 import com.openmausbot.companion.core.attachedFiles
 import com.openmausbot.companion.core.generatedImages
@@ -483,6 +484,16 @@ private fun MessageContent(
                 null
             },
         )
+        // A bot asking to connect an app. A room card names the member that
+        // asked; one that does not cannot be acted on, so it reads as its line.
+        Message.Kind.CONNECTOR -> {
+            val request = message.connector
+            if (request != null && chat.connectorOwner(message) != null) {
+                ConnectorRequestCardView(chat, message, request, canAct = state.canAct)
+            } else if (!message.text.isNullOrEmpty()) {
+                TextBubble(chat.threadId, message, endsRun, openLink, openAttachment)
+            }
+        }
         // A message kind from a newer computer. Almost everything the harness
         // sends carries `text`, so showing it is usually the whole message and
         // always better than a gap in the transcript. When there is nothing to

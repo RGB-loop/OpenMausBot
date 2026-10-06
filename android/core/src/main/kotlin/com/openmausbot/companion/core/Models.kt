@@ -263,9 +263,14 @@ data class Message(
      * tests build messages positionally.
      */
     val via: String? = null,
+    /**
+     * `kind == CONNECTOR`: the app the bot is waiting on, patched in place as
+     * the person signs in. See ConnectorRequest.kt. Last for the same reason.
+     */
+    val connector: ConnectorRequest? = null,
 ) {
     @Serializable(with = MessageKindSerializer::class)
-    enum class Kind { TEXT, OPTIONS, ACTIVITY, SCREEN, DIGEST, COMPACTION, ROUTINE_RUN, UNKNOWN }
+    enum class Kind { TEXT, OPTIONS, ACTIVITY, SCREEN, DIGEST, COMPACTION, ROUTINE_RUN, CONNECTOR, UNKNOWN }
 
     @Serializable(with = MessageRoleSerializer::class)
     enum class Role { BOT, USER }
@@ -282,6 +287,7 @@ object MessageKindSerializer : KSerializer<Message.Kind> {
         "digest" -> Message.Kind.DIGEST
         "compaction" -> Message.Kind.COMPACTION
         "routine.run" -> Message.Kind.ROUTINE_RUN
+        "connector" -> Message.Kind.CONNECTOR
         else -> Message.Kind.UNKNOWN
     }
 

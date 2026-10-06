@@ -158,6 +158,34 @@ struct TranscriptActions: Equatable {
     // MARK: Credentials
 
     @MainActor
+    private func connectorChat() throws -> Chat {
+        guard let chat = liveChat, chat.threadId == threadId else {
+            throw ConnectorRequestCallError.noComputer
+        }
+        return chat
+    }
+
+    @MainActor
+    func authorizeConnectorRequest(_ message: Message) async throws -> URL {
+        try await session.authorizeConnectorRequest(message, in: connectorChat())
+    }
+
+    @MainActor
+    func checkConnectorRequest(_ message: Message) async throws -> Bool {
+        try await session.checkConnectorRequest(message, in: connectorChat())
+    }
+
+    @MainActor
+    func resumeConnectorRequest(_ message: Message) async throws {
+        try await session.resumeConnectorRequest(message, in: connectorChat())
+    }
+
+    @MainActor
+    func dismissConnectorRequest(_ message: Message) async throws {
+        try await session.dismissConnectorRequest(message, in: connectorChat())
+    }
+
+    @MainActor
     func preparedCredential(message: Message, secret: SecretRequestCardData) -> PreparedPhoneCredential? {
         guard let chat = liveChat else { return nil }
         return session.preparedCredential(chat: chat, message: message, secret: secret)

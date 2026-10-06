@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The in-chat connection card (ui/ConnectorRequestCard.kt): a bot asking to
+     connect an app. Its own file so the card's copy travels together; every
+     language folder carries the same names. Wording follows the desktop card
+     (src/locales, connectors.card.*). -->
+<resources>
+    <string name="mobile_connector_card_connect_securely">Connect securely</string>
+    <string name="mobile_connector_card_open_again">Open again</string>
+    <string name="mobile_connector_card_continue_task">Continue task</string>
+    <string name="mobile_connector_card_continuing">Continuing</string>
+    <string name="mobile_connector_card_waiting">Waiting for sign-in…</string>
+    <string name="mobile_connector_card_ready">Ready to use</string>
+    <string name="mobile_connector_card_requested_by">Requested by %1$s</string>
+    <string name="mobile_connector_card_sign_in_hint">Sign in or enter the app key on the secure connection page — never in chat.</string>
+    <string name="mobile_connector_card_paused">Connected securely. Continue the paused task when you\'re ready.</string>
+    <string name="mobile_connector_card_resumed">Connected securely. Your bot is continuing the task.</string>
+    <string name="mobile_connector_card_invalid_link">The connection page link wasn\'t valid. Try again.</string>
+    <string name="mobile_connector_card_no_computer">No computer connected</string>
+</resources>
