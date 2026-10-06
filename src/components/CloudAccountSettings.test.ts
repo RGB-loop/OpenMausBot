@@ -437,7 +437,7 @@ it("shows one next action in every state, and no Refresh", async () => {
     [{ ...free, purchase: { state: "confirming", tier: "personal" } }, "Open your Plan page"],
     [{ status: "unavailable", message: "unreachable", lastPlan: { tier: "personal", active: true } }, "Manage Cloud subscription"],
     [{ status: "reauth-required", message: "expired", lastPlan: { tier: "max", active: true } }, "Sign in again"],
-    [{ status: "unavailable", message: "signout-storage-failed" }, "Sign out of OMB Cloud"],
+    [{ status: "unavailable", message: "signout-storage-failed" }, "Sign out of OpenMausBot Cloud"],
   ] as Array<[CloudAccountState, string]>) {
     f.values = []; await ready(state);
     expect(primary(), JSON.stringify(state)).toEqual([action]);
@@ -446,11 +446,11 @@ it("shows one next action in every state, and no Refresh", async () => {
   // A saved sign-in that may only be locked is read again by itself: nothing to press.
   f.values = []; await ready({ status: "unavailable", message: "restore-failed" });
   expect(primary()).toEqual([]);
-  expect(button("Sign out of OMB Cloud")).toBeUndefined();
+  expect(button("Sign out of OpenMausBot Cloud")).toBeUndefined();
 });
 it("keeps Sign out and Cancel as quiet links beside the one action", async () => {
   await ready({ ...pro, machine: { status: "ready", origin } });
-  const signOut = button("Sign out of OMB Cloud")!;
+  const signOut = button("Sign out of OpenMausBot Cloud")!;
   expect(String((signOut.props as { className?: string }).className)).not.toContain("ui-button");
   push({ status: "connecting" });
   const cancel = button("Cancel sign-in")!;

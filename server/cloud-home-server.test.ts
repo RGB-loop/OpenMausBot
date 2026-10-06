@@ -103,7 +103,9 @@ beforeAll(async () => {
   mkdirSync(dataDir, { recursive: true });
   // A signed-in Claude Code whose turns record the environment they were given.
   // While the hang marker exists, a new turn records itself elsewhere and
-  // stays running, so its tool token stays live.
+  // stays running, so its tool token stays live. While the screen marker
+  // exists, a turn given the cloud computer's tools takes one screenshot first,
+  // the way a model's first computer call starts a lazily started computer.
   const cli = join(home, "fixture-claude.mjs");
   writeFileSync(cli, `#!/usr/bin/env node
 import { existsSync } from "node:fs";
@@ -113,6 +115,7 @@ if (process.argv[2] === "auth") {
 }
 const hang = existsSync(${JSON.stringify(join(home, "hang"))});
 if (hang) process.env.FAKE_CLAUDE_MODE = "hang";
+if (existsSync(${JSON.stringify(join(home, "screen"))})) process.env.FAKE_CLAUDE_USES_CLOUD_COMPUTER = "1";
 if (process.argv[2] !== "--version") process.env.FAKE_CLAUDE_DUMP = ${JSON.stringify(join(home, "spawn"))} + (hang ? "-hang.json" : ".json");
 await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-claude-cli.ts")).href)});
 `, { mode: 0o755 });
@@ -416,9 +419,17 @@ it("records when a turn first finished with a cloud computer, through the plan's
   const botId = created.body.bot.id as string;
   expect((await api("PATCH", `/api/bots/${botId}`, { body: { computer: "cloud" } })).status).toBe(200);
   expect((await api("GET", "/api/config")).body.onboarding).not.toHaveProperty("firstCloudComputerAt");
-  expect((await api("POST", `/api/bots/${botId}/messages`, { body: { text: "Open a web browser on your cloud computer" } })).status).toBe(202);
   const recorded = async () => (await api("GET", "/api/config")).body.onboarding?.firstCloudComputerAt as string | undefined;
-  await expect.poll(recorded, { timeout: 30_000 }).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  // A cloud computer starts only when the bot uses it: this turn's first call
+  // is a screenshot.
+  const screen = join(home, "screen");
+  writeFileSync(screen, "");
+  try {
+    expect((await api("POST", `/api/bots/${botId}/messages`, { body: { text: "Open a web browser on your cloud computer" } })).status).toBe(202);
+    await expect.poll(recorded, { timeout: 30_000 }).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  } finally {
+    rmSync(screen, { force: true });
+  }
   // The turn held the plan's computer, made through the relay with the plan's token only.
   expect(relay.requests.some((request) => request.method === "POST" && request.path === "/relay/api/box/v1/boxes")).toBe(true);
   expect(relay.requests.every((request) => request.auth === `Bearer ${included.OMB_CLOUD_BOAT_TOKEN}`)).toBe(true);
