@@ -313,6 +313,11 @@
     <string name="mobile_a11y_routine_timeout">例行任务超时</string>
     <string name="mobile_a11y_expanded">已展开</string>
     <string name="mobile_a11y_collapsed">已折叠</string>
+    <string name="mobile_a11y_bot_browser">%1$s 的浏览器</string>
+    <string name="mobile_a11y_new_thread_with">与 %1$s 新建对话</string>
+    <plurals name="mobile_a11y_thread_count">
+        <item quantity="other">%d 个对话</item>
+    </plurals>
     <string name="mobile_a11y_pin">固定</string>
     <string name="mobile_a11y_unpin">取消固定</string>
     <string name="mobile_a11y_archive">归档</string>
@@ -445,6 +450,7 @@
     <string name="mobile_computer_vnc_note">交互式 VNC 会话。必须在电脑的“手机”设置中为此手机开启访问权限。</string>
     <string name="mobile_computer_confirm_message">这会让此手机完全控制云端电脑，包括已在其中登录的任何账户。</string>
     <string name="mobile_live_call_disclosure">实时通话会将你的语音连同聊天的近期消息、机器人的回答，以及它请求审批的详细信息一起发送至 OpenAI。OpenAI 密钥会保留在你的电脑上。</string>
+    <string name="mobile_live_call_start">开始通话</string>
     <string name="mobile_discovery_access_off">本地网络访问已关闭。请开启“附近的设备”权限，或在下方输入 Tailscale 地址。</string>
     <string name="mobile_discovery_unavailable">本地网络发现目前不可用。请在下方输入“手机”设置中显示的地址。</string>
     <string name="mobile_discovery_keeps_failing">此手机上的本地网络发现一再中断。请在下方输入“手机”设置中显示的地址。</string>

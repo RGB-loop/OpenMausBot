@@ -293,7 +293,7 @@ fun BrowserControlScreen(botId: String, onBack: () -> Unit) {
                 val fit = minOf(surfaceWidth / frameW, surfaceHeight / frameH)
                 Image(
                     bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "${bot.name}'s browser",
+                    contentDescription = stringResource(R.string.mobile_a11y_bot_browser, bot.name),
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
                         .align(Alignment.Center)

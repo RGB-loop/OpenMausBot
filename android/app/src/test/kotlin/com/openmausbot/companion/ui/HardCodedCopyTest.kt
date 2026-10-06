@@ -29,18 +29,6 @@ class HardCodedCopyTest {
     private val root = File("src/main/kotlin/com/openmausbot/companion/ui").takeIf(File::isDirectory)
         ?: File("app/src/main/kotlin/com/openmausbot/companion/ui")
 
-    /**
-     * Live calls and browser / computer control, localized by PR #2296 with
-     * CallAndControlCopyTest as their guard. Drop these once it lands.
-     */
-    private val coveredElsewhere = setOf(
-        "LiveCallBar.kt",
-        "LiveCallBanner.kt",
-        "LiveCallSettingsSheet.kt",
-        "BrowserControlScreen.kt",
-        "ComputerScreen.kt",
-        "CompactRoster.kt",
-    )
 
     /** English that is meant to stay in Kotlin. Keep this short and say why. */
     private val allowed = setOf(
@@ -116,7 +104,7 @@ class HardCodedCopyTest {
     }
 
     private fun screens(): List<Pair<String, String>> =
-        root.listFiles { file -> file.extension == "kt" && file.name !in coveredElsewhere }.orEmpty()
+        root.listFiles { file -> file.extension == "kt" }.orEmpty()
             .sortedBy { it.name }
             .map { it.name to it.readText() }
 

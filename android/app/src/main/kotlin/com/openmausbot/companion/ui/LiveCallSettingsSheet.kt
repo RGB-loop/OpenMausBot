@@ -1,5 +1,6 @@
 package com.openmausbot.companion.ui
 
+import com.openmausbot.companion.R
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -132,7 +134,7 @@ internal fun LiveCallSettingsForm(
         ) {
             // First, before any choice: what a call sends to OpenAI, and that the key stays home.
             Text(
-                text = LiveCallRules.DISCLOSURE,
+                text = stringResource(R.string.mobile_live_call_disclosure),
                 fontSize = 13.sp,
                 color = secondaryTint,
                 modifier = Modifier.padding(horizontal = 20.dp),
@@ -223,8 +225,8 @@ private const val SAVE_FAILED = "Could not save that setting."
 internal fun LiveCallDisclosureDialog(onStart: () -> Unit, onCancel: () -> Unit) {
     AlertDialog(
         onDismissRequest = onCancel,
-        text = { Text(LiveCallRules.DISCLOSURE) },
-        confirmButton = { TextButton(onClick = onStart) { Text(LiveCallRules.START_CALL) } },
+        text = { Text(stringResource(R.string.mobile_live_call_disclosure)) },
+        confirmButton = { TextButton(onClick = onStart) { Text(stringResource(R.string.mobile_live_call_start)) } },
         dismissButton = { TextButton(onClick = onCancel) { Text(localizedMobileCopy("Cancel")) } },
     )
 }

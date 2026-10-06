@@ -314,6 +314,12 @@
     <string name="mobile_a11y_routine_timeout">Routine timeout</string>
     <string name="mobile_a11y_expanded">Expanded</string>
     <string name="mobile_a11y_collapsed">Collapsed</string>
+    <string name="mobile_a11y_bot_browser">%1$s\'s browser</string>
+    <string name="mobile_a11y_new_thread_with">New thread with %1$s</string>
+    <plurals name="mobile_a11y_thread_count">
+        <item quantity="one">%d thread</item>
+        <item quantity="other">%d threads</item>
+    </plurals>
     <string name="mobile_a11y_pin">Pin</string>
     <string name="mobile_a11y_unpin">Unpin</string>
     <string name="mobile_a11y_archive">Archive</string>
@@ -446,6 +452,7 @@
     <string name="mobile_computer_vnc_note">Interactive VNC session. Access must be enabled for this phone in the computer\'s Phone settings.</string>
     <string name="mobile_computer_confirm_message">This gives this phone full control of the cloud computer, including anything signed in inside it.</string>
     <string name="mobile_live_call_disclosure">A Live call sends your voice to OpenAI, along with the chat\'s recent messages, the bot\'s answers and the details of any approval it asks for. The OpenAI key stays on your computer.</string>
+    <string name="mobile_live_call_start">Start call</string>
     <string name="mobile_discovery_access_off">Local Network access is off. Enable nearby devices permission, or enter a Tailscale address below.</string>
     <string name="mobile_discovery_unavailable">Local discovery isn\'t available right now. Enter the address shown in Phone settings below.</string>
     <string name="mobile_discovery_keeps_failing">Local discovery keeps getting interrupted on this phone. Enter the address shown in Phone settings below.</string>

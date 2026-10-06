@@ -64,6 +64,8 @@ import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openmausbot.companion.R
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import com.openmausbot.companion.core.Bot
 import com.openmausbot.companion.core.BotProject
 import com.openmausbot.companion.core.BotTask
@@ -441,6 +443,9 @@ private fun NameAndRole(
 /** "› N": the bot's threads, opened in place. */
 @Composable
 private fun ThreadControl(bot: Bot, count: Int, listed: Boolean, enabled: Boolean, onToggle: () -> Unit) {
+    val threadsLabel = stringResource(R.string.mobile_a11y_bot_threads, bot.name)
+    val threadsState = stringResource(if (listed) R.string.mobile_a11y_expanded else R.string.mobile_a11y_collapsed) +
+        ", " + pluralStringResource(R.plurals.mobile_a11y_thread_count, count, count)
     Row(
         modifier = Modifier
             .testTag("threads-toggle.${bot.id}")
@@ -449,8 +454,8 @@ private fun ThreadControl(bot: Bot, count: Int, listed: Boolean, enabled: Boolea
             // count would be read out a second time before them. After the
             // clickable, so its button role and enabled state stay.
             .clearAndSetSemantics {
-                contentDescription = "${bot.name}'s threads"
-                stateDescription = "${if (listed) "Expanded" else "Collapsed"}, $count threads"
+                contentDescription = threadsLabel
+                stateDescription = threadsState
             }
             .heightIn(min = MIN_TOUCH_TARGET)
             .widthIn(min = MIN_TOUCH_TARGET)
@@ -653,13 +658,15 @@ private fun ThreadMarks(task: BotTask, runtime: String?, stamp: String, color: S
 /** A desktop folder inside an opened list: its mark, its name, and whether it is open. */
 @Composable
 private fun FolderLine(folder: BotProject, key: String, open: Boolean, enabled: Boolean, onToggle: () -> Unit) {
+    val folderLabel = stringResource(R.string.mobile_a11y_folder, folder.name)
+    val stateLabel = stringResource(if (open) R.string.mobile_a11y_expanded else R.string.mobile_a11y_collapsed)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("thread-folder.$key")
             .semantics(mergeDescendants = true) {
-                contentDescription = "${folder.name} folder"
-                stateDescription = if (open) "Expanded" else "Collapsed"
+                contentDescription = folderLabel
+                stateDescription = stateLabel
             }
             .clickable(enabled = enabled, role = Role.Button, onClick = onToggle)
             .heightIn(min = MIN_TOUCH_TARGET),
@@ -711,11 +718,12 @@ private fun UnfiledLabel(bot: Bot) {
 @Composable
 private fun NewThreadLine(bot: Bot, creating: Boolean, onCreate: () -> Unit) {
     val accent = MaterialTheme.colorScheme.primary
+    val newThreadLabel = stringResource(R.string.mobile_a11y_new_thread_with, bot.name)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("new-thread.${bot.id}")
-            .semantics(mergeDescendants = true) { contentDescription = "New thread with ${bot.name}" }
+            .semantics(mergeDescendants = true) { contentDescription = newThreadLabel }
             .clickable(enabled = !creating, role = Role.Button, onClick = onCreate)
             .heightIn(min = MIN_TOUCH_TARGET),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
