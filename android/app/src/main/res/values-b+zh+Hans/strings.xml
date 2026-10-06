@@ -304,6 +304,8 @@
     <string name="mobile_a11y_summary_expanded">%1$s，已展开</string>
     <string name="mobile_a11y_summary_collapsed">%1$s，已收起</string>
     <string name="mobile_a11y_open_chat_settings">打开 %1$s 的设置</string>
+    <string name="mobile_a11y_threads_current">对话，%1$s</string>
+    <string name="mobile_a11y_room_header">%1$s，%2$d 个机器人</string>
     <string name="mobile_a11y_close">关闭</string>
     <string name="mobile_a11y_choose_custom_repeat_interval">选择自定义重复间隔</string>
     <string name="mobile_a11y_repeat_interval">重复间隔：%1$s 分钟</string>

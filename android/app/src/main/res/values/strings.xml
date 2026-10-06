@@ -305,6 +305,8 @@
     <string name="mobile_a11y_summary_expanded">%1$s, expanded</string>
     <string name="mobile_a11y_summary_collapsed">%1$s, collapsed</string>
     <string name="mobile_a11y_open_chat_settings">Open %1$s settings</string>
+    <string name="mobile_a11y_threads_current">Threads, %1$s</string>
+    <string name="mobile_a11y_room_header">%1$s, %2$d bots</string>
     <string name="mobile_a11y_close">Close</string>
     <string name="mobile_a11y_choose_custom_repeat_interval">Choose a custom repeat interval</string>
     <string name="mobile_a11y_repeat_interval">Repeat interval, %1$s minutes</string>
