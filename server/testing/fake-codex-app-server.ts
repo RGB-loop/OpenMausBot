@@ -8,7 +8,8 @@
 //                     mcp-elicitation | mcp-app-approval | mcp-form | permissions-approval | question |
 //                     multi-question | mixed-question | empty-question | malformed-question | config-profile |
 //                     config-profile-unsupported | config-read-error | image |
-//                     logged-in-stdout | logged-out | unauthorized | late-request
+//                     logged-in-stdout | logged-out | unauthorized | late-request |
+//                     retry-then-complete | signin-refused | auth-recovery | mcp-401 | legacy-error
 //   FAKE_CODEX_LAUNCH_CRASHES  die at turn/start (before ack) with transient stderr,
 //                               exit 1, for the first N launches (launch count kept in
 //                               FAKE_CODEX_STATE)
@@ -509,6 +510,41 @@ process.stdin.on("data", (chunk) => {
         }
         if (msg.params?.permissions && (!experimentalApi || mode === "config-profile-unsupported")) {
           out({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "experimental API required for permissions" } });
+          break;
+        }
+        // Codex 0.160's ErrorNotification: {error: TurnError, willRetry}.
+        // Its own reconnects come first with willRetry: true; signin-refused
+        // replays an expired ChatGPT login (the 2026-10-07 report),
+        // auth-recovery a provider 401 after Codex tried to recover the
+        // sign-in, mcp-401 a tool's 401 inside an otherwise good turn, and
+        // legacy-error the bare {message} of Codex 0.144.
+        if (mode === "retry-then-complete" || mode === "signin-refused") {
+          out({ jsonrpc: "2.0", id: msg.id, result: { turn: { id: nativeTurnId } } });
+          for (let attempt = 1; attempt <= 5; attempt++) {
+            notify("error", { willRetry: true, error: { message: `Reconnecting... ${attempt}/5`, codexErrorInfo: null, additionalDetails: "workspace routing discovery unauthorized (401)" } });
+          }
+          if (mode === "retry-then-complete") { finishTurn(); break; }
+          const error = { message: "workspace routing discovery unauthorized (401)", codexErrorInfo: "unauthorized", additionalDetails: null };
+          notify("error", { willRetry: false, error });
+          notify("turn/completed", { turn: { status: "failed", error } });
+          break;
+        }
+        if (mode === "auth-recovery") {
+          out({ jsonrpc: "2.0", id: msg.id, result: { turn: { id: nativeTurnId } } });
+          notify("modelProvider/authRecoveryStarted", { provider: "openai", message: "Refreshing sign-in" });
+          notify("turn/completed", { turn: { status: "failed", error: { message: "unexpected status 401 Unauthorized", codexErrorInfo: null } } });
+          break;
+        }
+        if (mode === "mcp-401") {
+          out({ jsonrpc: "2.0", id: msg.id, result: { turn: { id: nativeTurnId } } });
+          notify("item/completed", { item: { id: "t1", type: "mcpToolCall", tool: "fetch", status: "failed", error: { message: "HTTP 401 Unauthorized: Please sign in again" } } });
+          finishTurn();
+          break;
+        }
+        if (mode === "legacy-error") {
+          out({ jsonrpc: "2.0", id: msg.id, result: { turn: { id: nativeTurnId } } });
+          notify("error", { message: "stream disconnected before completion" });
+          notify("turn/completed", { turn: { status: "failed", error: { message: "stream disconnected before completion" } } });
           break;
         }
         if (mode === "unauthorized") {
