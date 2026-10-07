@@ -196,9 +196,12 @@ export function schemaText(schema: unknown, maxChars = SCHEMA_TEXT_CHARS): strin
   return text.trim();
 }
 
-/** A tool's area: the first word of its name (`payments` for
- * `payments_list`, `get` for `getUser`), lowercased. */
+/** A tool's area: its name up to the first underscore (`payments` for
+ * `payments_list`, `promo-codes` for `promo-codes_create`), or for a name
+ * without one its first word (`get` for `getUser`), lowercased. */
 export function toolArea(name: string): string {
+  const prefix = name.slice(0, Math.max(0, name.indexOf("_")));
+  if (prefix.trim()) return cut(prefix.toLowerCase(), 40);
   const head = name.split(/[\s_./:-]+/).find(Boolean) ?? name;
   const word = /^[A-Z]?[a-z0-9]+|^[A-Z]+(?![a-z])/.exec(head)?.[0] ?? head;
   return cut(word.toLowerCase(), 40);
@@ -212,11 +215,20 @@ export type ToolRanker = (query: string, tools: readonly CatalogTool[], limit: n
 const K1 = 1.2;
 const B = 0.75;
 /** What each part of a tool counts for against a word of its description.
- * The name carries its area word twice; the schema says least about what a
- * tool is for, so its words count half. */
+ * The schema says least about what a tool is for, so its words count half. */
 const FIELD_WEIGHTS = { name: 2, text: 1, schema: 0.5 } as const;
 type Field = keyof typeof FIELD_WEIGHTS;
 const FIELDS = Object.keys(FIELD_WEIGHTS) as Field[];
+/** A query word naming a tool's area counts like one more hit in its name,
+ * with the word's rarity among areas rather than in the whole catalog:
+ * "payment" may appear in half the tools, yet few are in the payments area,
+ * and a request that names an area wants that area's tools. */
+const AREA_WEIGHT = FIELD_WEIGHTS.name;
+/** Words that ask what there is ("who are my newest members", "show
+ * refunds"): the request wants a listing, so tools that list get a modest
+ * lift, never enough to outrank a verb the request names ("cancel"). */
+const LIST_INTENT = new Set(["who", "which", "what", "show", "list", "recent", "newest", "latest", "all"]);
+const LIST_WEIGHT = 0.5;
 
 function counted(text: string): { counts: Map<string, number>; length: number } {
   const counts = new Map<string, number>();
@@ -230,29 +242,50 @@ function counted(text: string): { counts: Map<string, number>; length: number } 
 function fields(tool: CatalogTool): Record<Field, { counts: Map<string, number>; length: number }> {
   const text = [tool.title, tool.description].filter((part): part is string => typeof part === "string").join(" ");
   return {
-    name: counted(`${tool.name} ${toolArea(tool.name)}`),
+    name: counted(tool.name),
     text: counted(text),
     schema: counted(schemaText(tool.inputSchema)),
   };
 }
 
+/** Whether a tool lists things: `list` in its name, or a description that
+ * starts with "Lists". */
+function lists(name: { counts: Map<string, number> }, description: unknown): boolean {
+  return name.counts.has("list") || (typeof description === "string" && terms(description.slice(0, 40))[0] === "list");
+}
+
+const rarity = (total: number, holding: number) => Math.log(1 + (total - holding + 0.5) / (holding + 0.5));
+const saturated = (tf: number) => (tf * (K1 + 1)) / (tf + K1);
+
 function byName(a: CatalogTool, b: CatalogTool): number {
   return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
 
-/** Okapi BM25 (in its multi-field form, BM25F) over names, areas,
- * descriptions and, at half weight, input schemas. An exact tool name
- * always ranks first; equal scores are ordered by name. */
+/** Okapi BM25 (in its multi-field form, BM25F) over names, descriptions
+ * and, at half weight, input schemas; plus a tool's area, scored by its own
+ * rarity among areas, and a lift for listing tools when the request asks
+ * what there is. An exact tool name always ranks first; equal scores are
+ * ordered by name. */
 export const bm25Ranker: ToolRanker = (query, tools, limit) => {
   const wanted = [...new Set(terms(query))];
   const exact = query.trim().toLowerCase();
-  const docs = tools.map((tool) => ({ tool, fields: fields(tool) }));
+  const listing = !wanted.includes("list") && query.toLowerCase().split(/[^\p{L}\p{N}]+/u).some((word) => LIST_INTENT.has(word));
+  const docs = tools.map((tool) => {
+    const parts = fields(tool);
+    return { tool, fields: parts, area: counted(toolArea(tool.name)), lists: lists(parts.name, tool.description) };
+  });
   const average = Object.fromEntries(FIELDS.map((field) =>
     [field, docs.reduce((sum, doc) => sum + doc.fields[field].length, 0) / Math.max(1, docs.length) || 1])) as Record<Field, number>;
+  const averageArea = docs.reduce((sum, doc) => sum + doc.area.length, 0) / Math.max(1, docs.length) || 1;
   const df = new Map<string, number>();
+  const areaDf = new Map<string, number>();
   for (const doc of docs) {
-    for (const term of wanted) if (FIELDS.some((field) => doc.fields[field].counts.has(term))) df.set(term, (df.get(term) ?? 0) + 1);
+    for (const term of wanted) {
+      if (FIELDS.some((field) => doc.fields[field].counts.has(term))) df.set(term, (df.get(term) ?? 0) + 1);
+      if (doc.area.counts.has(term)) areaDf.set(term, (areaDf.get(term) ?? 0) + 1);
+    }
   }
+  const listRarity = rarity(docs.length, docs.filter((doc) => doc.lists).length);
   const scored: Array<{ tool: CatalogTool; score: number }> = [];
   for (const doc of docs) {
     let score = doc.tool.name.toLowerCase() === exact ? 1_000 : 0;
@@ -263,11 +296,11 @@ export const bm25Ranker: ToolRanker = (query, tools, limit) => {
         const count = counts.get(term);
         if (count) tf += (FIELD_WEIGHTS[field] * count) / (1 - B + (B * length) / average[field]);
       }
-      if (!tf) continue;
-      const n = df.get(term) ?? 0;
-      const idf = Math.log(1 + (docs.length - n + 0.5) / (n + 0.5));
-      score += (idf * tf * (K1 + 1)) / (tf + K1);
+      if (tf) score += rarity(docs.length, df.get(term) ?? 0) * saturated(tf);
+      const inArea = doc.area.counts.get(term);
+      if (inArea) score += rarity(docs.length, areaDf.get(term) ?? 0) * saturated((AREA_WEIGHT * inArea) / (1 - B + (B * doc.area.length) / averageArea));
     }
+    if (score > 0 && listing && doc.lists) score += LIST_WEIGHT * listRarity;
     if (score > 0) scored.push({ tool: doc.tool, score });
   }
   scored.sort((a, b) => b.score - a.score || byName(a.tool, b.tool));

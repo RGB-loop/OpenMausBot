@@ -81,10 +81,11 @@ export function whopLikeCatalog(count = 300, padding = 0): FakeHttpMcpTool[] {
 // Modeled on what the live Whop server showed (synthetic text, none of it
 // Whop's own): many descriptions say little ("Lists payments, newest
 // first."), while the words a person asks with live in parameters: a
-// `metric` enum offering revenue, a status enum offering failed, a period
-// enum offering this_week. "revenue" is in the descriptions of only three
-// unrelated tools, and the tools that answer revenue questions name it only
-// in their schemas.
+// `metric` enum offering revenue, a period enum offering this_week.
+// "revenue" is in the descriptions of only three unrelated tools, and the
+// tools that answer revenue questions name it only in their schemas.
+// "payment" and "member" appear all over the catalog, so they say little
+// on their own, and payments_list never mentions failed payments at all.
 
 const id = (what: string) => ({ type: "string", description: `The ${what}'s ID.` });
 const page = {
@@ -109,7 +110,7 @@ export function parameterHeavyCatalog(): FakeHttpMcpTool[] {
     t("products_update", "Updates a product.", obj({ ...company, id: id("product"), title: { type: "string" } }, ["company_id", "id"]), false),
     t("payments_list", "Lists payments, newest first.", obj({
       ...company,
-      statuses: { type: "array", description: "Only payments in these statuses.", items: { type: "string", enum: ["draft", "open", "paid", "pending", "failed", "refunded", "uncollectible", "void"] } },
+      statuses: { type: "array", description: "Only payments in these statuses.", items: { type: "string", enum: ["draft", "open", "paid", "pending", "refunded", "uncollectible", "void"] } },
       product_ids: { type: "array", items: { type: "string" }, description: "Only payments for these products." },
       ...range, ...page,
     })),
@@ -142,13 +143,23 @@ export function parameterHeavyCatalog(): FakeHttpMcpTool[] {
     t("refunds_list", "Lists refunds.", obj({ ...company, ...range, ...page })),
     t("disputes_list", "Lists disputes opened against payments.", obj({ ...company, status: { type: "string", enum: ["open", "won", "lost"] }, ...page })),
     t("connection_status", "Checks that the connection works and says which account it uses.", { type: "object", properties: {} }),
+    t("payment-method-domains_verify", "Verifies a domain so it can take payments with wallets.", obj({ ...company, domain: { type: "string" } }), false),
+    t("payment-method-domains_list", "Lists the domains registered for payment methods.", obj({ ...company, ...page })),
+    t("payment-rules_replace", "Replaces the payment rules of a product.", obj({ ...company, product_id: id("product"), rules: { type: "array", items: { type: "object" } } }), false),
+    t("payment-methods_list", "Lists a member's saved payment methods.", obj({ ...company, member_id: id("member"), ...page })),
+    t("memberships_cancel", "Cancels a membership at the end of its billing period.", obj({ ...company, id: id("membership") }, ["company_id", "id"]), false),
+    t("memberships_pause", "Pauses a membership's payments.", obj({ ...company, id: id("membership") }, ["company_id", "id"]), false),
+    t("promo-codes_create", "Creates a promo code that discounts a plan.", obj({ ...company, code: { type: "string" }, percent_off: { type: "number" } }), false),
+    t("promo-codes_list", "Lists promo codes.", obj({ ...company, ...page })),
+    t("promo-codes_delete", "Deletes a promo code.", obj({ ...company, id: id("promo code") }, ["company_id", "id"]), false),
   ];
-  const filler = ["memberships", "invoices", "plans", "experiences", "webhooks", "courses", "chats", "forums", "leads", "shipments", "reviews", "coupons", "teams"];
+  const filler = ["memberships", "invoices", "plans", "experiences", "webhooks", "courses", "chats", "forums", "leads", "shipments", "reviews", "coupons", "teams",
+    "exports", "product-affiliates", "ad-groups", "notifications", "entries", "transfers", "wallets", "authorizations"];
   for (const area of filler) {
     tools.push(
-      t(`${area}_list`, `Lists ${area}, newest first.`, obj({ ...company, ...page })),
-      t(`${area}_get`, `Retrieves one of the ${area} by its ID.`, obj({ ...company, id: id(area) }, ["company_id", "id"])),
-      t(`${area}_create`, `Creates ${area}.`, obj({ ...company, fields: { type: "object", additionalProperties: true } }), false),
+      t(`${area}_list`, `Lists ${area}, newest first, with the member and payment each belongs to.`, obj({ ...company, member_id: id("member"), ...page })),
+      t(`${area}_get`, `Retrieves one of the ${area} by its ID, with its member and payment details.`, obj({ ...company, id: id(area) }, ["company_id", "id"])),
+      t(`${area}_create`, `Creates ${area} for a member.`, obj({ ...company, fields: { type: "object", additionalProperties: true } }), false),
     );
   }
   return tools;
