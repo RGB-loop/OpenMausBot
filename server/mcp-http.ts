@@ -22,9 +22,18 @@ export class McpHttpError extends Error {
   }
 }
 
-/** Bytes of one response (or one SSE stream) a probe is willing to read. */
-const MAX_BODY_BYTES = 1_048_576;
+/** Bytes of one response (or one SSE stream) this client reads, for the
+ * Test button and for the stdio proxy alike. Whop's official server answers
+ * tools/list with 425 tools in 1.2 MB of JSON, its largest single tool alone
+ * ~51 KB, so a 1 MB cap refused it outright. Still bounded: a server that
+ * keeps talking cannot fill memory. */
+export const MAX_REMOTE_MCP_BYTES = 32 * 1024 * 1024;
 const PROTOCOL_VERSION = "2025-06-18";
+
+/** The private environment record one remote-proxy mount reads its settings
+ * from, when several mounts share one environment (Codex): only this name
+ * reaches argv, never the address or a header value. */
+export const REMOTE_MCP_CONFIG_ENV = /^OMB_REMOTE_MCP_CONFIG_[a-f0-9]{64}$/;
 
 interface JsonRpcMessage {
   jsonrpc?: unknown;
@@ -102,7 +111,7 @@ async function readSse(
   response: Response,
   signal: AbortSignal,
   onEvent: (event: SseEvent) => "stop" | undefined,
-  maxBytes = MAX_BODY_BYTES,
+  maxBytes = MAX_REMOTE_MCP_BYTES,
 ): Promise<void> {
   const reader = response.body?.getReader();
   if (!reader) throw new McpHttpError("protocol", "empty event stream");
@@ -134,7 +143,7 @@ async function readSse(
   }
 }
 
-async function readBounded(response: Response, maxBytes = MAX_BODY_BYTES): Promise<string> {
+async function readBounded(response: Response, maxBytes = MAX_REMOTE_MCP_BYTES): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) return "";
   const decoder = new TextDecoder();
@@ -173,7 +182,7 @@ export class RemoteMcpClient {
   constructor(target: RemoteMcpSpec, options: { fetch?: typeof fetch; maxBytes?: number; onNotification?: (message: JsonRpcMessage) => void } = {}) {
     this.target = target;
     this.fetchImpl = options.fetch ?? fetch;
-    this.maxBytes = options.maxBytes ?? MAX_BODY_BYTES;
+    this.maxBytes = options.maxBytes ?? MAX_REMOTE_MCP_BYTES;
     this.onNotification = options.onNotification;
   }
 

@@ -55,7 +55,8 @@ import { parseProtocolAskQuestions, questionAnswersById, questionChoices } from 
 import { codexVersionBehind, readLatestCodexRelease } from "./codex-release.ts";
 import { canUseMcpServer } from "../../shared/tool-scope.ts";
 import { assertToolScopeSupported } from "../../shared/tool-scope-support.ts";
-import { gateServer } from "../mcp-gate-config.ts";
+import { gateServer, mcpStdioServer } from "../mcp-gate-config.ts";
+import { CALL_TOOL, directoryCallTarget } from "../mcp-directory.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -164,6 +165,11 @@ function decodeConfig(raw: unknown): CodexConfig {
   };
 }
 
+/** The documented token-sharing Responses bridge carries no hosted
+ * tool_search (#2035 verified Codex 0.159.0 sends none), so a plan turn's
+ * MCP tools are all loaded up front. Its URL servers go through the remote
+ * proxy's tool directory instead (mcp-directory.ts), whose private settings
+ * the shell must never inherit. */
 export function chatgptPlanCodexArgs(): string[] {
   return [
     "-c", 'model_provider="openai_chatgpt_plan"',
@@ -176,7 +182,7 @@ export function chatgptPlanCodexArgs(): string[] {
     "-c", 'cli_auth_credentials_store="ephemeral"',
     "-c", "features.tool_search=false",
     "-c", "shell_environment_policy.ignore_default_excludes=false",
-    "-c", 'shell_environment_policy.exclude=["OPENMAUSBOT_CHATGPT_TOKEN"]',
+    "-c", 'shell_environment_policy.exclude=["OPENMAUSBOT_CHATGPT_TOKEN","OMB_REMOTE_MCP_CONFIG_*"]',
   ];
 }
 
@@ -824,10 +830,21 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           ...(turn.guestConfined ? GUEST_CONFINED_CODEX_ARGS : [])];
         const selectedMcp = new Map<string, McpServerSpec>();
         const selectedApprovals = new Map<string, boolean>();
-        const scopedServer = (name: string, mountName: string, server: McpServerSpec) => {
+        /** Mounts whose big catalog is searched (plan turns' URL servers). */
+        const directoryMounts = new Set<string>();
+        const scopedServer = (name: string, mountName: string, server: McpServerSpec): McpServerSpec | null => {
           if (!canUseMcpServer(turn.toolScope, name)) return null;
-          return turn.toolScope === undefined ? server : gateServer({ name, server, threadId, budget: 0, toolScope: turn.toolScope, nodeEnv: { ELECTRON_RUN_AS_NODE: "1" },
-            configEnvName: `OMB_GATE_CONFIG_${createHash("sha256").update(mountName).digest("hex")}` });
+          // A plan turn has no tool_search (chatgptPlanCodexArgs): its URL
+          // servers are searched through the remote proxy, not mounted whole.
+          const directory = plan && "url" in server;
+          if (turn.toolScope === undefined && !directory) return server;
+          const hash = createHash("sha256").update(mountName).digest("hex");
+          const proxy = turn.toolScope === undefined
+            ? mcpStdioServer(server, { nodeEnv: { ELECTRON_RUN_AS_NODE: "1" }, directory: { name }, configEnvName: `OMB_REMOTE_MCP_CONFIG_${hash}` })
+            : gateServer({ name, server, threadId, budget: 0, toolScope: turn.toolScope, nodeEnv: { ELECTRON_RUN_AS_NODE: "1" },
+              configEnvName: `OMB_GATE_CONFIG_${hash}`, directory });
+          if (proxy && directory) directoryMounts.add(mountName);
+          return proxy && { command: proxy.command, args: proxy.args ?? [], env: proxy.env ?? {} };
         };
         const mountSelected = (name: string, mountName: string, server: McpServerSpec, preApproved = true) => {
           const selected = scopedServer(name, mountName, server);
@@ -863,8 +880,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
           // codex speaks streamable HTTP to a remote server, not the older
           // SSE transport: such an entry still reaches Claude bots, and is
-          // left out here rather than mounted as something it is not
-          if (turn.toolScope === undefined && "url" in server && server.type === "sse") {
+          // left out here rather than mounted as something it is not. (Plan
+          // turns reach every URL server through the proxy, which speaks both.)
+          if (turn.toolScope === undefined && !plan && "url" in server && server.type === "sse") {
             noteSkippedSseServer(name);
             continue;
           }
@@ -887,6 +905,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           );
           }
         }
+
+        // An unscoped plan turn's proxies keep their settings in the shared
+        // app-server environment, like a scoped turn's gates: excluded from
+        // the shell (chatgptPlanCodexArgs), and no snapshot may restore them.
+        const privateProxyEnv = turn.toolScope === undefined && directoryMounts.size > 0;
+        if (privateProxyEnv) appServerArgs.push("-c", "features.shell_snapshot=false");
 
         const selectionConfig: { config?: Record<string, unknown> } = turn.toolScope === undefined ? {} : { config: { mcp_servers: Object.fromEntries(
           [...selectedMcp].map(([name, server]) => [name, "command" in server ? {
@@ -1130,11 +1154,21 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const mcpTool = isLegacyMcpPermission
           ? String(params.message ?? "").match(/tool "([^"]+)"/)?.[1]
           : undefined;
+        // A searched server (mcp-directory.ts): its catalog reads run no
+        // tool and pass without a card, as the tools/list they replace did;
+        // call_tool is shown as the tool it runs.
+        const searchedServer = isLegacyMcpPermission && typeof params.serverName === "string" && directoryMounts.has(params.serverName);
+        const directoryTarget = searchedServer && mcpTool ? directoryCallTarget(mcpTool, params._meta?.tool_params) : mcpTool;
+        if (searchedServer && mcpTool && directoryTarget === undefined) {
+          send({ jsonrpc: "2.0", id: msg.id, result: { action: "accept", content: {} } });
+          return;
+        }
+        const runs = mcpTool === CALL_TOOL && searchedServer && typeof directoryTarget === "string" ? directoryTarget : undefined;
         const tool =
           mcpAppApproval
             ? mcpAppApproval.tool
             : isLegacyMcpPermission
-            ? (mcpTool ?? "mcp")
+            ? (runs ?? mcpTool ?? "mcp")
             : isAdditionalPermission
               ? "permissions"
             : method === "item/fileChange/requestApproval" || method === "applyPatchApproval"
@@ -1162,7 +1196,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           isAdditionalPermission
             ? additionalPermissionSummary(params.permissions, params.reason)
             : isMcpPermission
-            ? (mcpAppApproval?.summary ?? (typeof params.message === "string" ? params.message : "MCP access requested"))
+            ? (mcpAppApproval?.summary ?? (runs ? `Allow the ${params.serverName} MCP server to run tool ${JSON.stringify(runs)}?`
+              : typeof params.message === "string" ? params.message : "MCP access requested"))
             : typeof params.command === "string"
             ? params.command
             : protocolQuestions
@@ -1345,13 +1380,16 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
           case "item/started": {
             const item = p.item ?? {};
+            // call_tool on a searched server reads as the tool it runs.
+            const runs = item.type === "mcpToolCall" && item.tool === CALL_TOOL && typeof item.server === "string" && directoryMounts.has(item.server)
+              ? directoryCallTarget(CALL_TOOL, item.arguments) : undefined;
             const title =
               item.type === "commandExecution"
                 ? String(item.command ?? "shell")
                 : item.type === "fileChange"
                   ? "edit"
                   : item.type === "mcpToolCall"
-                    ? (item.tool ?? item.name ?? "mcp")
+                    ? (runs ?? item.tool ?? item.name ?? "mcp")
                     : item.type === "webSearch"
                       ? "web_search"
                       : null;
@@ -1363,7 +1401,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 itemId: item.id,
                 title,
                 summary: item.type === "commandExecution" ? commandSummary({ command: item.command }) : undefined,
-                input: toolDetailPreview(item.type === "commandExecution" ? { command: item.command, cwd: item.cwd } : item.type === "mcpToolCall" ? item.arguments : item.type === "fileChange" ? item.changes : item.query),
+                input: toolDetailPreview(item.type === "commandExecution" ? { command: item.command, cwd: item.cwd } : item.type === "mcpToolCall" ? (runs ? item.arguments?.arguments ?? {} : item.arguments) : item.type === "fileChange" ? item.changes : item.query),
               });
             }
             break;
@@ -1669,6 +1707,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               ? "Codex rejected its configuration as invalid. Check ~/.codex/config.toml (or CODEX_HOME) for a broken entry, then retry."
               : "Could not read Codex configuration; cannot safely update bot instructions. Retry after checking Codex.",
           );
+        }
+        if (privateProxyEnv && (effectiveConfig as { features?: { shell_snapshot?: unknown } } | null)?.features?.shell_snapshot !== false) {
+          throw new Error("Codex could not disable inherited shell snapshots. No prompt was sent.");
         }
         if (turn.toolScope !== undefined) {
           if ((effectiveConfig as { features?: { shell_snapshot?: unknown } } | null)?.features?.shell_snapshot !== false) {

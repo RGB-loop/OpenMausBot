@@ -8,7 +8,9 @@ import type { SendTurnInput } from "../contracts.ts";
 import { augmentedPath } from "../env-path.ts";
 import { killCliTree, spawnCli } from "../procs.ts";
 import { chatImage, type ChatImagePart } from "./chat-images.ts";
+import { CALL_TOOL, directoryCallTarget, isDirectoryTool } from "../mcp-directory.ts";
 import { mcpStdioServer } from "../mcp-gate-config.ts";
+import { remoteMcpSpec } from "../mcp-http.ts";
 import { allowsTool, canUseMcpServer, parseToolScope, type ToolScope } from "../../shared/tool-scope.ts";
 
 export interface ChatToolDefinition {
@@ -16,17 +18,28 @@ export interface ChatToolDefinition {
   function: { name: string; description: string; parameters: Record<string, unknown> };
 }
 export interface ChatToolResult { text: string; ok: boolean; images?: ChatImagePart[] }
+/** How one call is shown to the person: the tool named on its approval card
+ * and in the transcript, the input previewed there, and whether a card is
+ * needed at all. */
+export interface ChatToolCallView { title: string; input: Record<string, unknown>; ask: boolean }
 /** The transport cannot safely continue this turn. A dispatched operation may
  * already have taken effect, so callers must not retry it through a new round. */
 export class ChatToolSessionError extends Error {}
 export interface ChatToolSession {
   definitions: ChatToolDefinition[];
   validate(name: string, args: unknown): void;
+  /** A searched server's search_tools and describe_tool read only its
+   * catalog, so they need no card; call_tool is shown as the tool it runs. */
+  view(name: string, args: Record<string, unknown>): ChatToolCallView;
   execute(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ChatToolResult>;
   close(): Promise<void>;
 }
 
 type Server = { command: string; args: string[]; env: Record<string, string> };
+/** A provider-safe tool name: the server's name and the tool's, joined. */
+function chatToolName(server: string, tool: string): string {
+  return `${server}_${tool}`.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 64) || "mcp_tool";
+}
 const STARTUP_MS = 8_000;
 /** Historic per-call ceiling for a bot's MCP tools; a turn can override it
  * with SendTurnInput.mcpCallTimeoutMs (server config `mcp.callTimeoutMinutes`). */
@@ -261,6 +274,9 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
   if (!parsed.ok) throw new Error(parsed.error);
   const scope = parsed.scope;
   const servers: Array<[string, Server]> = [];
+  /** URL servers this runtime searches rather than lists (mcp-directory.ts):
+   * every tool here rides every request, under a 128-tool cap. */
+  const searchable = new Set<string>();
   const eligible = (server: string) => scope === undefined || canUseMcpServer(scope, server);
   if (computerUse && integrations?.localComputer && eligible("computer")) servers.push(["computer", integrations.localComputer]);
   if (computerUse && integrations?.browser && eligible("browser")) servers.push(["browser", integrations.browser]);
@@ -268,8 +284,10 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
   if (integrations?.composio && eligible("composio")) servers.push(["composio", integrations.composio]);
   for (const [name, server] of Object.entries(integrations?.custom ?? {})) {
     if (!eligible(name)) continue;
-    const stdio = mcpStdioServer(server, { nodeEnv: { ELECTRON_RUN_AS_NODE: "1" } });
+    const remote = remoteMcpSpec(server) !== undefined;
+    const stdio = mcpStdioServer(server, { nodeEnv: { ELECTRON_RUN_AS_NODE: "1" }, ...(remote ? { directory: { name, ...(scope ? { toolScope: scope } : {}) } } : {}) });
     if (!stdio) throw new Error("MCP server configuration is invalid");
+    if (remote) searchable.add(name);
     servers.push([name, { command: stdio.command, args: stdio.args ?? [], env: stdio.env ?? {} }]);
   }
   if (servers.length > 32) throw new Error("MCP server count exceeds the 32-server limit");
@@ -288,7 +306,7 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
   const cancel = () => { void close().catch(() => {}); };
   signal.addEventListener("abort", cancel, { once: true });
   const definitions: ChatToolDefinition[] = [];
-  const registered = new Map<string, { client: ChatMcpClient; server: string; builtInBrowser: boolean; name: string; schema: ValidateFunction }>();
+  const registered = new Map<string, { client: ChatMcpClient; server: string; builtInBrowser: boolean; name: string; schema: ValidateFunction; searched: boolean }>();
   try {
     if (signal.aborted) throw aborted();
     // Start independent servers concurrently; consume results in config order
@@ -299,7 +317,10 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
       // image delivery, including custom servers. Text stays bounded below.
       const client = new ChatMcpClient(descriptor, computerUse);
       clients.push(client);
-      const include = (tool: unknown) => scope === undefined || (object(tool) && typeof tool.name === "string" && allowsTool(scope, { kind: "mcp", server: name, name: tool.name }));
+      // A searched server's three directory tools are already narrowed to
+      // the selection by the proxy, which checks call_tool's target as well.
+      const include = (tool: unknown) => scope === undefined || (object(tool) && typeof tool.name === "string"
+        && ((searchable.has(name) && isDirectoryTool(tool.name)) || allowsTool(scope, { kind: "mcp", server: name, name: tool.name })));
       const tools = await client.tools(signal, include);
       return { name, client, builtInBrowser: descriptor === integrations?.browser, tools };
     }));
@@ -323,26 +344,38 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
         }
         const description = (typeof tool.description === "string" ? tool.description : "Configured MCP tool") +
           (Object.keys(constraints).length ? " Additional argument constraints (validated before execution): " + JSON.stringify(constraints) : "");
-        const base = `${server}_${tool.name}`.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 64) || "mcp_tool";
+        const base = chatToolName(server, tool.name);
         let name = base;
         for (let index = 2; registered.has(name); index += 1) { const suffix = `_${index}`; name = base.slice(0, 64 - suffix.length) + suffix; }
-        registered.set(name, { client, server, builtInBrowser, name: tool.name, schema });
+        registered.set(name, { client, server, builtInBrowser, name: tool.name, schema, searched: searchable.has(server) });
         definitions.push({ type: "function", function: { name, description, parameters } });
         if (Buffer.byteLength(JSON.stringify(definitions)) > CATALOG_BYTES) throw new Error("MCP tool catalog exceeds the 1MB limit");
       }
     }
     if (signal.aborted || closed) throw aborted();
   } catch (error) { await close(); throw error; }
+  /** The upstream tool a call runs (see directoryCallTarget). */
+  const target = (tool: { name: string; searched: boolean }, args: unknown) => tool.searched ? directoryCallTarget(tool.name, args) : tool.name;
   const validate = (name: string, args: unknown) => {
     if (closed || signal.aborted) throw new ChatToolSessionError("MCP session closed");
     const tool = registered.get(name);
     if (!tool) throw new Error("The requested tool was not advertised for this turn");
-    if (scope !== undefined && !allowsTool(scope, { kind: "mcp", server: tool.server, name: tool.name })) throw new Error("Tool selection excludes this tool");
+    const excluded = (runs: string | null | undefined) => scope !== undefined && runs !== undefined
+      && (runs === null || !allowsTool(scope, { kind: "mcp", server: tool.server, name: runs }));
+    if (!(tool.searched && isDirectoryTool(tool.name)) && excluded(tool.name)) throw new Error("Tool selection excludes this tool");
     omitBlankDefaults(tool.builtInBrowser, tool.name, args);
     if (!object(args) || !tool.schema(args)) throw new Error("Tool arguments do not match the advertised input schema; use its required fields and types");
+    if (tool.searched && excluded(target(tool, args))) throw new Error("Tool selection excludes this tool");
+  };
+  const view = (name: string, args: Record<string, unknown>): ChatToolCallView => {
+    const tool = registered.get(name);
+    const runs = tool ? target(tool, args) : name;
+    if (runs === undefined) return { title: name, input: args, ask: false };
+    if (!tool?.searched || tool.name !== CALL_TOOL || typeof runs !== "string") return { title: name, input: args, ask: true };
+    return { title: chatToolName(tool.server, runs), input: object(args.arguments) ? args.arguments : {}, ask: true };
   };
   return {
-    definitions, validate, close,
+    definitions, validate, view, close,
     async execute(name, args, callSignal) {
       validate(name, args);
       if (callSignal.aborted) { await close(); throw aborted(); }

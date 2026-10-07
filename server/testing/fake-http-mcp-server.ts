@@ -22,7 +22,20 @@ export interface FakeHttpMcpOptions {
    * listing tools for every business an account manages */
   toolsDelayMs?: number;
   description?: string;
-  tools?: Array<{ name: string; inputSchema: Record<string, unknown> }>;
+  tools?: FakeHttpMcpTool[];
+  /** what tools/call answers (default: one "remote execution recorded" text) */
+  callResult?: (params: unknown) => unknown;
+  /** answer each tools/call as an event stream that first says the tool
+   * list changed, as a server does after it adds or removes tools */
+  listChangedOnCall?: boolean;
+  /** the server's own initialize instructions */
+  instructions?: string;
+}
+
+export interface FakeHttpMcpTool {
+  name: string;
+  inputSchema?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 export interface FakeHttpMcp {
@@ -31,6 +44,10 @@ export interface FakeHttpMcp {
   calls: unknown[];
   /** tools/list requests now waiting out `toolsDelayMs` */
   readonly delayedToolsLists: number;
+  /** tools/list requests answered so far */
+  readonly toolsLists: number;
+  /** replace the catalog later tools/list requests answer with */
+  setTools(tools: FakeHttpMcpTool[]): void;
   close(): Promise<void>;
 }
 
@@ -49,24 +66,30 @@ export async function startFakeHttpMcp(options: FakeHttpMcpOptions = {}): Promis
   const streams = new Set<ServerResponse>();
   const calls: unknown[] = [];
   let delayedToolsLists = 0;
+  let toolsLists = 0;
+  let tools = options.tools;
   const answerFor = (frame: { id?: unknown; method?: unknown; params?: unknown }) => {
     if (frame.method === "initialize") {
       return {
         jsonrpc: "2.0",
         id: frame.id,
-        result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fake-http-mcp", version: "1" } },
+        result: {
+          protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fake-http-mcp", version: "1" },
+          ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
+        },
       };
     }
     if (frame.method === "tools/list") {
+      toolsLists += 1;
       return {
         jsonrpc: "2.0",
         id: frame.id,
-        result: { tools: options.tools ?? [{ name: "read_notes", description: options.description ?? "Read saved notes" }] },
+        result: { tools: tools ?? [{ name: "read_notes", description: options.description ?? "Read saved notes" }] },
       };
     }
-    if (frame.method === "tools/call" && options.tools) {
+    if (frame.method === "tools/call" && tools) {
       calls.push(frame.params);
-      return { jsonrpc: "2.0", id: frame.id, result: { content: [{ type: "text", text: "remote execution recorded" }] } };
+      return { jsonrpc: "2.0", id: frame.id, result: options.callResult?.(frame.params) ?? { content: [{ type: "text", text: "remote execution recorded" }] } };
     }
     return null;
   };
@@ -111,6 +134,12 @@ export async function startFakeHttpMcp(options: FakeHttpMcpOptions = {}): Promis
         return;
       }
       const session = { "mcp-session-id": "fake-session" };
+      if (options.listChangedOnCall && frame.method === "tools/call") {
+        const changed = { jsonrpc: "2.0", method: "notifications/tools/list_changed" };
+        res.writeHead(200, { ...session, "content-type": "text/event-stream" });
+        res.end(`event: message\ndata: ${JSON.stringify(changed)}\n\nevent: message\ndata: ${JSON.stringify(answer)}\n\n`);
+        return;
+      }
       if (options.answer === "event-stream" && frame.method === "tools/list") {
         res.writeHead(200, { ...session, "content-type": "text/event-stream" });
         res.end(`: keepalive\n\nevent: message\ndata: ${JSON.stringify(answer)}\n\n`);
@@ -126,6 +155,8 @@ export async function startFakeHttpMcp(options: FakeHttpMcpOptions = {}): Promis
     seenHeaders,
     calls,
     get delayedToolsLists() { return delayedToolsLists; },
+    get toolsLists() { return toolsLists; },
+    setTools: (next) => { tools = next; },
     close: () => new Promise<void>((resolve) => {
       server.closeAllConnections();
       server.close(() => resolve());

@@ -5,6 +5,7 @@
 //
 // The fake is a shebang script — the same constraint codex.cmd itself
 // hits on Windows. resolveCliSpawn covers both, so these run everywhere.
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
@@ -1093,6 +1094,113 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`)
     // a user server keeps codex's on-request approval policy
     expect(argv).not.toContain("mcp_servers.docs.default_tools_approval_mode");
     expect(argv).not.toContain("mcp_servers.legacy");
+    // Codex on its own login searches tools itself: no directory proxy
+    expect(argv).not.toContain("mcp-remote-proxy");
+    expect(argv).not.toContain("features.shell_snapshot=false");
+  });
+
+  describe("on a ChatGPT plan, which has no tool_search", () => {
+    const whop = { type: "http" as const, url: "https://mcp.example.test/mcp", headers: { Authorization: "Bearer tok-whop" } };
+    const plan = () => {
+      vi.spyOn(ChatGptPlanAuthController.prototype, "accessToken").mockResolvedValue("synthetic-plan-token");
+      vi.spyOn(ChatGptPlanAuthController.prototype, "models").mockResolvedValue({ default: "gpt-6.1-sol", options: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol" }] });
+    };
+    const record = (mount: string) => `OMB_REMOTE_MCP_CONFIG_${createHash("sha256").update(mount).digest("hex")}`;
+
+    it("searches each URL server through the remote proxy, its settings kept from the shell", async () => {
+      plan();
+      await create({ authMode: "chatgpt-plan" });
+      const dump = join(scratch, "plan-directory.json");
+      process.env.FAKE_CODEX_DUMP = dump;
+      await instance.adapter.sendTurn({ threadId: "t-plan-directory", text: "go", model: "gpt-6.1-sol", integrations: { custom: {
+        whop, legacy: { type: "sse", url: "https://old.example/sse", headers: {} }, notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: {} },
+      } } });
+      await recorder.until((event) => event.type === "turn.completed");
+      expect(recorder.events.at(-1)).toMatchObject({ ok: true });
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      const argv = seen.argv.join(" ");
+      expect(seen.argv).toContain(`mcp_servers.whop.env_vars=${JSON.stringify(["ELECTRON_RUN_AS_NODE", record("whop")])}`);
+      expect(argv).toContain("mcp-remote-proxy");
+      expect(argv).not.toContain("mcp_servers.whop.url");
+      expect(argv).not.toContain("tok-whop");
+      const settings = JSON.parse(seen.env[record("whop")]);
+      expect(JSON.parse(settings.OMB_REMOTE_MCP_SERVER)).toEqual(whop);
+      expect(JSON.parse(settings.OMB_REMOTE_MCP_DIRECTORY)).toEqual({ name: "whop" });
+      // the proxy speaks SSE, so a plan turn reaches that server too
+      expect(seen.argv).toContain(`mcp_servers.legacy.env_vars=${JSON.stringify(["ELECTRON_RUN_AS_NODE", record("legacy")])}`);
+      // a command server is mounted as before
+      expect(seen.argv).toContain('mcp_servers.notes.command="npx"');
+      expect(seen.argv).toContain('shell_environment_policy.exclude=["OPENMAUSBOT_CHATGPT_TOKEN","OMB_REMOTE_MCP_CONFIG_*"]');
+      expect(seen.argv).toContain("features.shell_snapshot=false");
+      // still the person's own server: its tool calls keep asking
+      expect(argv).not.toContain("mcp_servers.whop.default_tools_approval_mode");
+    });
+
+    it("refuses the turn when Codex cannot turn shell snapshots off", async () => {
+      plan();
+      await create({ authMode: "chatgpt-plan", environment: { FAKE_CODEX_IGNORE_FEATURES: "1" } });
+      await instance.adapter.sendTurn({ threadId: "t-plan-snapshot", text: "go", model: "gpt-6.1-sol", integrations: { custom: { whop } } });
+      await recorder.until((event) => event.type === "turn.completed");
+      expect(recorder.events.at(-1)).toMatchObject({ ok: false });
+      expect(recorder.events.some((event) => event.type === "runtime.error" && event.message.includes("shell snapshots"))).toBe(true);
+    });
+
+    it("keeps a selected URL server's directory behind the gate", async () => {
+      plan();
+      await create({ authMode: "chatgpt-plan", environment: { FAKE_CODEX_MCP_OVERRIDES: "1" } });
+      const dump = join(scratch, "plan-directory-scoped.json");
+      process.env.FAKE_CODEX_DUMP = dump;
+      const toolScope = { allow: ["native:*", "mcp:whop:*"], deny: ["mcp:whop:payments_create"] };
+      await instance.adapter.sendTurn({ threadId: "t-plan-scoped", text: "go", model: "gpt-6.1-sol", toolScope, integrations: { custom: { whop } } });
+      await recorder.until((event) => event.type === "turn.completed");
+      expect(recorder.events.at(-1)).toMatchObject({ ok: true });
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      const gate = JSON.parse(seen.env[`OMB_GATE_CONFIG_${createHash("sha256").update("whop").digest("hex")}`]);
+      expect(gate.OMB_GATE_DIRECTORY).toBe("1");
+      expect(JSON.parse(JSON.parse(gate.OMB_GATE_UPSTREAM).env.OMB_REMOTE_MCP_DIRECTORY)).toEqual({ name: "whop", toolScope: { allow: ["native:*", "mcp:whop:*"], deny: ["mcp:whop:payments_create"] } });
+      expect(seen.argv.join(" ")).not.toContain("tok-whop");
+    });
+
+    const elicitation = (tool: string, toolParams: unknown) => JSON.stringify({ method: "mcpServer/elicitation/request", params: {
+      serverName: "whop", mode: "form", message: `Allow the whop MCP server to run tool "${tool}"?`,
+      _meta: { codex_approval_kind: "mcp_tool_call", tool_params: toolParams }, requestedSchema: { type: "object", properties: {} },
+    } });
+
+    it("lets a catalog search through without a card", async () => {
+      plan();
+      process.env.FAKE_CODEX_APPROVAL_REQUEST = elicitation("search_tools", { query: "list payments" });
+      await create({ authMode: "chatgpt-plan", mode: "approval" });
+      const dump = join(scratch, "plan-search.json");
+      process.env.FAKE_CODEX_DUMP = dump;
+      await instance.adapter.sendTurn({ threadId: "t-plan-search", text: "go", model: "gpt-6.1-sol", integrations: { custom: { whop } } });
+      await recorder.until((event) => event.type === "turn.completed");
+      expect(recorder.events.some((event) => event.type === "request.opened")).toBe(false);
+      expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ action: "accept", content: {} });
+    });
+
+    it("asks about the tool call_tool runs", async () => {
+      plan();
+      process.env.FAKE_CODEX_APPROVAL_REQUEST = elicitation("call_tool", { name: "payments_list", arguments: { company_id: "biz_1" } });
+      await create({ authMode: "chatgpt-plan", mode: "approval" });
+      const dump = join(scratch, "plan-call.json");
+      process.env.FAKE_CODEX_DUMP = dump;
+      await instance.adapter.sendTurn({ threadId: "t-plan-call", text: "go", model: "gpt-6.1-sol", integrations: { custom: { whop } } });
+      const opened = await recorder.until((event) => event.type === "request.opened");
+      expect(opened).toMatchObject({ requestType: "permission", tool: "payments_list", summary: 'Allow the whop MCP server to run tool "payments_list"?' });
+      await instance.adapter.respondToRequest("t-plan-call", opened.requestId!, { behavior: "allow" });
+      await recorder.until((event) => event.type === "turn.completed");
+      expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ action: "accept", content: {} });
+    });
+
+    it("leaves the same names alone off a plan, where the server is mounted whole", async () => {
+      process.env.FAKE_CODEX_APPROVAL_REQUEST = elicitation("call_tool", { name: "payments_list", arguments: {} });
+      await create({ mode: "approval" });
+      await instance.adapter.sendTurn({ threadId: "t-own-call", text: "go", integrations: { custom: { whop } } });
+      const opened = await recorder.until((event) => event.type === "request.opened");
+      expect(opened).toMatchObject({ tool: "call_tool", summary: 'Allow the whop MCP server to run tool "call_tool"?' });
+      await instance.adapter.respondToRequest("t-own-call", opened.requestId!, { behavior: "deny" });
+      await recorder.until((event) => event.type === "turn.completed");
+    });
   });
 
   it("does not let a custom MCP server capture a built-in capability variable", async () => {
@@ -1338,7 +1446,7 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`)
       if (plan) {
         expect(seen.env.CODEX_HOME.startsWith(join(DATA_DIR, "providers", "chatgpt-plan") + sep)).toBe(true);
         expect(seen.env.CODEX_HOME).not.toBe(join(scratch, ".codex"));
-        expect(seen.argv).toContain('shell_environment_policy.exclude=["OPENMAUSBOT_CHATGPT_TOKEN"]');
+        expect(seen.argv).toContain('shell_environment_policy.exclude=["OPENMAUSBOT_CHATGPT_TOKEN","OMB_REMOTE_MCP_CONFIG_*"]');
       } else expect(seen.env.CODEX_HOME).toBe(join(scratch, ".codex"));
       const threadCalls = seen.calls.filter((call: { method: string }) => ["thread/start", "thread/resume"].includes(call.method));
       expect(threadCalls).toHaveLength(1);

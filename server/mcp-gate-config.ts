@@ -8,7 +8,7 @@ import { parseToolScope, type ToolScope } from "../shared/tool-scope.ts";
 
 import { DATA_DIR } from "./config.ts";
 import { DEFAULT_RESULT_BUDGET } from "./mcp-trim.ts";
-import { remoteMcpSpec } from "./mcp-http.ts";
+import { REMOTE_MCP_CONFIG_ENV, remoteMcpSpec } from "./mcp-http.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 
 /** Characters of a single tool result allowed into context, or 0 to mount
@@ -35,17 +35,48 @@ export interface StdioServer {
   [key: string]: unknown;
 }
 
+export interface StdioServerOptions {
+  /** node flags the harness spawns its own helpers with */
+  nodeEnv?: Record<string, string>;
+  execPath?: string;
+  /** For an engine that cannot search tools itself: a URL server with a big
+   * catalog answers with search_tools, describe_tool and call_tool instead
+   * (mcp-directory.ts). `name` is the server's configured name, the one tool
+   * selections use; `toolScope` narrows what the directory can find and run.
+   * A command server is mounted as it is. */
+  directory?: { name: string; toolScope?: ToolScope };
+  /** Engines that share one child environment (Codex): the proxy's settings
+   * go in this private record, named OMB_REMOTE_MCP_CONFIG_<64 hex>, and
+   * only the name reaches argv. */
+  configEnvName?: string;
+}
+
 /** Use the existing remote client when an engine requires a stdio descriptor. */
-export function mcpStdioServer(server: unknown, options: { nodeEnv?: Record<string, string>; execPath?: string } = {}): StdioServer | null {
+export function mcpStdioServer(server: unknown, options: StdioServerOptions = {}): StdioServer | null {
   if (!server || typeof server !== "object" || Array.isArray(server)) return null;
   const spec = server as StdioServer;
   if (typeof spec.command === "string" && spec.command) return spec;
   const remote = remoteMcpSpec(server);
   if (!remote) return null;
+  if (options.configEnvName !== undefined && !REMOTE_MCP_CONFIG_ENV.test(options.configEnvName)) {
+    throw new Error("Invalid private MCP proxy configuration.");
+  }
+  let directory: string | undefined;
+  if (options.directory) {
+    // The proxy refuses to start on settings it cannot read; refuse here
+    // first, where the caller can still say why.
+    const scope = parseToolScope(options.directory.toolScope);
+    if (!/^[a-z][a-z0-9_-]{0,31}$/.test(options.directory.name) || !scope.ok) throw new Error("Invalid MCP tool search configuration.");
+    directory = JSON.stringify({ name: options.directory.name, ...(scope.scope ? { toolScope: scope.scope } : {}) });
+  }
+  const settings = {
+    OMB_REMOTE_MCP_SERVER: JSON.stringify(remote),
+    ...(directory ? { OMB_REMOTE_MCP_DIRECTORY: directory } : {}),
+  };
   return {
     command: options.execPath ?? process.execPath,
-    args: [SPAWNED_PROXIES.mcpRemote],
-    env: { ...options.nodeEnv, OMB_REMOTE_MCP_SERVER: JSON.stringify(remote) },
+    args: [SPAWNED_PROXIES.mcpRemote, ...(options.configEnvName ? ["--config-env", options.configEnvName] : [])],
+    env: { ...options.nodeEnv, ...(options.configEnvName ? { [options.configEnvName]: JSON.stringify(settings) } : settings) },
   };
 }
 
@@ -69,6 +100,10 @@ export function gateServer(input: {
   execPath?: string;
   /** Private per-mount configuration for engines that share one child env. */
   configEnvName?: string;
+  /** The engine cannot search tools itself: a URL server's big catalog is
+   * searched instead of listed (mcpStdioServer's `directory`), and the gate
+   * checks call_tool against the tool it runs. */
+  directory?: boolean;
 }): { command: string; args: string[]; env: Record<string, string> } | null {
   const { name, server, budget } = input;
   const parsed = parseToolScope(input.toolScope);
@@ -76,7 +111,14 @@ export function gateServer(input: {
   const scoped = parsed.scope !== undefined;
   if (budget <= 0 && !scoped) return null;
   if (!scoped && remoteMcpSpec(server)) return null;
-  const spec = mcpStdioServer(server, input);
+  // The directory is the remote proxy's; it sits inside the gate, which
+  // knows to look through call_tool at the tool underneath.
+  const directory = input.directory === true && remoteMcpSpec(server) !== undefined;
+  const spec = mcpStdioServer(server, {
+    nodeEnv: input.nodeEnv,
+    execPath: input.execPath,
+    ...(directory ? { directory: { name, ...(scoped ? { toolScope: parsed.scope } : {}) } } : {}),
+  });
   if (!spec) {
     if (scoped) throw new Error("Tool selection requires a supported MCP server.");
     return null;
@@ -87,6 +129,7 @@ export function gateServer(input: {
     OMB_GATE_SPILL_DIR: spillDir(input.threadId),
     OMB_GATE_BUDGET: String(budget),
     ...(scoped ? { OMB_GATE_TOOL_SCOPE: JSON.stringify(parsed.scope) } : {}),
+    ...(directory ? { OMB_GATE_DIRECTORY: "1" } : {}),
   };
   if (input.configEnvName && (!scoped || !/^OMB_GATE_CONFIG_[a-f0-9]{64}$/.test(input.configEnvName))) {
     throw new Error("Invalid private MCP gate configuration.");

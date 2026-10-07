@@ -167,13 +167,31 @@ turns before changing this selection; the next direct or channel turn gets the
 new list. The list does not filter project-local `.mcp.json` files and is not a
 shell sandbox. Individual tool approvals depend on the engine and approval mode.
 
+### Servers with hundreds of tools
+
+Some servers offer more tools than a model can usefully read at once: Whop's
+lists 425. Claude Code, and Codex signed in with its own account, look tools
+up as they need them, so they get every server whole, as before. Other
+engines would read every tool's description on every message, and the
+API-model engines stop at 128 tools. So for bots on API models, on Pi, and on
+Codex with a ChatGPT plan, a big URL server shows up as three tools: one that
+searches its tools, one that reads a tool's exact inputs, and one that runs a
+tool by name. The search tool says what the server covers, area by area.
+
+A server counts as big when it has more than 40 tools, or more than about
+100,000 characters of tool descriptions (roughly where Claude Code starts
+searching on its own). Smaller servers are listed as they always were. There
+is nothing to configure. A bot's tool selection still holds: it can find and
+run only the tools you chose for it, and an approval card names the tool
+being run, never the search.
+
 ### Which engines reach which servers
 
 | Server | Claude Code bots | Codex bots | ACP bots (Cursor, Grok, Kimi, …) | API-model bots |
 | --- | --- | --- | --- | --- |
 | Command (stdio) | yes, through the result gate | yes | yes | yes |
-| URL, Streamable HTTP | yes | yes | when the agent advertises `http` | not yet |
-| URL, SSE | yes | no (Codex has no SSE transport) | when the agent advertises `sse` | not yet |
+| URL, Streamable HTTP | yes | yes | when the agent advertises `http` | yes |
+| URL, SSE | yes | with a tool selection or a ChatGPT plan (Codex itself has no SSE transport) | when the agent advertises `sse` | yes |
 
 A server an engine cannot reach is left out of that bot's turn with a note in
 the server log; nothing else breaks.
@@ -291,8 +309,9 @@ servers gets the enabled tools on its next task.
 - **Testing is bounded.** A command is stopped after the handshake (or eight
   seconds), its output is capped, and its stderr is never sent to the UI. It
   inherits none of OpenMausBot's workspace or provider credentials; only the
-  environment variables configured for that MCP server are added. A URL test
-  reads at most 1 MB and reports only the HTTP status of a refusal.
+  environment variables configured for that MCP server are added. A test
+  reads at most 32 MB (Whop's tool list alone is 1.2 MB), and a URL test
+  reports only the HTTP status of a refusal.
 - **Addresses are checked.** A URL server needs a full `http://` or
   `https://` address with no credentials in it; header names must be valid
   HTTP field names and values a single line.

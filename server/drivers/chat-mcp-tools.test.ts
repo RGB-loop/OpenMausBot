@@ -7,6 +7,7 @@ import { augmentedPath } from "../env-path.ts";
 import { ChatToolSessionError, mountChatTools, type ChatToolSession } from "./chat-mcp-tools.ts";
 import type { ToolScope } from "../../shared/tool-scope.ts";
 import { startFakeHttpMcp } from "../testing/fake-http-mcp-server.ts";
+import { whopLikeCatalog } from "../testing/whop-like-catalog.ts";
 
 const dirs: string[] = [];
 const sessions: ChatToolSession[] = [];
@@ -302,6 +303,62 @@ describe("Chat MCP session", () => {
     await rejected;
     expect(alive(receipt.pid)).toBe(false);
     expect(alive(receipt.helper)).toBe(false);
+  });
+});
+
+describe("Chat MCP tool directory", () => {
+  const catalog = whopLikeCatalog(300);
+  async function mountWhop(toolScope?: ToolScope) {
+    const remote = await startFakeHttpMcp({ tools: catalog });
+    const controller = new AbortController(); controllers.push(controller);
+    try {
+      const session = await mountChatTools({ custom: { whop: { type: "http", url: remote.url, headers: {} } } }, controller.signal, false, toolScope);
+      sessions.push(session);
+      return { remote, controller, session };
+    } catch (error) { await remote.close(); throw error; }
+  }
+
+  it("searches a 300-tool URL server instead of refusing it at the 128-tool limit", async () => {
+    const { remote, controller, session } = await mountWhop();
+    try {
+      expect(session.definitions.map((tool) => tool.function.name)).toEqual(["whop_search_tools", "whop_describe_tool", "whop_call_tool"]);
+      const search = await session.execute("whop_search_tools", { query: "list payments" }, controller.signal);
+      expect(JSON.parse(search.text).matches[0].name).toBe("payments_list");
+      // searching runs no tool of the server, so no card; call_tool shows its target
+      expect(session.view("whop_search_tools", { query: "list payments" })).toEqual({ title: "whop_search_tools", input: { query: "list payments" }, ask: false });
+      const args = { name: "payments_list", arguments: { company_id: "biz_1" } };
+      expect(session.view("whop_call_tool", args)).toEqual({ title: "whop_payments_list", input: { company_id: "biz_1" }, ask: true });
+      await expect(session.execute("whop_call_tool", args, controller.signal)).resolves.toMatchObject({ ok: true, text: "remote execution recorded" });
+      expect(remote.calls).toEqual([{ name: "payments_list", arguments: { company_id: "biz_1" } }]);
+      await expect(session.execute("whop_call_tool", { arguments: {} }, controller.signal)).rejects.toThrow("input schema");
+    } finally { await remote.close(); }
+  });
+
+  it("neither finds nor runs a tool outside the bot's selection", async () => {
+    // more than forty selected tools stay a searched catalog
+    const selected = [...catalog.filter((tool) => tool.name.endsWith("_list")).map((tool) => tool.name), "payments_get", "stats_get"];
+    const { remote, controller, session } = await mountWhop({ allow: selected.map((name) => `mcp:whop:${name}`) });
+    try {
+      expect(session.definitions.map((tool) => tool.function.name)).toEqual(["whop_search_tools", "whop_describe_tool", "whop_call_tool"]);
+      const found = JSON.parse((await session.execute("whop_search_tools", { query: "create payments", limit: 20 }, controller.signal)).text).matches;
+      expect(found.map((match: { name: string }) => match.name).every((name: string) => selected.includes(name))).toBe(true);
+      expect(() => session.validate("whop_call_tool", { name: "payments_create", arguments: {} })).toThrow("Tool selection excludes this tool");
+      await expect(session.execute("whop_call_tool", { name: "payments_create", arguments: {} }, controller.signal)).rejects.toThrow("Tool selection excludes this tool");
+      expect(remote.calls).toEqual([]);
+      await expect(session.execute("whop_call_tool", { name: "payments_list", arguments: {} }, controller.signal)).resolves.toMatchObject({ ok: true });
+      expect(remote.calls).toEqual([{ name: "payments_list", arguments: {} }]);
+    } finally { await remote.close(); }
+  });
+
+  it("mounts a small URL server's own tools, unchanged", async () => {
+    const remote = await startFakeHttpMcp({ tools: whopLikeCatalog(5) });
+    const controller = new AbortController(); controllers.push(controller);
+    try {
+      const session = await mountChatTools({ custom: { whop: { type: "http", url: remote.url, headers: {} } } }, controller.signal);
+      sessions.push(session);
+      expect(session.definitions.map((tool) => tool.function.name)).toEqual(whopLikeCatalog(5).map((tool) => `whop_${tool.name.replace("-", "_")}`));
+      expect(session.view("whop_payments_list", { company_id: "biz_1" })).toEqual({ title: "whop_payments_list", input: { company_id: "biz_1" }, ask: true });
+    } finally { await remote.close(); }
   });
 });
 
