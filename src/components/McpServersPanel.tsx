@@ -102,7 +102,11 @@ export async function signedInToolsCheck(
     if (signal.aborted) throw cause;
     tested = { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
   }
-  return tested.ok ? tested : { ...tested, error: t("whop.testFailed", { reason: tested.error ?? "" }) };
+  if (tested.ok) return tested;
+  // A proxy's "504 Gateway Timeout" or a browser's "Failed to fetch" has no
+  // closing period; add one so the reason does not run into the next sentence.
+  const reason = (tested.error ?? "").trim();
+  return { ...tested, error: t("whop.testFailed", { reason: reason && !/[.!?]$/.test(reason) ? `${reason}.` : reason }) };
 }
 
 interface McpMessage {
