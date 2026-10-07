@@ -35,10 +35,27 @@ export interface StdioServer {
   [key: string]: unknown;
 }
 
+/** What the remote proxy needs from the environment to reach the internet
+ * the way the person's other tools do: their proxy and its certificates.
+ * Some engines start MCP children with a bare environment (Codex keeps a
+ * handful of names), so these travel in the proxy's own descriptor. */
+const NETWORK_ENV = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"];
+const PROXY_ENV = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
+
+function networkEnv(source: NodeJS.ProcessEnv | Record<string, string | undefined>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of NETWORK_ENV) if (source[name]) env[name] = source[name];
+  // Node's fetch ignores the proxy variables unless told to use them.
+  if (PROXY_ENV.some((name) => env[name])) env.NODE_USE_ENV_PROXY = source.NODE_USE_ENV_PROXY || "1";
+  return env;
+}
+
 export interface StdioServerOptions {
   /** node flags the harness spawns its own helpers with */
   nodeEnv?: Record<string, string>;
   execPath?: string;
+  /** where the proxy's network settings come from (default: this process) */
+  sourceEnv?: NodeJS.ProcessEnv | Record<string, string | undefined>;
   /** For an engine that cannot search tools itself: a URL server with a big
    * catalog answers with search_tools, describe_tool and call_tool instead
    * (mcp-directory.ts). `name` is the server's configured name, the one tool
@@ -76,7 +93,11 @@ export function mcpStdioServer(server: unknown, options: StdioServerOptions = {}
   return {
     command: options.execPath ?? process.execPath,
     args: [SPAWNED_PROXIES.mcpRemote, ...(options.configEnvName ? ["--config-env", options.configEnvName] : [])],
-    env: { ...options.nodeEnv, ...(options.configEnvName ? { [options.configEnvName]: JSON.stringify(settings) } : settings) },
+    env: {
+      ...options.nodeEnv,
+      ...networkEnv(options.sourceEnv ?? process.env),
+      ...(options.configEnvName ? { [options.configEnvName]: JSON.stringify(settings) } : settings),
+    },
   };
 }
 
@@ -104,6 +125,8 @@ export function gateServer(input: {
    * searched instead of listed (mcpStdioServer's `directory`), and the gate
    * checks call_tool against the tool it runs. */
   directory?: boolean;
+  /** where a remote proxy's network settings come from (default: this process) */
+  sourceEnv?: NodeJS.ProcessEnv | Record<string, string | undefined>;
 }): { command: string; args: string[]; env: Record<string, string> } | null {
   const { name, server, budget } = input;
   const parsed = parseToolScope(input.toolScope);
@@ -117,6 +140,7 @@ export function gateServer(input: {
   const spec = mcpStdioServer(server, {
     nodeEnv: input.nodeEnv,
     execPath: input.execPath,
+    sourceEnv: input.sourceEnv,
     ...(directory ? { directory: { name, ...(scoped ? { toolScope: parsed.scope } : {}) } } : {}),
   });
   if (!spec) {

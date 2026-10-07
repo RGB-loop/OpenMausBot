@@ -336,12 +336,13 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     send({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     expect(JSON.parse(await nextLine()).result.tools.map((tool: { name: string }) => tool.name)).toEqual(["search_tools", "describe_tool", "call_tool", "read"]);
     expect((await callWith("call_tool", { name: "write", arguments: {} }, 2)).error).toMatchObject({ code: -32602 });
-    expect((await callWith("call_tool", { arguments: {} }, 3)).error).toMatchObject({ code: -32602 });
     expect(ran()).toEqual([]);
-    // the directory's own reads pass whole; the tool call_tool runs is trimmed
-    expect((await callWith("describe_tool", { name: "read" }, 4)).result.content[0].text).toHaveLength(4_000);
+    // the directory's own answers pass whole: its reads, and a call_tool
+    // naming no tool, which runs nothing; the tool call_tool runs is trimmed
+    expect((await callWith("describe_tool", { name: "read" }, 3)).result.content[0].text).toHaveLength(4_000);
+    expect((await callWith("call_tool", { arguments: {} }, 4)).result.content[0].text).toHaveLength(4_000);
     expect((await callWith("call_tool", { name: "read", arguments: {} }, 5)).result.content[0].text).toContain("[OpenMausBot trimmed");
-    expect(ran()).toEqual(["describe_tool", "call_tool"]);
+    expect(ran()).toEqual(["describe_tool", "call_tool", "call_tool"]);
   });
 
   it("treats those names as ordinary tools for any other upstream", async () => {

@@ -7,6 +7,7 @@ import { removeTempDir } from "../testing/cleanup.ts";
 import { startFakeHttpMcp } from "../testing/fake-http-mcp-server.ts";
 import { whopLikeCatalog } from "../testing/whop-like-catalog.ts";
 import { buildMcpServers } from "./pi.ts";
+import { mcpStdioServer } from "../mcp-gate-config.ts";
 
 import extension, {
   allocateToolName,
@@ -234,6 +235,48 @@ describe("StdioMcp", () => {
   });
 });
 
+describe("Pi MCP startup budgets", () => {
+  /** Lets real I/O run, the faked clock standing still, until `condition`. */
+  async function untilReal(condition: () => boolean): Promise<void> {
+    const started = Date.now();
+    while (!condition() && Date.now() - started < 15_000) await new Promise((resolve) => setImmediate(resolve));
+    expect(condition()).toBe(true);
+  }
+  function watch<T>(pending: Promise<T>) {
+    const state: { done: boolean; value?: T; error?: unknown } = { done: false };
+    void pending.then((value) => { state.done = true; state.value = value; }, (error: unknown) => { state.done = true; state.error = error; });
+    return state;
+  }
+
+  it("gives a searched URL server 30 seconds to start, the same server mounted plainly 8", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const remote = await startFakeHttpMcp({ tools: whopLikeCatalog(300), toolsDelayMs: 20_000 });
+    try {
+      const descriptor = mcpStdioServer({ type: "http", url: remote.url, headers: {} }, { directory: { name: "whop" } })!;
+      const server = { command: descriptor.command, args: descriptor.args, env: descriptor.env };
+      const searched = new StdioMcp({ ...server, directory: true });
+      clients.push(searched);
+      const listing = watch(searched.init().then(() => searched.listTools()));
+      await untilReal(() => remote.delayedToolsLists === 1);
+      await vi.advanceTimersByTimeAsync(20_000);
+      await untilReal(() => listing.done);
+      expect(listing.error).toBeUndefined();
+      expect(listing.value!.map((tool) => tool.name)).toEqual(["search_tools", "describe_tool", "call_tool"]);
+
+      const plain = new StdioMcp(server);
+      clients.push(plain);
+      const failing = watch(plain.init().then(() => plain.listTools()));
+      await untilReal(() => remote.delayedToolsLists === 2);
+      await vi.advanceTimersByTimeAsync(8_000);
+      await untilReal(() => failing.done);
+      expect(String(failing.error)).toMatch(/timed out/);
+    } finally {
+      vi.useRealTimers();
+      await remote.close();
+    }
+  });
+});
+
 describe("Pi MCP extension registration", () => {
   const scopedApi = (initial: string[]) => {
     let active = initial;
@@ -388,9 +431,9 @@ describe("Pi MCP extension registration", () => {
         const found = await f.tools[0].execute("search", { query: "create payments", limit: 20 }, undefined, undefined, { ui });
         const names = JSON.parse((found.content[0] as { text: string }).text).matches.map((match: { name: string }) => match.name);
         expect(names.every((name: string) => selected.includes(name))).toBe(true);
-        await f.tools[2].execute("selected", { name: "payments_list", arguments: {} }, undefined, undefined, { ui });
+        await f.tools[2].execute("selected", { name: "payments_list", arguments: { company_id: "biz_1" } }, undefined, undefined, { ui });
         expect(asked).toEqual(["Allow whop:payments_list?"]);
-        expect(remote.calls).toEqual([{ name: "payments_list", arguments: {} }]);
+        expect(remote.calls).toEqual([{ name: "payments_list", arguments: { company_id: "biz_1" } }]);
       } finally { await f.handlers.get("session_shutdown")?.(); }
     } finally { await remote.close(); }
   });

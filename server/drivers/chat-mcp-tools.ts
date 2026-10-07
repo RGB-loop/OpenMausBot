@@ -1,8 +1,6 @@
 // Per-turn MCP transport for the shared Chat Completions runtime. Approval is
 // owned by the caller; only registered, schema-validated calls reach this file.
-import { Ajv, type ValidateFunction } from "ajv";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import formats from "ajv-formats";
+import type { ValidateFunction } from "ajv";
 import { stripControlPlaneEnv } from "../config.ts";
 import type { SendTurnInput } from "../contracts.ts";
 import { augmentedPath } from "../env-path.ts";
@@ -10,7 +8,8 @@ import { killCliTree, spawnCli } from "../procs.ts";
 import { chatImage, type ChatImagePart } from "./chat-images.ts";
 import { CALL_TOOL, directoryCallTarget, isDirectoryTool } from "../mcp-directory.ts";
 import { mcpStdioServer } from "../mcp-gate-config.ts";
-import { remoteMcpSpec } from "../mcp-http.ts";
+import { REMOTE_MCP_STARTUP_MS, remoteMcpSpec } from "../mcp-http.ts";
+import { compileToolSchema } from "../mcp-schema-validator.ts";
 import { allowsTool, canUseMcpServer, parseToolScope, type ToolScope } from "../../shared/tool-scope.ts";
 
 export interface ChatToolDefinition {
@@ -187,8 +186,8 @@ class ChatMcpClient {
     }
   }
 
-  async tools(signal: AbortSignal, include: (tool: unknown) => boolean = () => true): Promise<unknown[]> {
-    const deadline = Date.now() + STARTUP_MS;
+  async tools(signal: AbortSignal, include: (tool: unknown) => boolean = () => true, startupMs = STARTUP_MS): Promise<unknown[]> {
+    const deadline = Date.now() + startupMs;
     const remaining = () => {
       if (Date.now() >= deadline) throw new Error("MCP startup timed out");
       return deadline - Date.now();
@@ -214,35 +213,6 @@ class ChatMcpClient {
     }
     throw new Error("MCP tools/list exceeded the pagination limit");
   }
-}
-
-// A schema is a contract, so conversion that drops constraints is not safe.
-// Ajv validates the same schema sent to the provider without coercing values,
-// applying defaults, removing fields, or fetching external references.
-const validatorOptions = {
-  strict: true, allErrors: false, coerceTypes: false, useDefaults: false,
-  removeAdditional: false, validateFormats: true, ownProperties: true, logger: false as const,
-  // These are style diagnostics, not unsupported validation keywords. Valid
-  // schemas may require undeclared names, use untyped composition branches,
-  // or describe an open tuple. Ajv still enforces every constraint.
-  strictRequired: false, strictTypes: false, strictTuples: false,
-};
-export function compileToolSchema(schema: Record<string, unknown>): ValidateFunction {
-  const dialect = schema.$schema;
-  if (dialect !== undefined && dialect !== "http://json-schema.org/draft-07/schema#" && dialect !== "https://json-schema.org/draft/2020-12/schema") {
-    throw new Error("MCP tool schema uses an unsupported dialect; use JSON Schema draft-07 or 2020-12");
-  }
-  // One compiler per schema also prevents external IDs from resolving against
-  // unrelated tools or retaining schemas after the turn has closed.
-  const compiler = dialect === "https://json-schema.org/draft/2020-12/schema"
-    ? new Ajv2020(validatorOptions) : new Ajv(validatorOptions);
-  // ajv-formats is CommonJS and exports the plugin as both module.exports
-  // and .default; the latter also matches its NodeNext declaration.
-  formats.default(compiler);
-  compiler.addFormat("uint32", { type: "number", validate: value => Number.isInteger(value) && value >= 0 && value <= 4294967295 });
-  compiler.addFormat("uint64", { type: "number", validate: value => Number.isSafeInteger(value) && value >= 0 });
-  try { return compiler.compile(schema); }
-  catch { throw new Error("MCP tool schema could not be validated; check its constraints, formats, and references"); }
 }
 
 function boundedText(value: string): string {
@@ -321,7 +291,9 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
       // the selection by the proxy, which checks call_tool's target as well.
       const include = (tool: unknown) => scope === undefined || (object(tool) && typeof tool.name === "string"
         && ((searchable.has(name) && isDirectoryTool(tool.name)) || allowsTool(scope, { kind: "mcp", server: name, name: tool.name })));
-      const tools = await client.tools(signal, include);
+      // A searched URL server answers over the internet: its initialize and
+      // whole tools/list get the URL budget; command servers keep theirs.
+      const tools = await client.tools(signal, include, searchable.has(name) ? REMOTE_MCP_STARTUP_MS : STARTUP_MS);
       return { name, client, builtInBrowser: descriptor === integrations?.browser, tools };
     }));
     for (const mount of mounts) {
@@ -360,18 +332,22 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
     if (closed || signal.aborted) throw new ChatToolSessionError("MCP session closed");
     const tool = registered.get(name);
     if (!tool) throw new Error("The requested tool was not advertised for this turn");
-    const excluded = (runs: string | null | undefined) => scope !== undefined && runs !== undefined
-      && (runs === null || !allowsTool(scope, { kind: "mcp", server: tool.server, name: runs }));
-    if (!(tool.searched && isDirectoryTool(tool.name)) && excluded(tool.name)) throw new Error("Tool selection excludes this tool");
+    const excluded = (runs: string | undefined) => scope !== undefined && runs !== undefined
+      && !allowsTool(scope, { kind: "mcp", server: tool.server, name: runs });
+    // A searched server's directory checks its own tools' arguments and
+    // answers a mistake with guidance: a wrong name or a malformed search
+    // ran nothing, and must not end the turn as a failed tool call.
+    const directory = tool.searched && isDirectoryTool(tool.name);
+    if (!directory && excluded(tool.name)) throw new Error("Tool selection excludes this tool");
     omitBlankDefaults(tool.builtInBrowser, tool.name, args);
-    if (!object(args) || !tool.schema(args)) throw new Error("Tool arguments do not match the advertised input schema; use its required fields and types");
+    if (!object(args) || (!directory && !tool.schema(args))) throw new Error("Tool arguments do not match the advertised input schema; use its required fields and types");
     if (tool.searched && excluded(target(tool, args))) throw new Error("Tool selection excludes this tool");
   };
   const view = (name: string, args: Record<string, unknown>): ChatToolCallView => {
     const tool = registered.get(name);
     const runs = tool ? target(tool, args) : name;
     if (runs === undefined) return { title: name, input: args, ask: false };
-    if (!tool?.searched || tool.name !== CALL_TOOL || typeof runs !== "string") return { title: name, input: args, ask: true };
+    if (!tool?.searched || tool.name !== CALL_TOOL) return { title: name, input: args, ask: true };
     return { title: chatToolName(tool.server, runs), input: object(args.arguments) ? args.arguments : {}, ask: true };
   };
   return {

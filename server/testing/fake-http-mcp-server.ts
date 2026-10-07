@@ -30,6 +30,14 @@ export interface FakeHttpMcpOptions {
   listChangedOnCall?: boolean;
   /** the server's own initialize instructions */
   instructions?: string;
+  /** answer tools/list in pages of this many tools, with nextCursor */
+  pageSize?: number;
+  /** with pageSize: hand out the same cursor again and again */
+  cursorLoop?: boolean;
+  /** during each tools/call, first send the client a request with this
+   * method (elicitation/create, sampling/createMessage…) and answer the call
+   * only after the client has replied to it */
+  askOnCall?: string;
 }
 
 export interface FakeHttpMcpTool {
@@ -48,6 +56,8 @@ export interface FakeHttpMcp {
   readonly toolsLists: number;
   /** replace the catalog later tools/list requests answer with */
   setTools(tools: FakeHttpMcpTool[]): void;
+  /** the client's replies to requests this server sent it */
+  replies: unknown[];
   close(): Promise<void>;
 }
 
@@ -68,6 +78,12 @@ export async function startFakeHttpMcp(options: FakeHttpMcpOptions = {}): Promis
   let delayedToolsLists = 0;
   let toolsLists = 0;
   let tools = options.tools;
+  const replies: unknown[] = [];
+  let replied: (() => void) | undefined;
+  const ask = () => {
+    const waiting = new Promise<void>((resolve) => { replied = resolve; });
+    return { waiting, frame: `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: "server-ask-1", method: options.askOnCall, params: {} })}\n\n` };
+  };
   const answerFor = (frame: { id?: unknown; method?: unknown; params?: unknown }) => {
     if (frame.method === "initialize") {
       return {
@@ -81,11 +97,16 @@ export async function startFakeHttpMcp(options: FakeHttpMcpOptions = {}): Promis
     }
     if (frame.method === "tools/list") {
       toolsLists += 1;
-      return {
-        jsonrpc: "2.0",
-        id: frame.id,
-        result: { tools: tools ?? [{ name: "read_notes", description: options.description ?? "Read saved notes" }] },
-      };
+      const all = tools ?? [{ name: "read_notes", description: options.description ?? "Read saved notes" }];
+      if (options.pageSize) {
+        const cursor = (frame.params as { cursor?: unknown } | undefined)?.cursor;
+        const start = typeof cursor === "string" && !options.cursorLoop ? Number(cursor.slice("page-".length)) : 0;
+        const end = start + options.pageSize;
+        return { jsonrpc: "2.0", id: frame.id, result: {
+          tools: all.slice(start, end), ...(end < all.length ? { nextCursor: options.cursorLoop ? "page-again" : `page-${end}` } : {}),
+        } };
+      }
+      return { jsonrpc: "2.0", id: frame.id, result: { tools: all } };
     }
     if (frame.method === "tools/call" && tools) {
       calls.push(frame.params);
@@ -116,6 +137,13 @@ export async function startFakeHttpMcp(options: FakeHttpMcpOptions = {}): Promis
         return;
       }
       const frame = JSON.parse((await readBody(req)) || "{}") as { id?: unknown; method?: unknown; params?: unknown };
+      // the client answering a request this server sent it
+      if (frame.method === undefined && frame.id !== undefined) {
+        replies.push(frame);
+        replied?.();
+        res.writeHead(202).end();
+        return;
+      }
       // hold the request open: the client's own timeout has to end it
       if (frame.method === "tools/list" && options.silentTools) return;
       if (frame.method === "tools/list" && options.toolsDelayMs) {
@@ -130,10 +158,23 @@ export async function startFakeHttpMcp(options: FakeHttpMcpOptions = {}): Promis
       }
       if (transport === "sse") {
         res.writeHead(202).end();
+        if (options.askOnCall && frame.method === "tools/call") {
+          const { waiting, frame: request } = ask();
+          for (const stream of streams) stream.write(request);
+          await waiting;
+        }
         for (const stream of streams) stream.write(`event: message\ndata: ${JSON.stringify(answer)}\n\n`);
         return;
       }
       const session = { "mcp-session-id": "fake-session" };
+      if (options.askOnCall && frame.method === "tools/call") {
+        const { waiting, frame: request } = ask();
+        res.writeHead(200, { ...session, "content-type": "text/event-stream" });
+        res.write(request);
+        await waiting;
+        res.end(`event: message\ndata: ${JSON.stringify(answer)}\n\n`);
+        return;
+      }
       if (options.listChangedOnCall && frame.method === "tools/call") {
         const changed = { jsonrpc: "2.0", method: "notifications/tools/list_changed" };
         res.writeHead(200, { ...session, "content-type": "text/event-stream" });
@@ -156,6 +197,7 @@ export async function startFakeHttpMcp(options: FakeHttpMcpOptions = {}): Promis
     calls,
     get delayedToolsLists() { return delayedToolsLists; },
     get toolsLists() { return toolsLists; },
+    replies,
     setTools: (next) => { tools = next; },
     close: () => new Promise<void>((resolve) => {
       server.closeAllConnections();

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { mkdtempSync } from "node:fs";
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, request as httpRequest, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -204,12 +204,12 @@ describe("remote MCP tool directory", () => {
   const catalog = whopLikeCatalog(300);
   const spec = (url: string) => ({ type: "http" as const, url, headers: { Authorization: "Bearer directory-fixture-token" } });
 
-  function start(descriptor: Descriptor) {
+  function start(descriptor: Descriptor, inherited: NodeJS.ProcessEnv = process.env) {
     frames = [];
     nextId = 1;
     arrived = () => {};
     child = spawn(descriptor.command, ["--experimental-strip-types", "--no-warnings", ...(descriptor.args ?? [])], {
-      stdio: "pipe", env: { ...process.env, ...descriptor.env },
+      stdio: "pipe", env: { ...inherited, ...descriptor.env },
     });
     createInterface({ input: child.stdout }).on("line", (line) => { frames.push(JSON.parse(line)); arrived(); });
   }
@@ -269,12 +269,66 @@ describe("remote MCP tool directory", () => {
       content: [{ type: "text", text: "paid" }], structuredContent: { echoed: { name: "payments_list", arguments: { company_id: "biz_1" } } },
     });
     expect(fake.calls).toEqual([{ name: "payments_list", arguments: { company_id: "biz_1" } }]);
+    // a miss is guidance the model recovers from, not a failed tool call
     const unknown = (await call(CALL_TOOL, { name: "payments_teleport", arguments: {} })).result;
-    expect(unknown.isError).toBe(true);
+    expect(unknown.isError).toBeUndefined();
     expect(unknown.content[0].text).toContain(SEARCH_TOOL);
     expect(fake.calls).toHaveLength(1);
     // one read of the catalog served the list, the search, the describe and both calls
     expect(fake.toolsLists).toBe(1);
+  });
+
+  it("checks call_tool's arguments against the tool's own schema before anything runs", async () => {
+    fake = await startFakeHttpMcp({ tools: [
+      ...catalog,
+      { name: "odd_schema", description: "A tool whose schema this validator cannot read.", inputSchema: { type: "object", properties: { id: { type: "string", format: "not-a-known-format" } } } },
+    ] });
+    start(mcpStdioServer(spec(fake.url), { directory: { name: "whop" } })!);
+    await initialize();
+    const misfit = (await call(CALL_TOOL, { name: "payments_list", arguments: { first: "ten", surprise: true } })).result;
+    expect(misfit.isError).toBeUndefined();
+    const advice = JSON.parse(misfit.content[0].text);
+    expect(advice.problems).toEqual(expect.arrayContaining([
+      "must have required property 'company_id'",
+      "must NOT have additional properties (surprise)",
+      "first: must be integer",
+    ]));
+    expect(advice.input).toContain("company_id: string");
+    expect(fake.calls).toEqual([]);
+    expect((await call(CALL_TOOL, { name: "payments_list", arguments: { company_id: "biz_1", first: 10 } })).result.content[0].text).toBe("remote execution recorded");
+    // a schema the validator cannot compile is the server's to enforce
+    expect((await call(CALL_TOOL, { name: "odd_schema", arguments: { id: 7 } })).result.content[0].text).toBe("remote execution recorded");
+    expect(fake.calls).toEqual([{ name: "payments_list", arguments: { company_id: "biz_1", first: 10 } }, { name: "odd_schema", arguments: { id: 7 } }]);
+  });
+
+  it("reads every page of a paginated catalog, once", async () => {
+    fake = await startFakeHttpMcp({ tools: catalog, pageSize: 40 });
+    start(mcpStdioServer(spec(fake.url), { directory: { name: "whop" } })!);
+    await initialize();
+    expect((await request("tools/list")).result.tools[0].description).toContain("300 tools");
+    const last = catalog.at(-1)!;
+    expect(json(await call(DESCRIBE_TOOL, { name: last.name })).inputSchema).toEqual(last.inputSchema);
+    expect(fake.toolsLists).toBe(8);
+  });
+
+  it("merges a small paginated catalog into one page", async () => {
+    const small = whopLikeCatalog(30);
+    fake = await startFakeHttpMcp({ tools: small, pageSize: 7 });
+    start(mcpStdioServer(spec(fake.url), { directory: { name: "whop" } })!);
+    await initialize();
+    expect((await request("tools/list")).result).toEqual({ tools: small });
+    expect((await request("tools/list", { cursor: "page-7" })).error?.code).toBe(-32602);
+  });
+
+  it.each([
+    ["a cursor that repeats", { pageSize: 10, cursorLoop: true }, 2],
+    ["more than a hundred pages", { pageSize: 1 }, 100],
+  ] as const)("refuses a catalog with %s", async (_case, paging, reads) => {
+    fake = await startFakeHttpMcp({ tools: whopLikeCatalog(150), ...paging });
+    start(mcpStdioServer(spec(fake.url), { directory: { name: "whop" } })!);
+    await initialize();
+    expect((await request("tools/list")).error).toEqual({ code: -32603, message: "Remote MCP request failed" });
+    expect(fake.toolsLists).toBe(reads);
   });
 
   it("passes a small catalog through unchanged", async () => {
@@ -327,7 +381,10 @@ describe("remote MCP tool directory", () => {
     // the gate refuses before the proxy or the server is reached
     const refused = await call(CALL_TOOL, { name: "payments_create", arguments: { company_id: "biz_1" } });
     expect(refused.error).toMatchObject({ code: -32602, message: expect.stringContaining("Tool selection excludes") });
-    expect((await call(CALL_TOOL, { arguments: {} })).error?.code).toBe(-32602);
+    // one naming no tool runs nothing: the directory answers it with guidance
+    const nameless = (await call(CALL_TOOL, { arguments: {} })).result;
+    expect(nameless.isError).toBeUndefined();
+    expect(nameless.content[0].text).toContain(SEARCH_TOOL);
     expect(fake.calls).toEqual([]);
     const described = await call(DESCRIBE_TOOL, { name: "payments_list" });
     expect(described.result.content[0].text.length).toBeGreaterThan(600);
@@ -343,7 +400,7 @@ describe("remote MCP tool directory", () => {
     await initialize();
     expect(json(await call(SEARCH_TOOL, { query: "zebras" })).matches).toEqual([]);
     fake.setTools([...catalog, { name: "zebras_list", description: "List zebras for a company.", inputSchema: { type: "object" } }]);
-    await call(CALL_TOOL, { name: "payments_list", arguments: {} });
+    await call(CALL_TOOL, { name: "payments_list", arguments: { company_id: "biz_1" } });
     await take((frame) => frame.method === "notifications/tools/list_changed");
     expect(json(await call(SEARCH_TOOL, { query: "zebras" })).matches.map((match: { name: string }) => match.name)).toEqual(["zebras_list"]);
     expect(fake.toolsLists).toBe(2);
@@ -359,6 +416,48 @@ describe("remote MCP tool directory", () => {
     start(descriptor);
     await initialize();
     expect((await request("tools/list")).result.tools).toHaveLength(3);
+  });
+
+  it("reaches the server through the person's HTTP proxy", async () => {
+    fake = await startFakeHttpMcp({ tools: catalog });
+    const forwarded: string[] = [];
+    const proxy = createServer((req, res) => {
+      forwarded.push(req.url ?? "");
+      const upstream = httpRequest(req.url!, { method: req.method, headers: req.headers }, (answer) => { res.writeHead(answer.statusCode ?? 502, answer.headers); answer.pipe(res); });
+      upstream.on("error", () => res.destroy());
+      req.pipe(upstream);
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    try {
+      const via = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+      const descriptor = mcpStdioServer(spec(fake.url), { directory: { name: "whop" }, sourceEnv: { HTTP_PROXY: via } })!;
+      // nothing from this machine's own proxy settings: only the descriptor's
+      start(descriptor, Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(https?_proxy|no_proxy|node_use_env_proxy)$/i.test(name))));
+      await initialize();
+      expect((await request("tools/list")).result.tools).toHaveLength(3);
+      expect(forwarded.length).toBeGreaterThan(0);
+      expect(forwarded.every((url) => url === fake!.url)).toBe(true);
+    } finally {
+      proxy.closeAllConnections();
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+    }
+  });
+
+  it("runs from the shipped bundle, schema checks included", async () => {
+    fake = await startFakeHttpMcp({ tools: catalog });
+    const scratch = mkdtempSync(join(tmpdir(), "omb-directory-bundle-"));
+    try {
+      await build({ entryPoints: [join(SERVER_ROOT, "mcp-remote-proxy.ts")], outdir: scratch, bundle: true, platform: "node", format: "esm", logLevel: "silent" });
+      const descriptor = mcpStdioServer(spec(fake.url), { directory: { name: "whop" } })!;
+      start({ ...descriptor, args: [join(scratch, "mcp-remote-proxy.js")] });
+      await initialize();
+      expect((await request("tools/list")).result.tools).toHaveLength(3);
+      const misfit = (await call(CALL_TOOL, { name: "payments_list", arguments: { first: "ten" } })).result;
+      expect(JSON.parse(misfit.content[0].text).problems).toContain("first: must be integer");
+      expect(fake.calls).toEqual([]);
+    } finally {
+      await removeTempDir(scratch);
+    }
   });
 
   it("refuses to start on tool directory settings it cannot read", async () => {

@@ -184,6 +184,29 @@ describe("a searched MCP catalog", () => {
   });
 });
 
+describe("a searched MCP catalog's misses", () => {
+  it("are guidance the model recovers from, so the turn still succeeds", async () => {
+    const remote = await startFakeHttpMcp({ tools: whopLikeCatalog(300) });
+    cleanups.push(() => remote.close());
+    const f = await fixture((_body, response, round) => {
+      if (round === 1) sse(response, [chunk({ content: null, tool_calls: [
+        toolCall("whop_describe_tool", '{"name":"payments_teleport"}', "call_unknown"),
+        { ...toolCall("whop_search_tools", '{"limit":"eight"}', "call_empty"), index: 1 },
+      ] }, "tool_calls")]);
+      else answer(response, "There is no such tool; I searched for the right one instead.");
+    });
+    await f.start({ integrations: { custom: { whop: { type: "http", url: remote.url, headers: {} } } } });
+    expect(await f.completed()).toMatchObject({ ok: true });
+    expect(f.recorder.events.some((event) => event.type === "request.opened")).toBe(false);
+    const results = f.requests[1].messages.filter((message) => message.role === "tool").map((message) => JSON.parse(message.content as string));
+    expect(results).toEqual([
+      { ok: true, result: expect.stringContaining("No tool named") },
+      { ok: true, result: expect.stringContaining("search_tools needs") },
+    ]);
+    expect(remote.calls).toEqual([]);
+  });
+});
+
 describe("optional built-in question compatibility", () => {
   const unsupported = { error: { message: "This model does not support tools." } };
   it.each([

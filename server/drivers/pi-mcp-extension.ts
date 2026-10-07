@@ -16,6 +16,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { allowsTool, canUseMcpServer, parseToolScope, type ToolIdentity } from "../../shared/tool-scope.ts";
 import { CALL_TOOL, directoryCallTarget, isDirectoryTool } from "../mcp-directory.ts";
+import { REMOTE_MCP_STARTUP_MS } from "../mcp-http.ts";
 
 interface McpServerDef {
   command: string;
@@ -101,8 +102,13 @@ export class StdioMcp {
   private nextId = 1;
   private disposed = false;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  /** A searched URL server answers over the internet: initialize and its
+   * whole tools/list share one longer budget. Others keep 8 s for each. */
+  private readonly remote: boolean;
+  private listDeadline: number | undefined;
 
   constructor(def: McpServerDef) {
+    this.remote = def.directory === true;
     this.child = spawn(def.command, def.args ?? [], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...def.env },
@@ -236,6 +242,8 @@ export class StdioMcp {
   }
 
   async init(): Promise<void> {
+    const budget = this.remote ? REMOTE_MCP_STARTUP_MS : MCP_STARTUP_TIMEOUT_MS;
+    this.listDeadline = this.remote ? Date.now() + budget : undefined;
     await this.call(
       "initialize",
       {
@@ -243,7 +251,7 @@ export class StdioMcp {
         capabilities: {},
         clientInfo: { name: "openmausbot-pi", version: "1" },
       },
-      MCP_STARTUP_TIMEOUT_MS,
+      budget,
     );
     this.notify("notifications/initialized");
   }
@@ -251,7 +259,7 @@ export class StdioMcp {
   async listTools(): Promise<McpTool[]> {
     const tools: McpTool[] = [];
     const seenCursors = new Set<string>();
-    const deadline = Date.now() + MCP_STARTUP_TIMEOUT_MS;
+    const deadline = this.listDeadline ?? Date.now() + MCP_STARTUP_TIMEOUT_MS;
     let cursor: string | undefined;
     for (let page = 0; page < MCP_MAX_LIST_PAGES; page += 1) {
       const remainingMs = Math.max(1, deadline - Date.now());
@@ -669,7 +677,7 @@ export default async function (pi: PiExtensionApi): Promise<void> {
             // The upstream tool this call runs: call_tool's target on a
             // searched server, nothing for its catalog reads.
             const target = directoryTool ? directoryCallTarget(toolName, params) : toolName;
-            if (scope !== undefined && (enforcementFailed || target === null
+            if (scope !== undefined && (enforcementFailed
               || (target !== undefined && !allowsTool(scope, { kind: "mcp", server: serverName, name: target })))) {
               throw new Error("Tool selection excludes this tool");
             }
@@ -678,7 +686,7 @@ export default async function (pi: PiExtensionApi): Promise<void> {
             // mirrors ACP's session/request_permission and Codex's elicitation.
             // Searching a catalog runs no tool, so it asks nothing.
             if (gated && target !== undefined) {
-              const shown = typeof target === "string" ? target : toolName;
+              const shown = target;
               const detail = summarizeParams(directoryTool && toolName === CALL_TOOL ? (params as { arguments?: unknown } | undefined)?.arguments : params);
               const allowed = await ctx.ui.confirm(
                 def.scope === "local-computer" ? `Allow ${shown} on your computer?` : `Allow ${serverName}:${shown}?`,

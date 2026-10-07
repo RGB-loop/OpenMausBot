@@ -47,6 +47,24 @@ describe("tool directory configuration", () => {
     expect(proxy.args!.join(" ")).not.toContain("disposable-remote-token");
   });
 
+  it("hands the proxy the network settings its engine might strip, and makes fetch use them", () => {
+    const sourceEnv = { HTTPS_PROXY: "http://proxy.example.test:3128", no_proxy: "localhost", NODE_EXTRA_CA_CERTS: "/etc/corp-ca.pem",
+      SSL_CERT_FILE: "/etc/ssl/cert.pem", PATH: "/usr/bin", UNRELATED_SECRET: "not-for-the-proxy" };
+    const proxy = mcpStdioServer(remote, { sourceEnv })!;
+    expect(proxy.env).toMatchObject({ HTTPS_PROXY: "http://proxy.example.test:3128", no_proxy: "localhost", NODE_EXTRA_CA_CERTS: "/etc/corp-ca.pem", SSL_CERT_FILE: "/etc/ssl/cert.pem", NODE_USE_ENV_PROXY: "1" });
+    expect(proxy.env).not.toHaveProperty("UNRELATED_SECRET");
+    expect(proxy.env).not.toHaveProperty("PATH");
+    // certificates alone need no proxy switch
+    expect(mcpStdioServer(remote, { sourceEnv: { NODE_EXTRA_CA_CERTS: "/etc/corp-ca.pem" } })!.env).toEqual({ NODE_EXTRA_CA_CERTS: "/etc/corp-ca.pem", OMB_REMOTE_MCP_SERVER: JSON.stringify(remote) });
+    // beside a private record they stay plain names, which a shared environment can pass on
+    const record = `OMB_REMOTE_MCP_CONFIG_${"0".repeat(64)}`;
+    expect(Object.keys(mcpStdioServer(remote, { sourceEnv, configEnvName: record })!.env!).sort()).toEqual(
+      ["HTTPS_PROXY", "NODE_EXTRA_CA_CERTS", "NODE_USE_ENV_PROXY", "SSL_CERT_FILE", "no_proxy", record].sort());
+    // and a gated proxy carries them in its upstream descriptor
+    const gated = gateServer({ name: "whop", server: remote, threadId: "disposable-thread", budget: 0, toolScope: { allow: [] }, sourceEnv })!;
+    expect(JSON.parse(gated.env.OMB_GATE_UPSTREAM).env).toMatchObject({ HTTPS_PROXY: "http://proxy.example.test:3128", NODE_USE_ENV_PROXY: "1" });
+  });
+
   it("refuses settings the proxy could not read", () => {
     expect(() => mcpStdioServer(remote, { configEnvName: "OMB_REMOTE_MCP_SERVER" })).toThrow(/private MCP proxy/);
     expect(() => mcpStdioServer(remote, { directory: { name: "Not A Name" } })).toThrow(/tool search/);

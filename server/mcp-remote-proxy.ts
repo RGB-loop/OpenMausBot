@@ -11,11 +11,13 @@
 import { createInterface } from "node:readline";
 import { allowsTool, parseToolScope, type ToolScope } from "../shared/tool-scope.ts";
 
+import type { ValidateFunction } from "ajv";
 import {
   CALL_TOOL,
   DESCRIBE_TOOL,
   INSTRUCTIONS_CHARS,
   SEARCH_TOOL,
+  SELECTION_EXCLUDES,
   ToolDirectory,
   bounded,
   searchesCatalog,
@@ -23,6 +25,7 @@ import {
   type DirectoryContext,
 } from "./mcp-directory.ts";
 import { MAX_REMOTE_MCP_BYTES, REMOTE_MCP_CONFIG_ENV, RemoteMcpClient, remoteMcpSpec } from "./mcp-http.ts";
+import { compileToolSchema, schemaProblems } from "./mcp-schema-validator.ts";
 
 type Json = Record<string, unknown>;
 function isRecord(value: unknown): value is Json {
@@ -149,6 +152,20 @@ async function readCatalog(): Promise<CatalogTool[]> {
   throw new Error("tool catalog has too many pages");
 }
 
+/** One validator per tool definition, or null for a schema this validator
+ * cannot read: the server still enforces its own schema, so such a tool's
+ * arguments go through unchecked rather than being refused. */
+const validators = new WeakMap<CatalogTool, ValidateFunction | null>();
+function argumentProblems(tool: CatalogTool, args: Json): string[] | undefined {
+  let validate = validators.get(tool);
+  if (validate === undefined) {
+    try { validate = isRecord(tool.inputSchema) ? compileToolSchema(tool.inputSchema, { allErrors: true }) : null; }
+    catch { validate = null; }
+    validators.set(tool, validate);
+  }
+  return !validate || validate(args) ? undefined : schemaProblems(validate.errors);
+}
+
 /** Settles with `promise`, or rejects when this request's own signal fires. */
 function raced<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(new Error("aborted"));
@@ -164,7 +181,10 @@ function currentCatalog(signal: AbortSignal): Promise<Catalog> {
   if (!loading) {
     const started = generation;
     const read = readCatalog().then((upstream) => {
-      const tools = new ToolDirectory(upstream.filter((tool) => allowed(tool.name)));
+      const tools = new ToolDirectory(upstream.filter((tool) => allowed(tool.name)), {
+        withheld: upstream.filter((tool) => !allowed(tool.name)).map((tool) => tool.name),
+        check: argumentProblems,
+      });
       searching ||= searchesCatalog(tools.tools);
       const built = { tools, searched: searching };
       if (generation === started) catalog = built;
@@ -186,13 +206,13 @@ async function callTool(params: unknown, signal: AbortSignal): Promise<unknown> 
   if (params.name === DESCRIBE_TOOL) return (await currentCatalog(signal)).tools.describe(params.arguments);
   if (params.name === CALL_TOOL) {
     const call = (await currentCatalog(signal)).tools.call(params.arguments);
-    if ("refusal" in call) return call.refusal;
+    if ("answer" in call) return call.answer;
     // The catalog holds only selected tools; checked again all the same.
-    if (!allowed(call.name)) throw new Refusal(-32602, "Tool selection excludes this tool. Check the bot's Access settings.");
+    if (!allowed(call.name)) return { content: [{ type: "text", text: SELECTION_EXCLUDES }], isError: true };
     return client.request("tools/call", { ...(isRecord(params._meta) ? { _meta: params._meta } : {}), name: call.name, arguments: call.arguments }, signal);
   }
   // A tool listed while the catalog was small stays callable by its name.
-  if (!allowed(params.name)) throw new Refusal(-32602, "Tool selection excludes this tool. Check the bot's Access settings.");
+  if (!allowed(params.name)) throw new Refusal(-32602, SELECTION_EXCLUDES);
   return client.request("tools/call", params, signal);
 }
 

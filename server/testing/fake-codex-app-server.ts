@@ -108,6 +108,11 @@ for (let index = 0; process.env.FAKE_CODEX_MCP_OVERRIDES === "1" && index < proc
   const match = process.argv[index - 1] === "-c" ? /^mcp_servers\.([^.]+)\.([^.]+)=(.*)$/.exec(process.argv[index]!) : null;
   if (match) (mcpOverrides[match[1]!] ??= {})[match[2]!] = JSON.parse(match[3]!);
 }
+// The last `-c shell_environment_policy.exclude=[…]` override on the command line.
+const shellExcludeOverride = process.argv.reduce<unknown>((found, arg, index) => {
+  const match = process.argv[index - 1] === "-c" ? /^shell_environment_policy\.exclude=(.*)$/.exec(arg) : null;
+  return match ? JSON.parse(match[1]!) : found;
+}, undefined);
 let developerInstructions = "";
 let resumedThread: string | null = null;
 let decision: unknown = null;
@@ -372,6 +377,9 @@ process.stdin.on("data", (chunk) => {
               developer_instructions: process.env.FAKE_CODEX_INSTRUCTIONS ?? null,
               ...(process.env.FAKE_CODEX_SHELL_ENVIRONMENT_POLICY ? {
                 shell_environment_policy: JSON.parse(process.env.FAKE_CODEX_SHELL_ENVIRONMENT_POLICY),
+              } : shellExcludeOverride ? {
+                // a `-c shell_environment_policy.exclude=[…]` override, as reported
+                shell_environment_policy: { exclude: shellExcludeOverride },
               } : {}),
               // `-c features.<name>=<bool>` overrides, as the real config/read reports them.
               features: Object.fromEntries(process.argv.flatMap((arg, index) => {

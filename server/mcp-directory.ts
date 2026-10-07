@@ -16,11 +16,16 @@
 // model has found never needs activating and cannot drop out of reach again.
 //
 // Ranking is Okapi BM25 over each tool's name, its area (the name's first
-// word) and its description, with light English stemming. Input schemas are
-// the server's own untrusted text and are never ranked on: one tool could
-// otherwise stuff its field descriptions to win every search. BM25 sits
-// behind ToolRanker so a decision model can rank later without the proxy
-// changing.
+// word), its description and, at half weight, the words of its input schema:
+// property names, enum values and property descriptions. Servers put meaning
+// there: Whop's revenue figures are a `metric` enum value of stats_get, not a
+// word of any description that answers a revenue question. One proxy serves
+// one server, which already writes every name and description it is ranked
+// on, so its schemas are no less trustworthy; they weigh less only because
+// they say less about what a tool is for. Words are Unicode letters and
+// digits; English stop words drop out and ASCII words are lightly stemmed.
+// BM25 sits behind ToolRanker so a decision model can rank later without
+// the proxy changing.
 //
 // Pure: no I/O. The remote proxy runs the directory; the gate and the drivers
 // use directoryCallTarget to see which tool a call really runs, for tool
@@ -78,14 +83,14 @@ export function isDirectoryTool(name: unknown): boolean {
 }
 
 /** Which upstream tool one call on a searched server runs, for tool scopes
- * and approval cards: the tool itself, call_tool's target, `null` when
- * call_tool names none, or undefined for search_tools and describe_tool,
- * which only read the catalog. */
-export function directoryCallTarget(name: string, args: unknown): string | null | undefined {
+ * and approval cards: the tool itself or call_tool's target. Undefined when
+ * nothing upstream runs: search_tools and describe_tool only read the
+ * catalog, and a call_tool naming no tool is answered by the directory. */
+export function directoryCallTarget(name: string, args: unknown): string | undefined {
   if (name === SEARCH_TOOL || name === DESCRIBE_TOOL) return undefined;
   if (name !== CALL_TOOL) return name;
   const target = isRecord(args) ? args.name : undefined;
-  return typeof target === "string" && target.trim() ? target : null;
+  return typeof target === "string" && target.trim() ? target : undefined;
 }
 
 /** Whether this catalog is searched rather than listed. A tool that shares a
@@ -120,9 +125,16 @@ export function oneLine(text: unknown, maxChars: number): string {
 
 // ── ranking ─────────────────────────────────────────────────────────────
 
+/** Words a request is phrased with rather than about: "how much revenue
+ * this week" asks about revenue and a week. */
 const STOP_WORDS = new Set([
-  "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "its", "me", "my",
-  "of", "on", "or", "our", "that", "the", "this", "to", "us", "we", "with", "you", "your",
+  "a", "about", "all", "am", "an", "and", "any", "are", "as", "at", "be", "been", "being", "but", "by",
+  "can", "could", "did", "do", "does", "doing", "for", "from", "had", "has", "have", "having", "he", "her",
+  "here", "him", "his", "how", "i", "if", "in", "into", "is", "it", "its", "just", "like", "many", "me",
+  "might", "more", "most", "much", "must", "my", "need", "no", "not", "of", "on", "or", "our", "ours",
+  "please", "she", "should", "so", "some", "than", "that", "the", "their", "them", "then", "there",
+  "these", "they", "this", "those", "to", "too", "us", "very", "want", "was", "we", "were", "what", "when",
+  "where", "which", "while", "who", "whom", "whose", "why", "will", "with", "would", "you", "your", "yours",
 ]);
 
 /** Light English stemming, applied to queries and tools alike: plurals,
@@ -141,16 +153,47 @@ export function stem(word: string): string {
   return w;
 }
 
-/** The stemmed words of a name or a sentence: camelCase and snake_case
- * split, lowercased, stop words and single letters dropped. */
+/** The words of a name or a sentence: runs of Unicode letters and digits,
+ * camelCase and snake_case split, lowercased, stop words and single ASCII
+ * letters dropped, ASCII words stemmed. */
 export function terms(text: string): string[] {
   return text
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([\p{Ll}\p{N}])(\p{Lu})/gu, "$1 $2")
+    .replace(/(\p{Lu}+)(\p{Lu}\p{Ll})/gu, "$1 $2")
     .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((word) => word.length > 1 && !STOP_WORDS.has(word))
-    .map(stem);
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word && (word.length > 1 || !/^[a-z0-9]$/.test(word)) && !STOP_WORDS.has(word))
+    .map((word) => /^[a-z0-9]+$/.test(word) ? stem(word) : word);
+}
+
+/** Characters of one tool's input schema that are ranked on. */
+const SCHEMA_TEXT_CHARS = 4_000;
+const SUBSCHEMA_LISTS = ["anyOf", "oneOf", "allOf", "prefixItems"] as const;
+
+/** The words a tool's input schema carries: property names, enum values
+ * and descriptions, nested ones too, bounded. */
+export function schemaText(schema: unknown, maxChars = SCHEMA_TEXT_CHARS): string {
+  let text = "";
+  const add = (part: unknown) => {
+    if ((typeof part === "string" || typeof part === "number") && text.length < maxChars) text = `${text} ${cut(String(part), maxChars - text.length)}`;
+  };
+  const visit = (node: unknown, depth: number) => {
+    if (!isRecord(node) || depth > 8 || text.length >= maxChars) return;
+    add(node.description);
+    if (Array.isArray(node.enum)) for (const value of node.enum) add(value);
+    add(node.const);
+    if (isRecord(node.properties)) {
+      for (const [key, child] of Object.entries(node.properties)) {
+        add(key);
+        visit(child, depth + 1);
+      }
+    }
+    visit(node.items, depth + 1);
+    visit(node.additionalProperties, depth + 1);
+    for (const list of SUBSCHEMA_LISTS) if (Array.isArray(node[list])) for (const child of node[list]) visit(child, depth + 1);
+  };
+  visit(schema, 0);
+  return text.trim();
 }
 
 /** A tool's area: the first word of its name (`payments` for
@@ -168,48 +211,62 @@ export type ToolRanker = (query: string, tools: readonly CatalogTool[], limit: n
 
 const K1 = 1.2;
 const B = 0.75;
-/** A word of the name counts this many times a word of the description. */
-const NAME_WEIGHT = 2;
+/** What each part of a tool counts for against a word of its description.
+ * The name carries its area word twice; the schema says least about what a
+ * tool is for, so its words count half. */
+const FIELD_WEIGHTS = { name: 2, text: 1, schema: 0.5 } as const;
+type Field = keyof typeof FIELD_WEIGHTS;
+const FIELDS = Object.keys(FIELD_WEIGHTS) as Field[];
 
-function frequencies(tool: CatalogTool): { counts: Map<string, number>; length: number } {
+function counted(text: string): { counts: Map<string, number>; length: number } {
   const counts = new Map<string, number>();
-  let length = 0;
-  const add = (text: unknown, weight: number) => {
-    if (typeof text !== "string") return;
-    for (const term of terms(text)) {
-      counts.set(term, (counts.get(term) ?? 0) + weight);
-      length += weight;
-    }
+  const words = terms(text);
+  for (const word of words) counts.set(word, (counts.get(word) ?? 0) + 1);
+  return { counts, length: words.length };
+}
+
+/** A tool's words, field by field: each field is length-normalized on its
+ * own (BM25F), so a long schema cannot dilute a match in the name. */
+function fields(tool: CatalogTool): Record<Field, { counts: Map<string, number>; length: number }> {
+  const text = [tool.title, tool.description].filter((part): part is string => typeof part === "string").join(" ");
+  return {
+    name: counted(`${tool.name} ${toolArea(tool.name)}`),
+    text: counted(text),
+    schema: counted(schemaText(tool.inputSchema)),
   };
-  add(tool.name, NAME_WEIGHT);
-  add(toolArea(tool.name), 1);
-  add(tool.title, 1);
-  add(tool.description, 1);
-  return { counts, length };
 }
 
 function byName(a: CatalogTool, b: CatalogTool): number {
   return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
 
-/** Okapi BM25 over names, areas and descriptions; never input schemas. An
- * exact tool name always ranks first; equal scores are ordered by name. */
+/** Okapi BM25 (in its multi-field form, BM25F) over names, areas,
+ * descriptions and, at half weight, input schemas. An exact tool name
+ * always ranks first; equal scores are ordered by name. */
 export const bm25Ranker: ToolRanker = (query, tools, limit) => {
   const wanted = [...new Set(terms(query))];
   const exact = query.trim().toLowerCase();
-  const docs = tools.map((tool) => ({ tool, ...frequencies(tool) }));
-  const average = docs.reduce((sum, doc) => sum + doc.length, 0) / Math.max(1, docs.length) || 1;
+  const docs = tools.map((tool) => ({ tool, fields: fields(tool) }));
+  const average = Object.fromEntries(FIELDS.map((field) =>
+    [field, docs.reduce((sum, doc) => sum + doc.fields[field].length, 0) / Math.max(1, docs.length) || 1])) as Record<Field, number>;
   const df = new Map<string, number>();
-  for (const doc of docs) for (const term of wanted) if (doc.counts.has(term)) df.set(term, (df.get(term) ?? 0) + 1);
+  for (const doc of docs) {
+    for (const term of wanted) if (FIELDS.some((field) => doc.fields[field].counts.has(term))) df.set(term, (df.get(term) ?? 0) + 1);
+  }
   const scored: Array<{ tool: CatalogTool; score: number }> = [];
   for (const doc of docs) {
     let score = doc.tool.name.toLowerCase() === exact ? 1_000 : 0;
     for (const term of wanted) {
-      const tf = doc.counts.get(term);
+      let tf = 0;
+      for (const field of FIELDS) {
+        const { counts, length } = doc.fields[field];
+        const count = counts.get(term);
+        if (count) tf += (FIELD_WEIGHTS[field] * count) / (1 - B + (B * length) / average[field]);
+      }
       if (!tf) continue;
       const n = df.get(term) ?? 0;
       const idf = Math.log(1 + (docs.length - n + 0.5) / (n + 0.5));
-      score += (idf * tf * (K1 + 1)) / (tf + K1 * (1 - B + (B * doc.length) / average));
+      score += (idf * tf * (K1 + 1)) / (tf + K1);
     }
     if (score > 0) scored.push({ tool: doc.tool, score });
   }
@@ -308,15 +365,81 @@ export function areaSummary(tools: readonly CatalogTool[], maxChars = AREAS_CHAR
   return shown < sorted.length ? `${text}${shown ? ", " : ""}… and ${sorted.length - shown} more` : text;
 }
 
-function result(payload: unknown, isError = false): DirectoryResult {
-  return { content: [{ type: "text", text: JSON.stringify(payload) }], ...(isError ? { isError: true as const } : {}) };
+function result(payload: unknown): DirectoryResult {
+  return { content: [{ type: "text", text: JSON.stringify(payload) }] };
 }
 
-function refusal(text: string): DirectoryResult {
-  return { content: [{ type: "text", text }], isError: true };
+/** What a model reads and recovers from: a name it got wrong, a search with
+ * no words, arguments that do not fit. Never an error: a chat turn whose
+ * tool call failed ends as failed, and these ran nothing. */
+function guidance(text: string): DirectoryResult {
+  return { content: [{ type: "text", text }] };
+}
+
+/** The bot's tool selection leaves the tool out. That stays a refusal, as
+ * the same call to a listed tool would be. */
+export const SELECTION_EXCLUDES = "Tool selection excludes this tool. Check the bot's Access settings.";
+function excluded(): DirectoryResult {
+  return { content: [{ type: "text", text: SELECTION_EXCLUDES }], isError: true };
 }
 
 const HOW_TO_SEARCH = `Find tool names with ${SEARCH_TOOL}({ "query": "what you want to do" }), then run one with ${CALL_TOOL}({ "name": "...", "arguments": {...} }).`;
+
+/** describe_tool answers in at most this many UTF-8 bytes. Chat engines and
+ * Pi keep 50 KiB of one tool result, and a schema cut in half is not a
+ * schema, so a bigger one is compacted instead, saying so. */
+export const DESCRIBE_BYTES = 40_000;
+const encoder = new TextEncoder();
+const byteLength = (text: string) => encoder.encode(text).length;
+
+// Where a schema holds further schemas (JSON Schema draft-07 and 2020-12).
+const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
+const SCHEMA_LISTS = new Set(["anyOf", "oneOf", "allOf", "prefixItems"]);
+const SCHEMA_CHILDREN = new Set(["items", "additionalProperties", "not", "if", "then", "else", "contains", "propertyNames", "unevaluatedItems", "unevaluatedProperties"]);
+
+/** A copy of a schema without some annotation keywords, from `depth` down
+ * (0 is the root, 1 its properties). Property names are never touched. */
+function withoutKeywords(schema: unknown, keywords: ReadonlySet<string>, depth: number, at = 0): unknown {
+  if (Array.isArray(schema)) return schema.map((child) => withoutKeywords(child, keywords, depth, at));
+  if (!isRecord(schema)) return schema;
+  const copy: Json = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (at >= depth && keywords.has(key)) continue;
+    if (SCHEMA_MAPS.has(key) && isRecord(value)) {
+      copy[key] = Object.fromEntries(Object.entries(value).map(([name, child]) => [name, withoutKeywords(child, keywords, depth, at + 1)]));
+    } else if (SCHEMA_LISTS.has(key) || SCHEMA_CHILDREN.has(key)) {
+      copy[key] = withoutKeywords(value, keywords, depth, at + 1);
+    } else {
+      copy[key] = value;
+    }
+  }
+  return copy;
+}
+
+/** Every field of a schema as a path, its type and whether it is required:
+ * what is left of a schema too big to show. */
+function schemaFields(schema: unknown): Array<{ path: string; type: string; required?: true }> {
+  const fields: Array<{ path: string; type: string; required?: true }> = [];
+  const visit = (node: unknown, prefix: string, depth: number) => {
+    if (!isRecord(node) || !isRecord(node.properties) || depth > 6) return;
+    const required = new Set(Array.isArray(node.required) ? node.required : []);
+    for (const [key, child] of Object.entries(node.properties)) {
+      const path = prefix ? `${prefix}.${key}` : key;
+      fields.push({ path, type: typeText(child, 0), ...(required.has(key) ? { required: true as const } : {}) });
+      if (isRecord(child)) visit(isRecord(child.items) ? child.items : child, isRecord(child.items) ? `${path}[]` : path, depth + 1);
+    }
+  };
+  visit(schema, "", 0);
+  return fields;
+}
+
+const ANNOTATIONS = new Set(["examples", "example", "default", "$comment"]);
+const ANNOTATIONS_AND_WORDS = new Set([...ANNOTATIONS, "description", "title"]);
+const COMPACTIONS = [
+  { note: "Examples and defaults were left out of the schema to fit.", keywords: ANNOTATIONS, depth: 0 },
+  { note: "Examples, defaults and the descriptions of nested fields were left out of the schema to fit.", keywords: ANNOTATIONS_AND_WORDS, depth: 2 },
+  { note: "Examples, defaults and every field description were left out of the schema to fit.", keywords: ANNOTATIONS_AND_WORDS, depth: 0 },
+];
 
 /** Who the server is, for the directory tools' own descriptions. */
 export interface DirectoryContext {
@@ -328,17 +451,31 @@ export interface DirectoryContext {
   instructions?: string;
 }
 
+export interface DirectoryOptions {
+  ranker?: ToolRanker;
+  /** Tools the server has that the bot's selection leaves out: naming one
+   * is refused as the selection's, not answered as a miss. */
+  withheld?: Iterable<string>;
+  /** What is wrong with a call's arguments against the tool's input schema,
+   * if anything. */
+  check?: (tool: CatalogTool, args: Json) => readonly string[] | undefined;
+}
+
 /** One searched catalog: the tools the bot may use, and the three tools
  * that stand in for them. Duplicate names keep their first definition. */
 export class ToolDirectory {
   readonly tools: readonly CatalogTool[];
   private readonly index = new Map<string, CatalogTool>();
   private readonly ranker: ToolRanker;
+  private readonly withheld: ReadonlySet<string>;
+  private readonly check: DirectoryOptions["check"];
 
-  constructor(tools: readonly CatalogTool[], ranker: ToolRanker = bm25Ranker) {
+  constructor(tools: readonly CatalogTool[], options: DirectoryOptions = {}) {
     for (const tool of tools) if (!this.index.has(tool.name)) this.index.set(tool.name, tool);
     this.tools = [...this.index.values()];
-    this.ranker = ranker;
+    this.ranker = options.ranker ?? bm25Ranker;
+    this.withheld = new Set([...(options.withheld ?? [])].filter((name) => !this.index.has(name)));
+    this.check = options.check;
   }
 
   has(name: string): boolean {
@@ -397,7 +534,7 @@ export class ToolDirectory {
     const query = isRecord(args) && typeof args.query === "string" ? args.query.trim() : "";
     const rawLimit = isRecord(args) ? args.limit : undefined;
     if (!query || query.length > QUERY_CHARS || (rawLimit !== undefined && (typeof rawLimit !== "number" || !Number.isFinite(rawLimit)))) {
-      return refusal(`${SEARCH_TOOL} needs { "query": string, "limit"?: number from 1 to ${SEARCH_LIMIT_MAX} }.`);
+      return guidance(`${SEARCH_TOOL} needs { "query": "a few words", "limit"?: a number from 1 to ${SEARCH_LIMIT_MAX} }. Say what you want to do, for example "list payments".`);
     }
     const limit = Math.min(SEARCH_LIMIT_MAX, Math.max(1, Math.floor((rawLimit as number | undefined) ?? SEARCH_LIMIT_DEFAULT)));
     const found = await this.ranker(query, this.tools, limit);
@@ -415,30 +552,60 @@ export class ToolDirectory {
       : { matches, next: `Nothing matched. Try other words, or one of these areas: ${areaSummary(this.tools, 600)}.` });
   }
 
-  /** describe_tool: one tool's exact definition. */
+  /** describe_tool: one tool's exact definition, compacted only when it
+   * would not fit DESCRIBE_BYTES. */
   describe(args: unknown): DirectoryResult {
     const name = isRecord(args) ? args.name : undefined;
-    if (typeof name !== "string") return refusal(`${DESCRIBE_TOOL} needs { "name": string }. ${HOW_TO_SEARCH}`);
+    if (typeof name !== "string") return guidance(`${DESCRIBE_TOOL} needs { "name": "the tool's exact name" }. ${HOW_TO_SEARCH}`);
+    if (this.withheld.has(name)) return excluded();
     const tool = this.index.get(name);
-    if (!tool) return refusal(unknownTool(name));
-    return result({
+    if (!tool) return guidance(unknownTool(name));
+    const definition = {
       name: tool.name,
       ...(tool.title !== undefined ? { title: tool.title } : {}),
       description: tool.description ?? "",
       inputSchema: tool.inputSchema ?? { type: "object" },
       ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
+    };
+    const whole = JSON.stringify(definition);
+    if (byteLength(whole) <= DESCRIBE_BYTES) return guidance(whole);
+    for (const step of COMPACTIONS) {
+      const compacted = JSON.stringify({ ...definition, inputSchema: withoutKeywords(definition.inputSchema, step.keywords, step.depth), compacted: step.note });
+      if (byteLength(compacted) <= DESCRIBE_BYTES) return guidance(compacted);
+    }
+    // Last resort: the fields alone, as many as fit, and how many did not.
+    const fields = schemaFields(definition.inputSchema);
+    const outline = (kept: number) => JSON.stringify({
+      name: tool.name,
+      description: oneLine(tool.description, 4_000),
+      fields: fields.slice(0, kept),
+      ...(kept < fields.length ? { moreFields: fields.length - kept } : {}),
+      compacted: "This schema is too large to show whole: these are its fields, their types and which are required.",
     });
+    let kept = fields.length;
+    while (kept > 0 && byteLength(outline(kept)) > DESCRIBE_BYTES) kept = Math.floor(kept * 0.9);
+    return guidance(outline(kept));
   }
 
-  /** call_tool: the upstream `tools/call` to send, or the refusal to answer
-   * instead when the name is not in this catalog. */
-  call(args: unknown): { name: string; arguments: Json } | { refusal: DirectoryResult } {
+  /** call_tool: the upstream `tools/call` to send, or the answer to give
+   * instead (a miss, arguments that do not fit, or the selection's refusal). */
+  call(args: unknown): { name: string; arguments: Json } | { answer: DirectoryResult } {
     const name = isRecord(args) ? args.name : undefined;
     const input = isRecord(args) ? args.arguments : undefined;
     if (typeof name !== "string" || (input !== undefined && !isRecord(input))) {
-      return { refusal: refusal(`${CALL_TOOL} needs { "name": string, "arguments"?: object }. ${HOW_TO_SEARCH}`) };
+      return { answer: guidance(`${CALL_TOOL} needs { "name": "the tool's exact name", "arguments"?: {...} }. ${HOW_TO_SEARCH}`) };
     }
-    if (!this.index.has(name)) return { refusal: refusal(unknownTool(name)) };
+    if (this.withheld.has(name)) return { answer: excluded() };
+    const tool = this.index.get(name);
+    if (!tool) return { answer: guidance(unknownTool(name)) };
+    const problems = this.check?.(tool, input ?? {});
+    if (problems?.length) {
+      return { answer: result({
+        problems,
+        input: inputSignature(tool.inputSchema),
+        next: `Nothing was run. Call ${CALL_TOOL} again with arguments that fit, or ask ${DESCRIBE_TOOL} for the exact schema.`,
+      }) };
+    }
     return { name, arguments: input ?? {} };
   }
 }

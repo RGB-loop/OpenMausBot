@@ -183,7 +183,18 @@ A server counts as big when it has more than 40 tools, or more than about
 searching on its own). Smaller servers are listed as they always were. There
 is nothing to configure. A bot's tool selection still holds: it can find and
 run only the tools you chose for it, and an approval card names the tool
-being run, never the search.
+being run, never the search. A big URL server also gets 30 seconds to start
+on a bot's turn, like the Test button gives it; command servers keep eight.
+
+Known limits:
+
+- **Codex with a ChatGPT plan, on Approve for me, asks about every call.**
+  Codex lets a server's read-only tools run without asking, but here every
+  tool runs through the one tool that runs them all, which cannot carry each
+  tool's own read-only hint. Each Whop call shows a card, naming the tool.
+- **Command servers are not searched yet.** Only URL servers are. A command
+  server with hundreds of tools is still listed whole, and API-model bots
+  refuse more than 128 tools in one turn.
 
 ### Which engines reach which servers
 

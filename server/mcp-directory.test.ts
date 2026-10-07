@@ -2,25 +2,28 @@ import { describe, expect, it } from "vitest";
 
 import {
   CALL_TOOL,
+  DESCRIBE_BYTES,
   DESCRIBE_TOOL,
   LISTED_CHARS_MAX,
   LISTED_TOOLS_MAX,
   SEARCH_LIMIT_DEFAULT,
   SEARCH_LIMIT_MAX,
   SEARCH_TOOL,
+  SELECTION_EXCLUDES,
   SIGNATURE_CHARS,
   ToolDirectory,
   areaSummary,
   bm25Ranker,
   directoryCallTarget,
   inputSignature,
+  schemaText,
   searchesCatalog,
   stem,
   terms,
   type CatalogTool,
   type DirectoryResult,
 } from "./mcp-directory.ts";
-import { whopLikeCatalog } from "./testing/whop-like-catalog.ts";
+import { parameterHeavyCatalog, whopLikeCatalog } from "./testing/whop-like-catalog.ts";
 
 const catalog = whopLikeCatalog(300);
 const text = (result: DirectoryResult) => result.content[0].text;
@@ -50,8 +53,9 @@ describe("when a catalog is searched", () => {
     expect(directoryCallTarget(SEARCH_TOOL, { query: "x" })).toBeUndefined();
     expect(directoryCallTarget(DESCRIBE_TOOL, { name: "payments_list" })).toBeUndefined();
     expect(directoryCallTarget(CALL_TOOL, { name: "payments_list", arguments: {} })).toBe("payments_list");
-    expect(directoryCallTarget(CALL_TOOL, { arguments: {} })).toBeNull();
-    expect(directoryCallTarget(CALL_TOOL, { name: " " })).toBeNull();
+    // naming no tool runs nothing: the directory answers it
+    expect(directoryCallTarget(CALL_TOOL, { arguments: {} })).toBeUndefined();
+    expect(directoryCallTarget(CALL_TOOL, { name: " " })).toBeUndefined();
     expect(directoryCallTarget("payments_list", {})).toBe("payments_list");
   });
 });
@@ -64,6 +68,18 @@ describe("BM25 ranking", () => {
     expect(stem("companies")).toBe(stem("company"));
     expect(stem("statuses")).toBe(stem("status"));
     expect(terms("listPayments for the company_id")).toEqual(["list", "payment", "company", "id"]);
+  });
+
+  it("drops the words a request is phrased with, and keeps words in any script", () => {
+    expect(terms("Which payments failed this month? How much revenue is there?")).toEqual(["payment", "fail", "month", stem("revenue")]);
+    // Unicode letters and digits are words; only ASCII ones are stemmed
+    expect(terms("Список платежей · 支払い 一覧 · facturaciónMensual")).toEqual(["список", "платежей", "支払い", "一覧", "facturación", "mensual"]);
+  });
+
+  it("finds tools described in other scripts", async () => {
+    const tools = [tool("platezhi_list", "Список платежей компании."), tool("shiharai_list", "支払い 一覧"), tool("payments_list", "Lists payments.")];
+    expect((await bm25Ranker("платежей", tools, 3)).map((entry) => entry.name)).toEqual(["platezhi_list"]);
+    expect((await bm25Ranker("支払い", tools, 3)).map((entry) => entry.name)).toEqual(["shiharai_list"]);
   });
 
   it("ranks payments_list first for \"list payments\" among Whop-like tools", async () => {
@@ -80,11 +96,43 @@ describe("BM25 ranking", () => {
     expect((await bm25Ranker("notes", twins, 2)).map((entry) => entry.name)).toEqual(["alpha_read", "zeta_read"]);
   });
 
-  it("never ranks on a tool's input schema, which is the server's own text", async () => {
-    const stuffed = tool("widgets_get", "Get one widget.", {
-      type: "object", properties: { id: { type: "string", description: "list payments ".repeat(200) } },
-    });
-    expect(await bm25Ranker("list payments", [stuffed], 8)).toEqual([]);
+  it("counts a schema's words, at less weight than a name's or a description's", async () => {
+    const said = tool("widgets_report", "Reports revenue for widgets.");
+    const offered = tool("gizmos_get", "Gets one gizmo.", { type: "object", properties: { metric: { type: "string", enum: ["revenue", "units"] } } });
+    expect((await bm25Ranker("revenue", [offered, said], 8)).map((entry) => entry.name)).toEqual(["widgets_report", "gizmos_get"]);
+    // a long schema dilutes only its own words, never a match in the name
+    const long = tool("payments_list", "Lists payments.", { type: "object", properties: Object.fromEntries(Array.from({ length: 60 }, (_, index) => [`field_${index}`, { type: "string", description: "A filter." }])) });
+    const short = tool("payments_archive", "Archives payments so they leave lists.");
+    expect((await bm25Ranker("list payments", [short, long], 8))[0].name).toBe("payments_list");
+  });
+
+  it("reads property names, enum values and descriptions from a schema, bounded", () => {
+    expect(schemaText({ type: "object", description: "Root.", properties: {
+      metric: { type: "string", description: "What to total.", enum: ["net_revenue", "fees"] },
+      filters: { type: "object", properties: { status: { type: "array", items: { enum: ["failed"] } } } },
+      choice: { anyOf: [{ const: "this_week" }] },
+    } })).toBe("Root. metric What to total. net_revenue fees filters status failed choice this_week");
+    expect(schemaText({ type: "object", properties: { big: { description: "x".repeat(10_000) } } }).length).toBeLessThanOrEqual(4_001);
+  });
+});
+
+describe("ranking a catalog that puts its meaning in parameters", () => {
+  const catalog = parameterHeavyCatalog();
+  const rank = async (query: string, limit = 8) => (await bm25Ranker(query, catalog, limit)).map((entry) => entry.name);
+
+  it("finds a plain request's tool first", async () => {
+    expect((await rank("list my products"))[0]).toBe("products_list");
+  });
+
+  it("finds revenue among the tools that offer it as a metric", async () => {
+    const top = await rank("how much revenue this week", 3);
+    expect(top.some((name) => name === "stats_get" || name === "ledgers_report")).toBe(true);
+  });
+
+  it("finds payments_list for failed payments, and nothing for the question's own words", async () => {
+    expect(await rank("which payments failed this month", 5)).toContain("payments_list");
+    // "which" is a stop word, so the tool that "says which account it uses" stays out
+    expect(await rank("which payments failed this month", 20)).not.toContain("connection_status");
   });
 });
 
@@ -158,40 +206,119 @@ describe("the directory's three tools", () => {
     expect(only.description).not.toContain("\n");
   });
 
-  it("says how to go on when nothing matches, and refuses a missing query", async () => {
+  it("says how to go on when nothing matches, and answers a bad search with guidance, not an error", async () => {
     const empty = JSON.parse(text(await directory.search({ query: "zzz" })));
     expect(empty).toMatchObject({ matches: [] });
     expect(empty.next).toContain("payments (8)");
     for (const args of [{}, { query: "" }, { query: "x", limit: "8" }, undefined]) {
-      expect(await directory.search(args)).toMatchObject({ isError: true });
+      const answer = await directory.search(args);
+      expect(answer.isError).toBeUndefined();
+      expect(text(answer)).toContain('"query"');
     }
   });
 
-  it("describes one tool exactly", () => {
+  it("describes one tool exactly, and guides past a name it does not have", () => {
     const original = catalog.find((entry) => entry.name === "payments_list")!;
     expect(JSON.parse(text(directory.describe({ name: "payments_list" })))).toEqual({
       name: "payments_list", description: original.description, inputSchema: original.inputSchema, annotations: original.annotations,
     });
-    const unknown = directory.describe({ name: "payments_teleport" });
-    expect(unknown.isError).toBe(true);
-    expect(text(unknown)).toContain(SEARCH_TOOL);
+    for (const args of [{ name: "payments_teleport" }, {}]) {
+      const miss = directory.describe(args);
+      expect(miss.isError).toBeUndefined();
+      expect(text(miss)).toContain(SEARCH_TOOL);
+    }
   });
 
-  it("plans call_tool only for a tool in the catalog", () => {
+  it("plans call_tool only for a tool in the catalog, and guides past anything else", () => {
     expect(directory.call({ name: "payments_list", arguments: { company_id: "biz_1" } })).toEqual({ name: "payments_list", arguments: { company_id: "biz_1" } });
     expect(directory.call({ name: "payments_list" })).toEqual({ name: "payments_list", arguments: {} });
     for (const args of [{ name: "payments_teleport" }, { arguments: {} }, { name: "payments_list", arguments: [] }]) {
       const planned = directory.call(args);
-      expect("refusal" in planned && planned.refusal.isError).toBe(true);
-      expect("refusal" in planned && text(planned.refusal)).toContain(SEARCH_TOOL);
+      if (!("answer" in planned)) throw new Error("expected an answer instead of a call");
+      expect(planned.answer.isError).toBeUndefined();
+      expect(text(planned.answer)).toContain(SEARCH_TOOL);
     }
   });
 
+  it("refuses a tool the selection leaves out, as an error", () => {
+    const narrowed = new ToolDirectory(catalog.filter((entry) => entry.name !== "payments_create"), { withheld: ["payments_create"] });
+    for (const answer of [narrowed.describe({ name: "payments_create" }), (narrowed.call({ name: "payments_create" }) as { answer: DirectoryResult }).answer]) {
+      expect(answer).toEqual({ content: [{ type: "text", text: SELECTION_EXCLUDES }], isError: true });
+    }
+  });
+
+  it("answers arguments that do not fit with their problems and the tool's input, running nothing", () => {
+    const checked = new ToolDirectory(catalog, { check: (_tool, args) => typeof args.company_id === "string" ? undefined : ["must have required property 'company_id'"] });
+    expect(checked.call({ name: "payments_list", arguments: { company_id: "biz_1" } })).toEqual({ name: "payments_list", arguments: { company_id: "biz_1" } });
+    const planned = checked.call({ name: "payments_list", arguments: { first: 5 } });
+    if (!("answer" in planned)) throw new Error("expected an answer instead of a call");
+    expect(planned.answer.isError).toBeUndefined();
+    expect(JSON.parse(text(planned.answer))).toMatchObject({
+      problems: ["must have required property 'company_id'"],
+      input: expect.stringContaining("company_id: string"),
+      next: expect.stringContaining("Nothing was run"),
+    });
+  });
+
   it("ranks through a replaceable seam, and only ever returns catalog tools", async () => {
-    const reversed = new ToolDirectory(catalog, (_query, tools, limit) => [...tools].reverse().slice(0, limit));
+    const reversed = new ToolDirectory(catalog, { ranker: (_query, tools, limit) => [...tools].reverse().slice(0, limit) });
     expect((await matches(reversed, { query: "anything", limit: 2 })).map((entry) => entry.name)).toEqual(
       [...catalog].reverse().slice(0, 2).map((entry) => entry.name));
-    const forged = new ToolDirectory(catalog, async () => [tool("payments_list", "forged")]);
+    const forged = new ToolDirectory(catalog, { ranker: async () => [tool("payments_list", "forged")] });
     expect(await matches(forged, { query: "x" })).toEqual([]);
+  });
+});
+
+describe("describe_tool on a huge schema", () => {
+  const bytes = (value: string) => Buffer.byteLength(value);
+  const groups = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"];
+  /** About 51 KB, like Whop's largest tool: nested objects whose fields
+   * carry long descriptions, examples and defaults. */
+  const described = () => {
+    const leaf = (index: number) => ({ type: "string", description: `Filter ${index}: ${"narrows the results to matching records. ".repeat(5)}`, examples: ["first example", "second example"], default: "first example" });
+    const group = (name: string) => ({ type: "object", description: `${name} filters.`, properties: Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`${name}_${index}`, leaf(index)])) });
+    return { type: "object", required: ["company_id"], properties: { company_id: { type: "string", description: "The company." }, ...Object.fromEntries(groups.map((name) => [name, group(name)])) } };
+  };
+  /** Too big even without a single description: hundreds of enum fields. */
+  const structural = (perGroup: number) => {
+    const leaf = { type: "string", enum: ["one", "two", "three", "four", "five", "six"] };
+    const group = (name: string) => ({ type: "object", properties: Object.fromEntries(Array.from({ length: perGroup }, (_, index) => [`${name}_${index}`, leaf])) });
+    return { type: "object", required: ["company_id"], properties: { company_id: { type: "string" }, ...Object.fromEntries(groups.map((name) => [name, group(name)])) } };
+  };
+  const describeOne = (schema: unknown) => new ToolDirectory([tool("orders_search", "Searches orders.", schema)]).describe({ name: "orders_search" });
+
+  it("leaves a schema that fits exactly as it is", () => {
+    const small = tool("small_get", "Gets one.", { type: "object", properties: { id: { type: "string", examples: ["x"] } } });
+    expect(JSON.parse(text(new ToolDirectory([small]).describe({ name: "small_get" })))).not.toHaveProperty("compacted");
+  });
+
+  it("compacts a 51 KB schema step by step, valid JSON within the budget", () => {
+    const schema = described();
+    expect(bytes(JSON.stringify(schema))).toBeGreaterThan(50_000);
+    const answer = describeOne(schema);
+    expect(answer.isError).toBeUndefined();
+    expect(bytes(text(answer))).toBeLessThanOrEqual(DESCRIBE_BYTES);
+    const parsed = JSON.parse(text(answer));
+    expect(parsed.compacted).toMatch(/nested fields were left out/);
+    // the schema's real shape survives; the top level keeps its words
+    expect(parsed.inputSchema.required).toEqual(["company_id"]);
+    expect(parsed.inputSchema.properties.company_id.description).toBe("The company.");
+    expect(parsed.inputSchema.properties.alpha.description).toBe("alpha filters.");
+    expect(Object.keys(parsed.inputSchema.properties.alpha.properties)).toHaveLength(20);
+    expect(parsed.inputSchema.properties.alpha.properties.alpha_0).toEqual({ type: "string" });
+  });
+
+  it("falls back to field paths, types and required, then counts what it leaves out", () => {
+    for (const perGroup of [80, 400]) {
+      const answer = describeOne(structural(perGroup));
+      expect(bytes(text(answer))).toBeLessThanOrEqual(DESCRIBE_BYTES);
+      const parsed = JSON.parse(text(answer));
+      expect(parsed.inputSchema).toBeUndefined();
+      expect(parsed.compacted).toMatch(/too large to show whole/);
+      expect(parsed.fields[0]).toEqual({ path: "company_id", type: "string", required: true });
+      expect(parsed.fields).toContainEqual({ path: "alpha.alpha_0", type: '"one" | "two" | "three" | "four" | "five" | "six"' });
+      expect(parsed.fields.length + (parsed.moreFields ?? 0)).toBe(1 + groups.length * (perGroup + 1));
+    }
+    expect(JSON.parse(text(describeOne(structural(400)))).moreFields).toBeGreaterThan(0);
   });
 });

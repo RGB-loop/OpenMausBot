@@ -30,6 +30,11 @@ export class McpHttpError extends Error {
 export const MAX_REMOTE_MCP_BYTES = 32 * 1024 * 1024;
 const PROTOCOL_VERSION = "2025-06-18";
 
+/** How long a URL server may take to initialize and list its tools, over
+ * the internet: the Test button's budget, and a searched server's at a bot's
+ * startup. Command servers start on this computer and keep 8 s. */
+export const REMOTE_MCP_STARTUP_MS = 30_000;
+
 /** The private environment record one remote-proxy mount reads its settings
  * from, when several mounts share one environment (Codex): only this name
  * reaches argv, never the address or a header value. */
@@ -393,9 +398,26 @@ export class RemoteMcpClient {
     });
   }
 
+  /** Server messages that are not this client's responses: notifications
+   * go to the caller; a request (elicitation, sampling, roots…) is refused at
+   * once, since this client offers none of them. Left unanswered, a server
+   * waiting on one holds its own reply until the call times out. */
   private deliverNotifications(parsed: JsonRpcMessage | JsonRpcMessage[] | null): void {
     for (const message of Array.isArray(parsed) ? parsed : parsed ? [parsed] : []) {
-      if (typeof message.method === "string" && message.id === undefined) this.onNotification?.(message);
+      if (typeof message.method !== "string") continue;
+      if (message.id === undefined) this.onNotification?.(message);
+      else if (typeof message.id === "string" || typeof message.id === "number") void this.refuseRequest(message.id);
+    }
+  }
+
+  private async refuseRequest(id: string | number): Promise<void> {
+    if (this.closed) return;
+    const frame = { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not supported by this client" } };
+    try {
+      if (this.target.type === "sse") await this.ssePost(frame, AbortSignal.timeout(10_000));
+      else drain(await this.post(this.target.url, frame, AbortSignal.timeout(10_000)));
+    } catch {
+      // the server's own timeout ends what it was waiting for
     }
   }
 }

@@ -61,8 +61,10 @@ const SPILL_HINT = gateEnv.OMB_GATE_SPILL_HINT === "1";
 /** The upstream is the remote proxy with its tool directory on
  * (mcp-directory.ts). Its search_tools and describe_tool only read a catalog
  * the proxy has already narrowed to this selection, so they pass, untrimmed:
- * a schema cut short is no schema. call_tool is checked, and trimmed, as the
- * tool it runs. The proxy guarantees those three names mean nothing else. */
+ * the directory bounds them itself, and a schema cut short is no schema.
+ * call_tool is checked, and trimmed, as the tool it runs; one naming no tool
+ * runs nothing and is answered by the directory. The proxy guarantees those
+ * three names mean nothing else. */
 const DIRECTORY = gateEnv.OMB_GATE_DIRECTORY === "1";
 
 function fail(message: string): never {
@@ -241,9 +243,9 @@ child.stderr.pipe(process.stderr);
 
 type Pending = { kind: "call"; tool: string; trim: boolean } | { kind: "list" | "other" };
 
-/** The upstream tool one call runs: its own name, call_tool's target, null
- * when call_tool names none, or undefined for a directory read. */
-function callTarget(name: string, args: unknown): string | null | undefined {
+/** The upstream tool one call runs: its own name or call_tool's target, or
+ * undefined when the directory answers the call itself. */
+function callTarget(name: string, args: unknown): string | undefined {
   return DIRECTORY ? directoryCallTarget(name, args) : name;
 }
 /** JSON-RPC string and numeric IDs are separate, even when their text is equal. */
@@ -269,7 +271,6 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       return rejectRequest(message.id, -32602, "Invalid tool call");
     }
     const target = callTarget(params.name, params.arguments);
-    if (target === null) return rejectRequest(message.id, -32602, "Invalid tool call");
     if (target !== undefined && !allowsTool(scope, { kind: "mcp", server: NAME, name: target })) {
       return rejectRequest(message.id, -32602, "Tool selection excludes this tool. Check the bot's Access settings.");
     }
@@ -282,7 +283,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     if (message.method === "tools/call") {
       const name = typeof params?.name === "string" ? params.name : "tool";
       const target = callTarget(name, params?.arguments);
-      pending.set(id, { kind: "call", tool: typeof target === "string" ? target : name, trim: target !== undefined });
+      pending.set(id, { kind: "call", tool: target ?? name, trim: target !== undefined });
     } else if (scope) {
       pending.set(id, { kind: message.method === "tools/list" ? "list" : "other" });
     }

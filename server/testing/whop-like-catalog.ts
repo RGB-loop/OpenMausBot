@@ -75,3 +75,81 @@ export function whopLikeCatalog(count = 300, padding = 0): FakeHttpMcpTool[] {
   }
   return tools.slice(0, count);
 }
+
+// ── a catalog that puts its meaning in parameters ──
+//
+// Modeled on what the live Whop server showed (synthetic text, none of it
+// Whop's own): many descriptions say little ("Lists payments, newest
+// first."), while the words a person asks with live in parameters: a
+// `metric` enum offering revenue, a status enum offering failed, a period
+// enum offering this_week. "revenue" is in the descriptions of only three
+// unrelated tools, and the tools that answer revenue questions name it only
+// in their schemas.
+
+const id = (what: string) => ({ type: "string", description: `The ${what}'s ID.` });
+const page = {
+  first: { type: "integer", minimum: 1, maximum: 100, description: "How many to return, at most 100." },
+  after: { type: "string", description: "Cursor from the previous page." },
+};
+const company = { company_id: id("company") };
+const obj = (properties: Record<string, unknown>, required: string[] = ["company_id"]) => ({ type: "object", properties, required, additionalProperties: false });
+const range = {
+  created_after: { type: "string", format: "date-time", description: "Only include records created at or after this time." },
+  created_before: { type: "string", format: "date-time", description: "Only include records created before this time." },
+};
+const t = (name: string, description: string, inputSchema: Record<string, unknown>, readOnly = true): FakeHttpMcpTool =>
+  ({ name, description, inputSchema, annotations: readOnly ? { readOnlyHint: true } : {} });
+
+/** About sixty tools in the shape above, plus generic filler areas. */
+export function parameterHeavyCatalog(): FakeHttpMcpTool[] {
+  const tools: FakeHttpMcpTool[] = [
+    t("products_list", "Lists products, newest first.", obj({ ...company, visibility: { type: "string", enum: ["visible", "hidden", "archived"] }, ...page })),
+    t("products_get", "Retrieves one product.", obj({ ...company, id: id("product") }, ["company_id", "id"])),
+    t("products_create", "Creates a product.", obj({ ...company, title: { type: "string" }, price: { type: "number" } }), false),
+    t("products_update", "Updates a product.", obj({ ...company, id: id("product"), title: { type: "string" } }, ["company_id", "id"]), false),
+    t("payments_list", "Lists payments, newest first.", obj({
+      ...company,
+      statuses: { type: "array", description: "Only payments in these statuses.", items: { type: "string", enum: ["draft", "open", "paid", "pending", "failed", "refunded", "uncollectible", "void"] } },
+      product_ids: { type: "array", items: { type: "string" }, description: "Only payments for these products." },
+      ...range, ...page,
+    })),
+    t("payments_get", "Retrieves one payment by its ID.", obj({ ...company, id: id("payment") }, ["company_id", "id"])),
+    t("payments_retry", "Retries a failed payment.", obj({ ...company, id: id("payment") }, ["company_id", "id"]), false),
+    t("payments_refund", "Refunds a payment, in full or in part.", obj({ ...company, id: id("payment"), amount: { type: "number" } }, ["company_id", "id"]), false),
+    t("payments_void", "Voids a payment that has not settled yet.", obj({ ...company, id: id("payment") }, ["company_id", "id"]), false),
+    t("accounts_retry_ads_payment", "Retries the failed payment for an ad account's balance.", obj({ ...company, account_id: id("ad account") }), false),
+    t("accounts_update-fees", "Changes the fee settings on an account.", obj({ ...company, fee_bps: { type: "integer" } }), false),
+    t("partners_leaderboard", "Ranks a company's partners by the revenue they referred this month.", obj({ ...company, ...page })),
+    t("members_list", "Lists members with their total spend and lifetime revenue.", obj({ ...company, ...page })),
+    t("ad-conversion-value-rules_create", "Creates a rule for the conversion value (revenue) an ad event reports.", obj({ ...company, event: { type: "string" }, value: { type: "number" } }), false),
+    t("stats_get", "Returns one metric for a company over a time window.", obj({
+      ...company,
+      metric: { type: "string", description: "Which number to compute, for example net_revenue.", enum: ["gross_revenue", "net_revenue", "new_members", "churned_members", "mrr", "arr", "refunds"] },
+      interval: { type: "string", enum: ["day", "week", "month", "year"] },
+      from: { type: "string", format: "date-time" }, to: { type: "string", format: "date-time" },
+    }, ["company_id", "metric"])),
+    t("ledgers_report", "Summarizes ledger activity for a company.", obj({
+      ...company,
+      metric: { type: "string", description: "What to total: revenue, fees or payouts.", enum: ["revenue", "fees", "payouts", "balance"] },
+      period: { type: "string", enum: ["today", "this_week", "last_week", "this_month", "last_month"] },
+    })),
+    t("ledgers_breakdown", "Breaks ledger totals down by product or plan.", obj({
+      ...company, group_by: { type: "string", enum: ["product", "plan"] }, metric: { type: "string", enum: ["revenue", "fees"] },
+    })),
+    t("ledgers_list", "Lists ledger entries.", obj({ ...company, kind: { type: "string", enum: ["revenue", "fee", "payout", "refund", "adjustment"] }, ...range, ...page })),
+    t("payouts_list", "Lists payouts to the company's bank account.", obj({ ...company, ...range, ...page })),
+    t("payouts_create", "Starts a payout of the available balance.", obj({ ...company, amount: { type: "number" } }), false),
+    t("refunds_list", "Lists refunds.", obj({ ...company, ...range, ...page })),
+    t("disputes_list", "Lists disputes opened against payments.", obj({ ...company, status: { type: "string", enum: ["open", "won", "lost"] }, ...page })),
+    t("connection_status", "Checks that the connection works and says which account it uses.", { type: "object", properties: {} }),
+  ];
+  const filler = ["memberships", "invoices", "plans", "experiences", "webhooks", "courses", "chats", "forums", "leads", "shipments", "reviews", "coupons", "teams"];
+  for (const area of filler) {
+    tools.push(
+      t(`${area}_list`, `Lists ${area}, newest first.`, obj({ ...company, ...page })),
+      t(`${area}_get`, `Retrieves one of the ${area} by its ID.`, obj({ ...company, id: id(area) }, ["company_id", "id"])),
+      t(`${area}_create`, `Creates ${area}.`, obj({ ...company, fields: { type: "object", additionalProperties: true } }), false),
+    );
+  }
+  return tools;
+}

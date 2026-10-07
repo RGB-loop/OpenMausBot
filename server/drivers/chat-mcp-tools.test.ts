@@ -330,7 +330,16 @@ describe("Chat MCP tool directory", () => {
       expect(session.view("whop_call_tool", args)).toEqual({ title: "whop_payments_list", input: { company_id: "biz_1" }, ask: true });
       await expect(session.execute("whop_call_tool", args, controller.signal)).resolves.toMatchObject({ ok: true, text: "remote execution recorded" });
       expect(remote.calls).toEqual([{ name: "payments_list", arguments: { company_id: "biz_1" } }]);
-      await expect(session.execute("whop_call_tool", { arguments: {} }, controller.signal)).rejects.toThrow("input schema");
+      // a mistake the directory answers with guidance runs nothing and fails nothing
+      const nameless = await session.execute("whop_call_tool", { arguments: {} }, controller.signal);
+      expect(nameless).toMatchObject({ ok: true, text: expect.stringContaining("search_tools") });
+      expect(session.view("whop_call_tool", { arguments: {} }).ask).toBe(false);
+      const misfit = await session.execute("whop_call_tool", { name: "payments_list", arguments: { first: "ten" } }, controller.signal);
+      expect(misfit.ok).toBe(true);
+      expect(JSON.parse(misfit.text).problems).toContain("must have required property 'company_id'");
+      const unknown = await session.execute("whop_describe_tool", { name: "payments_teleport" }, controller.signal);
+      expect(unknown).toMatchObject({ ok: true, text: expect.stringContaining("search_tools") });
+      expect(remote.calls).toHaveLength(1);
     } finally { await remote.close(); }
   });
 
@@ -345,8 +354,8 @@ describe("Chat MCP tool directory", () => {
       expect(() => session.validate("whop_call_tool", { name: "payments_create", arguments: {} })).toThrow("Tool selection excludes this tool");
       await expect(session.execute("whop_call_tool", { name: "payments_create", arguments: {} }, controller.signal)).rejects.toThrow("Tool selection excludes this tool");
       expect(remote.calls).toEqual([]);
-      await expect(session.execute("whop_call_tool", { name: "payments_list", arguments: {} }, controller.signal)).resolves.toMatchObject({ ok: true });
-      expect(remote.calls).toEqual([{ name: "payments_list", arguments: {} }]);
+      await expect(session.execute("whop_call_tool", { name: "payments_list", arguments: { company_id: "biz_1" } }, controller.signal)).resolves.toMatchObject({ ok: true });
+      expect(remote.calls).toEqual([{ name: "payments_list", arguments: { company_id: "biz_1" } }]);
     } finally { await remote.close(); }
   });
 
@@ -359,6 +368,68 @@ describe("Chat MCP tool directory", () => {
       expect(session.definitions.map((tool) => tool.function.name)).toEqual(whopLikeCatalog(5).map((tool) => `whop_${tool.name.replace("-", "_")}`));
       expect(session.view("whop_payments_list", { company_id: "biz_1" })).toEqual({ title: "whop_payments_list", input: { company_id: "biz_1" }, ask: true });
     } finally { await remote.close(); }
+  });
+});
+
+describe("Chat MCP startup budgets", () => {
+  /** Runs fake time forward in small steps until `condition` holds, so
+   * real I/O and the faked clock both make progress. */
+  /** Lets real I/O run, the faked clock standing still, until `condition`. */
+  async function untilReal(condition: () => boolean): Promise<void> {
+    const started = Date.now();
+    while (!condition() && Date.now() - started < 15_000) await new Promise((resolve) => setImmediate(resolve));
+    expect(condition()).toBe(true);
+  }
+  /** Once a deadline has passed: steps the faked clock too, for cleanup
+   * that polls on a timer, but by at most `budgetMs` in all, pausing in
+   * real time between ticks so a stopping process can exit. */
+  async function settleWithin(budgetMs: number, condition: () => boolean): Promise<void> {
+    for (let spent = 0; !condition() && spent < budgetMs; spent += 25) {
+      const until = Date.now() + 20;
+      while (Date.now() < until) await new Promise((resolve) => setImmediate(resolve));
+      await vi.advanceTimersByTimeAsync(25);
+    }
+    expect(condition()).toBe(true);
+  }
+  function watch<T>(pending: Promise<T>) {
+    const state: { done: boolean; value?: T; error?: unknown } = { done: false };
+    void pending.then((value) => { state.done = true; state.value = value; }, (error: unknown) => { state.done = true; state.error = error; });
+    return state;
+  }
+
+  it("gives a searched URL server 30 seconds to list its tools", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const remote = await startFakeHttpMcp({ tools: whopLikeCatalog(300), toolsDelayMs: 20_000 });
+    const controller = new AbortController(); controllers.push(controller);
+    try {
+      const mounting = watch(mountChatTools({ custom: { whop: { type: "http", url: remote.url, headers: {} } } }, controller.signal));
+      await untilReal(() => remote.delayedToolsLists === 1);
+      // well past the 8 seconds a command server gets
+      await vi.advanceTimersByTimeAsync(20_000);
+      await untilReal(() => mounting.done);
+      expect(mounting.error).toBeUndefined();
+      sessions.push(mounting.value!);
+      expect(mounting.value!.definitions).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+      await remote.close();
+    }
+  });
+
+  it("still gives a command server 8 seconds", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const f = fixture(`if (message.method === "tools/list") return;`);
+      const mounting = watch(f.mount());
+      const listed = () => { try { return f.read().calls.some((call) => call.method === "tools/list"); } catch { return false; } };
+      await untilReal(listed);
+      await vi.advanceTimersByTimeAsync(7_900);
+      expect(mounting.done).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
+      // stopped at 8 seconds: well short of the 30 a URL server gets
+      await settleWithin(1_000, () => mounting.done);
+      expect(String(mounting.error)).toMatch(/timed out/);
+    } finally { vi.useRealTimers(); }
   });
 });
 

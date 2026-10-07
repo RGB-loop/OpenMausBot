@@ -4,7 +4,7 @@ import {
   stripWorkspaceCredentialEnv,
 } from "./config.ts";
 import { createLineSplitter } from "./mcp-bridge.ts";
-import { MAX_REMOTE_MCP_BYTES, McpHttpError, RemoteMcpClient } from "./mcp-http.ts";
+import { MAX_REMOTE_MCP_BYTES, McpHttpError, REMOTE_MCP_STARTUP_MS, RemoteMcpClient } from "./mcp-http.ts";
 import { discoverMcpAuth } from "./mcp-oauth-discovery.ts";
 import { isRemoteMcpServer, type StoredMcpServer, type StoredRemoteMcpServer, type StoredStdioMcpServer } from "./mcp-registry.ts";
 import { killCliTree, spawnCli } from "./procs.ts";
@@ -27,11 +27,10 @@ const MAX_STDOUT_BYTES = MAX_REMOTE_MCP_BYTES;
 const MAX_TOOLS = 100;
 /** A command starts on this computer and answers fast. */
 export const STDIO_PROBE_TIMEOUT_MS = 8_000;
-/** A URL server answers over the internet, and initialize + tools/list for
- * an account with many businesses (Whop, admin scope) can take well over
- * 8 seconds. The probe only runs when the person asks for it, never on a
- * bot's turn. */
-export const REMOTE_PROBE_TIMEOUT_MS = 30_000;
+/** A URL server answers over the internet, so it gets more room than a
+ * command. Whop's 425-tool list measured 1 to 2 s with a real sign-in; what
+ * failed it was the old 1 MiB response cap, never the clock. */
+export const REMOTE_PROBE_TIMEOUT_MS = REMOTE_MCP_STARTUP_MS;
 
 function probeEnvironment(server: StoredStdioMcpServer): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath() };
