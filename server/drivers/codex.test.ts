@@ -2436,8 +2436,8 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`)
       writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ tokens: { refresh_token: "expired-fixture" } }));
       return { HOME: scratch, USERPROFILE: scratch, CODEX_HOME: codexHome };
     };
-    const runTurn = async (threadId: string) => {
-      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi" });
+    const runTurn = async (threadId: string, model?: string) => {
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", ...(model ? { model } : {}) });
       const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
       return { done, errors: recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId) };
     };
@@ -2485,6 +2485,39 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`)
       expect(errors[0]).toMatchObject({ setup: true, message: expect.stringContaining(CODEX_SIGN_IN_EXPIRED) });
       await expect(instance.snapshot()).resolves.toMatchObject({ authenticated: false });
     });
+
+    it("leaves the ChatGPT sign-in alone for a custom provider's 401, and its success clears no refusal", async () => {
+      await create({ mode: "key-401", environment: signedIn() });
+      const { errors } = await runTurn("t-provider-401", "badprov::badmodel");
+      expect(errors).toHaveLength(1);
+      expect((errors[0] as { message: string }).message).not.toMatch(/ChatGPT/);
+      await expect(instance.snapshot()).resolves.toMatchObject({ authenticated: true });
+
+      process.env.FAKE_CODEX_MODE = "signin-refused";
+      await runTurn("t-official-refused");
+      process.env.FAKE_CODEX_MODE = "happy";
+      expect((await runTurn("t-provider-ok", "badprov::badmodel")).done).toMatchObject({ ok: true });
+      await expect(instance.snapshot()).resolves.toMatchObject({ authenticated: false, reason: CODEX_SIGN_IN_EXPIRED });
+    });
+
+    it("does not call a refused API-key login an expired ChatGPT sign-in", async () => {
+      const environment = signedIn();
+      writeFileSync(join(environment.CODEX_HOME, "auth.json"), JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "sk-fixture", tokens: null }));
+      await create({ mode: "key-401", environment });
+      const { errors } = await runTurn("t-api-key-401");
+      expect(errors).toHaveLength(1);
+      expect((errors[0] as { message: string }).message).not.toMatch(/ChatGPT/);
+      await expect(instance.snapshot()).resolves.toMatchObject({ authenticated: true });
+    });
+
+    it.each(["recovered-403", "recovered-401", "recovering-403"])(
+      "does not count %s (a recovered sign-in, or a 403) as a refused sign-in", async (mode) => {
+        await create({ mode, environment: signedIn() });
+        const { errors } = await runTurn(`t-${mode}`);
+        expect(errors).toHaveLength(1);
+        expect((errors[0] as { message: string }).message).not.toMatch(/ChatGPT/);
+        await expect(instance.snapshot()).resolves.toMatchObject({ authenticated: true });
+      });
 
     it("leaves the sign-in alone for a tool's 401", async () => {
       await create({ mode: "mcp-401", environment: signedIn() });
