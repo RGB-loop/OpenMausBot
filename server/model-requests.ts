@@ -56,7 +56,8 @@ export interface ModelRequestServiceOptions {
   /** Whether a submitted change applies without a person, and why
    * (server/direct-apply.ts). Server-owned, never request input. */
   autoApply?: DirectApplyCheck;
-  canPersist?: (botId: string, threadId: string) => { ok: true } | { ok: false; status: number; error: string };
+  /** `opensCard` is false for a change that applies directly (no open card). */
+  canPersist?: (botId: string, threadId: string, opensCard: boolean) => { ok: true } | { ok: false; status: number; error: string };
   /** Chief targeting another bot: returns a refusal sentence or null. Checked at propose AND confirm. */
   validateTarget?: (proposerBotId: string, targetBotId: string) => string | null;
   /** Full model validation (structure, catalog, approval compatibility): a refusal sentence or null. Re-run at confirm. */
@@ -224,10 +225,10 @@ export class ModelRequestService {
       before,
     };
     const copy = modelCardCopy({ targetName, crossBot, before, selection, reason, capabilityLines });
-    const persistence = this.canPersist?.(args.botId, args.threadId);
-    if (persistence && !persistence.ok) throw new ModelRequestError(persistence.error, persistence.status);
     const grant = submitted ? this.autoApply?.(args.botId, args.threadId, targetBotId) ?? null : null;
     const automatic = grant !== null;
+    const persistence = this.canPersist?.(args.botId, args.threadId, !automatic);
+    if (persistence && !persistence.ok) throw new ModelRequestError(persistence.error, persistence.status);
     const messageInput: Parameters<ModelRequestStore["appendMessage"]>[1] = {
       role: "bot",
       kind: "options",

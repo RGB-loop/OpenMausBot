@@ -10432,6 +10432,37 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("lets a bot change its own routines while 8 cards for a teammate are open", async () => {
+    const bot = (await api("POST", "/api/bots", {})).body.bot;
+    const teammate = (await api("POST", "/api/bots", {})).body.bot;
+    try {
+      const token = await mintTestCapability(BASE, bot.id, bot.threadId);
+      const post = (body: Record<string, unknown>) => fetch(`${BASE}/api/internal/routine-requests`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ fromBotId: bot.id, fromThreadId: bot.threadId, ...body }),
+      });
+      const routine = (name: string) => ({ name, instructions: `Run ${name}.`, schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] }, runOn: "maus" });
+      for (let index = 0; index < 8; index += 1) {
+        expect((await post({ action: "create", forBotId: teammate.id, routine: routine(`Teammate ${index}`) })).status).toBe(201);
+      }
+      // A ninth card is over the budget...
+      expect((await post({ action: "create", forBotId: teammate.id, routine: routine("Teammate 8") })).status).toBe(429);
+      // ...but the bot's own change opens no card, so the budget does not hold it back.
+      const own = await post({ action: "create", routine: routine("Own brief") });
+      expect(own.status).toBe(201);
+      const applied = z.object({ state: z.literal("applied"), result: z.object({ resultId: z.string() }).passthrough() }).passthrough().parse(await own.json());
+      const paused = await post({ action: "pause", routineId: applied.result.resultId });
+      expect(paused.status).toBe(201);
+      expect(await paused.json()).toMatchObject({ state: "applied", appliedBy: "self" });
+    } finally {
+      const routines = (await api("GET", "/api/routines")).body.routines as Array<{ id: string; botId: string }>;
+      for (const routine of routines.filter((candidate) => candidate.botId === bot.id)) await api("DELETE", `/api/routines/${routine.id}`);
+      await api("DELETE", `/api/bots/${bot.id}`);
+      await api("DELETE", `/api/bots/${teammate.id}`);
+    }
+  });
+
   it("applies a bot's own profile change at once, records history, and undoes it from its receipt", async () => {
     const soulFileOf = (botId: string) => join(home, ".openmausbot", "bots", botId, "SOUL.md");
     const bot = (await api("POST", "/api/bots", { name: "Scout" })).body.bot;

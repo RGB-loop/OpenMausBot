@@ -327,6 +327,8 @@ export interface RoutineRequestServiceOptions {
   canPersist?: (
     botId: string,
     threadId: string,
+    /** False for a change that applies directly: it opens no card. */
+    opensCard: boolean,
   ) => { ok: true } | { ok: false; status: number; error: string };
   /** Re-authorizes a cross-bot target (the card can sit open while the target
    * bot is deleted or moved to another section). Returns the sentence to
@@ -1231,16 +1233,6 @@ export class RoutineRequestService {
       },
     };
     if (args.from) messageInput.from = args.from;
-    // This check and append are deliberately adjacent and synchronous. JS
-    // cannot interleave another completed proposal between the capacity /
-    // ownership decision and the durable transcript write.
-    const persistence = this.canPersist?.(botId, threadId);
-    if (persistence && !persistence.ok) {
-      throw new RoutineRequestError(persistence.error, persistence.status);
-    }
-    if (args.canCommit && !args.canCommit()) {
-      throw new RoutineRequestError("The requesting turn ended before this proposal could be saved", 401);
-    }
     // Resolve the current source-thread grant after the asynchronous probe.
     const owner = operation.forBot?.botId ?? botId;
     const grant = submitted ? this.autoApply?.(botId, threadId, owner) ?? null : null;
@@ -1248,6 +1240,16 @@ export class RoutineRequestService {
     // on; a create or resume past that shows the card, as before. Full
     // access has no cap.
     const automatic = grant === "full-access" || (grant === "self" && !this.overSelfCap(operation, owner));
+    // This check and append are deliberately adjacent and synchronous. JS
+    // cannot interleave another completed proposal between the capacity /
+    // ownership decision and the durable transcript write.
+    const persistence = this.canPersist?.(botId, threadId, !automatic);
+    if (persistence && !persistence.ok) {
+      throw new RoutineRequestError(persistence.error, persistence.status);
+    }
+    if (args.canCommit && !args.canCommit()) {
+      throw new RoutineRequestError("The requesting turn ended before this proposal could be saved", 401);
+    }
     // What Undo puts back, taken before the change.
     const before = automatic && (operation.action === "update" || operation.action === "delete")
       ? this.snapshotOf(operation.routineId, owner)
@@ -1287,7 +1289,7 @@ export class RoutineRequestService {
       return { ...proposal, result: {
         claimed: true, state: "applied", action: receipt.action, resultId: receipt.resultId,
         settlementPending: true, message: "Routine change applied. Recording the operation receipt could not finish; the change will not be applied again.",
-      } };
+      }, ...(grant ? { appliedBy: grant } : {}) };
     }
     throw new RoutineRequestError(result.state === "invalid" ? result.error : "The routine change could not be applied", result.state === "invalid" ? result.status : 409);
   }

@@ -553,6 +553,39 @@ describe("a bot's own profile changes", () => {
     expect(store.messagesFor(bot.threadId)[1]?.card).toMatchObject({ options: ["Confirm", "Cancel"] });
   });
 
+  it("keeps the card for its own working folder below Full access, and applies it at Full", () => {
+    const { store, bot } = harness({ name: "Scout" });
+    const fullAccess = (threadId: string) => threadId === "full-thread";
+    const service = new ProfileRequestService({ store, autoApply: (botId, threadId, targetBotId) =>
+      directApply({ fullAccess: fullAccess(threadId), botId, targetBotId, blocked: false }) });
+    const dir = mkdtempSync(join(tmpdir(), "omb-cwd-"));
+    try {
+      // A new folder widens what its tools touch without asking.
+      const asked = service.submit({ botId: bot.id, threadId: bot.threadId, changes: { cwd: dir, title: "Builder" }, reason: "asked" });
+      expect(asked.state).toBe("pending");
+      expect(store.bot(bot.id)!.cwd).toBeUndefined();
+      expect(store.bot(bot.id)!.title).toBe("");
+      expect(store.messagesFor(bot.threadId)[0]?.card).toMatchObject({ options: ["Confirm", "Cancel"] });
+      const full = service.submit({ botId: bot.id, threadId: "full-thread", changes: { cwd: dir }, reason: "asked" });
+      expect(full).toMatchObject({ state: "applied", appliedBy: "full-access" });
+      expect(store.bot(bot.id)!.cwd).toBe(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is not held back by the open-card budget, which still holds a card", () => {
+    const { store, bot, addBot } = harness({ name: "Scout" });
+    const peer = addBot({ name: "Peer" });
+    const canPersist = vi.fn((_botId: string, _threadId: string, opensCard: boolean) =>
+      opensCard ? { ok: false as const, status: 429, error: "confirm or cancel an existing proposal first" } : { ok: true as const });
+    const service = new ProfileRequestService({ store, autoApply: rule, canPersist });
+    expect(service.submit({ botId: bot.id, threadId: bot.threadId, changes: { title: "Researcher" }, reason: "asked" }).state).toBe("applied");
+    expect(() => service.submit({ botId: bot.id, threadId: bot.threadId, targetBotId: peer.id, changes: { title: "Changed" }, reason: "asked" }))
+      .toThrow("confirm or cancel an existing proposal first");
+    expect(canPersist.mock.calls.map((call) => call[2])).toEqual([false, true]);
+  });
+
   it("undoes only the fields it changed, once, and not after the profile moved", async () => {
     const { store, bot } = harness({ name: "Scout" });
     const service = new ProfileRequestService({ store, autoApply: rule });

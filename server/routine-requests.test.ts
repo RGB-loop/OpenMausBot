@@ -61,6 +61,7 @@ function harness(
   canPersist?: (
     botId: string,
     threadId: string,
+    opensCard: boolean,
   ) => { ok: true } | { ok: false; status: number; error: string },
   autoApply?: DirectApplyCheck,
 ) {
@@ -1940,6 +1941,44 @@ describe("a bot's own routine changes", () => {
       .toMatchObject({ state: "applied", appliedBy: "full-access" });
   });
 
+  it("counts only the bot's own enabled routines, and allows the 20th", async () => {
+    const { service, routines, store } = own();
+    const daily = { type: "daily" as const, time: "09:00", weekdays: [1] };
+    for (let index = 0; index < 25; index += 1) routines.create({ botId: "bot-b", name: `Peer ${index}`, prompt: `Peer ${index}.`, schedule: daily });
+    for (let index = 0; index < 19; index += 1) routines.create({ botId: "bot-a", name: `Own ${index}`, prompt: `Own ${index}.`, schedule: daily });
+    const paused = routines.create({ botId: "bot-a", name: "Paused", prompt: "Paused task.", enabled: false, schedule: daily });
+    expect(await service.submit({ botId: "bot-a", threadId: "ask-thread", proposal: createProposal() }))
+      .toMatchObject({ state: "applied", appliedBy: "self" });
+    expect(await service.submit({ botId: "bot-a", threadId: "ask-thread", proposal: createProposal({ instructions: "The 21st." }) }))
+      .toMatchObject({ state: "pending" });
+    expect(await service.submit({ botId: "bot-a", threadId: "ask-thread", proposal: { action: "resume", routineId: paused.id } }))
+      .toMatchObject({ state: "pending" });
+    expect(openCards(store, "ask-thread")).toHaveLength(2);
+  });
+
+  it("is not held back by the open-card budget, which still holds a card past the cap", async () => {
+    const canPersist = vi.fn((_botId: string, _threadId: string, opensCard: boolean) =>
+      opensCard ? { ok: false as const, status: 429, error: "confirm or cancel an existing proposal first" } : { ok: true as const });
+    const { service, routines } = harness(undefined, undefined, canPersist, rule);
+    const created = await service.submit({ botId: "bot-a", threadId: "ask-thread", proposal: createProposal() });
+    expect(created).toMatchObject({ state: "applied", appliedBy: "self" });
+    expect(await service.submit({ botId: "bot-a", threadId: "ask-thread", proposal: { action: "pause", routineId: created.result!.resultId } }))
+      .toMatchObject({ state: "applied" });
+    for (let index = 0; index < 20; index += 1) {
+      routines.create({ botId: "bot-a", name: `Routine ${index}`, prompt: `Task ${index}.`, schedule: { type: "daily", time: "09:00", weekdays: [1] } });
+    }
+    await expect(service.submit({ botId: "bot-a", threadId: "ask-thread", proposal: createProposal({ instructions: "Past the cap." }) }))
+      .rejects.toThrow("confirm or cancel an existing proposal first");
+  });
+
+  it("logs a self-applied routine as the bot's own even if receipt settlement fails", async () => {
+    const { service, store } = own();
+    const created = await service.submit({ botId: "bot-a", threadId: "ask-thread", proposal: createProposal() });
+    vi.spyOn(store, "patchMessage").mockImplementation(() => { throw new Error("receipt write failed"); });
+    const run = await service.submit({ botId: "bot-a", threadId: "ask-thread", proposal: { action: "run_now", routineId: created.result!.resultId } });
+    expect(run).toMatchObject({ state: "applied", appliedBy: "self", result: { settlementPending: true } });
+  });
+
   it("undoes each kind of change once, and refuses a run or a stale change", async () => {
     const { service, routines, store, clock } = own();
     const submit = (proposal: RoutineProposalInput) => service.submit({ botId: "bot-a", threadId: "ask-thread", proposal });
@@ -1963,6 +2002,9 @@ describe("a bot's own routine changes", () => {
     await submit({ action: "resume", routineId });
 
     const run = await submit({ action: "run_now", routineId });
+    expect(run).toMatchObject({ state: "applied", appliedBy: "self", result: { action: "run_now" } });
+    expect(openCards(store, "ask-thread")).toHaveLength(0);
+    expect(routines.listRuns()).toHaveLength(1);
     expect(undo(service, run.requestId)).toMatchObject({ state: "invalid", status: 409 });
 
     const stale = await submit({ action: "update", routineId, changes: { name: "Bot's name" } });

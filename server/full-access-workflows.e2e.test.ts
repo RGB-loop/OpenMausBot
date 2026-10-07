@@ -160,6 +160,11 @@ it("applies requested Full Access workflows through MCP without duplicate approv
     const routine = (await api("GET", "/api/routines")).routines.find((item: any) => item.name === "Monthly fixture report");
     expect(routine).toMatchObject({ botId: chief.id, enabled: true, schedule });
     expect((await api("GET", `/api/bots/${chief.id}/skills`)).skills).toEqual(expect.arrayContaining([expect.objectContaining({ name: "monthly-fixture-review", enabled: true })]));
+    // The decision log says Full access applied these, not the self rule.
+    await expect.poll(async () => (await api("GET", "/api/decisions")).decisions
+      .filter((row: any) => row.threadId === chief.activeTaskId && ["schedule_routine", "stage_skill", "update_profile"].includes(row.tool))
+      .map((row: any) => `${row.tool}:${row.decision}:${row.source}`).sort())
+      .toEqual(["schedule_routine:auto-approved:full-access", "stage_skill:auto-approved:full-access", "update_profile:auto-approved:full-access"]);
 
     const dump = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"));
     const lateToken = dump.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN;

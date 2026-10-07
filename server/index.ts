@@ -14446,14 +14446,16 @@ function roomPostEligibility(
   return { ok: true };
 }
 
-function proposalPersistence(botId: string, threadId: string) {
+/** `opensCard` false for a change that applies directly: it adds no open
+ * card, so the open-card budget does not hold it back. */
+function proposalPersistence(botId: string, threadId: string, opensCard = true) {
   if (!store.bot(botId)) {
     return { ok: false as const, status: 403, error: "unknown sender" };
   }
   if (!connectorThread(botId, threadId)) {
     return { ok: false as const, status: 403, error: "source conversation does not belong to sender" };
   }
-  if (fullAccessForSource(botId, threadId)) return { ok: true as const };
+  if (!opensCard || fullAccessForSource(botId, threadId)) return { ok: true as const };
   // Only cards on the visible branch can be acted on from the composer.
   // Abandoned branches must not permanently consume the proposal quota.
   // Routine, profile, default-model and team-setup proposals
@@ -14469,14 +14471,14 @@ function proposalPersistence(botId: string, threadId: string) {
     : { ok: true as const };
 }
 
-function skillProposalPersistence(botId: string, threadId: string) {
+function skillProposalPersistence(botId: string, threadId: string, opensCard = true) {
   if (!store.bot(botId)) {
     return { ok: false as const, status: 403, error: "unknown sender" };
   }
   if (!connectorThread(botId, threadId)) {
     return { ok: false as const, status: 403, error: "source conversation does not belong to sender" };
   }
-  if (fullAccessForSource(botId, threadId)) return { ok: true as const };
+  if (!opensCard || fullAccessForSource(botId, threadId)) return { ok: true as const };
   const openRequests = store.activePath(threadId).filter(
     (message) =>
       message.card?.skillRequest?.botId === botId &&
@@ -17088,7 +17090,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             forBot = { botId: target.id, name: target.name };
           }
         }
-        const persistence = proposalPersistence(from.id, fromThreadId);
+        // Sender and conversation only: the service checks the open-card
+        // budget once it knows whether this change opens a card at all.
+        const persistence = proposalPersistence(from.id, fromThreadId, false);
         if (!persistence.ok) {
           return json(res, persistence.status, { error: persistence.error });
         }
@@ -17438,7 +17442,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (!connectorThread(from.id, fromThreadId)) {
           return json(res, 403, { error: "source conversation does not belong to sender" });
         }
-        const persistence = skillProposalPersistence(from.id, fromThreadId);
+        // Skills written here are always the sender's own, so they apply at
+        // any level, with a one-line receipt and Undo (appliesDirectly).
+        const direct = appliesDirectly(from.id, fromThreadId, from.id);
+        const persistence = skillProposalPersistence(from.id, fromThreadId, !direct);
         if (!persistence.ok) return json(res, persistence.status, { error: persistence.error });
         const action = body.action === "create" || body.action === "update" ? body.action : "";
         if (!action) return json(res, 400, { error: 'action must be "create" or "update"' });
@@ -17460,9 +17467,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           source: learnSource(source),
         });
         if ("error" in staged) return json(res, 422, { error: staged.error });
-        // Skills written here are always the sender's own, so they apply at
-        // any level, with a one-line receipt and Undo (appliesDirectly).
-        const direct = appliesDirectly(from.id, fromThreadId, from.id);
         if (direct) {
           // What an update replaces, so Undo can put it back.
           const previousSkillMd = staged.action === "update" ? readSkillFile(from.id, staged.name) : null;

@@ -250,6 +250,19 @@ describe("a bot's own model changes", () => {
     expect(undo()).toMatchObject({ state: "already_undone" });
   });
 
+  it("is not held back by the open-card budget, which still holds a card", () => {
+    const store = new MemoryStore();
+    const bot = addBot(store, "Scout");
+    const peer = addBot(store, "Peer");
+    const canPersist = (_botId: string, _threadId: string, opensCard: boolean) =>
+      opensCard ? { ok: false as const, status: 429, error: "confirm or cancel an existing proposal first" } : { ok: true as const };
+    const service = new ModelRequestService({ store, autoApply: rule, canPersist });
+    expect(service.submit({ botId: bot.id, threadId: bot.threadId, selection: { instanceId: "codex", model: "gpt-fixture" }, reason: "asked" }).state)
+      .toBe("applied");
+    expect(() => service.submit({ botId: bot.id, threadId: bot.threadId, targetBotId: peer.id, selection: { instanceId: "codex", model: "gpt-fixture" }, reason: "asked" }))
+      .toThrow("confirm or cancel an existing proposal first");
+  });
+
   it("refuses Undo once the default moved, and keeps the switch's own checks", () => {
     const store = new MemoryStore();
     const bot = addBot(store, "Scout");

@@ -72,7 +72,8 @@ export interface ProfileRequestServiceOptions {
   /** Whether a submitted change applies without a person, and why
    * (server/direct-apply.ts). Server-owned, never request input. */
   autoApply?: DirectApplyCheck;
-  canPersist?: (botId: string, threadId: string) => { ok: true } | { ok: false; status: number; error: string };
+  /** `opensCard` is false for a change that applies directly (no open card). */
+  canPersist?: (botId: string, threadId: string, opensCard: boolean) => { ok: true } | { ok: false; status: number; error: string };
   /** Chief targeting another bot: returns a refusal sentence or null. Checked at propose AND confirm. */
   validateTarget?: (proposerBotId: string, targetBotId: string) => string | null;
 }
@@ -325,12 +326,14 @@ export class ProfileRequestService {
     };
 
     const copy = profileCardCopy({ name: targetName, crossBot }, snapshot, before, finalChanges, reason);
-    const persistence = this.canPersist?.(args.botId, args.threadId);
+    const grant = submitted ? this.autoApply?.(args.botId, args.threadId, targetBotId) ?? null : null;
+    // A new working folder widens what the bot's tools read and write
+    // without asking, so below Full access it keeps today's card.
+    const automatic = grant === "full-access" || (grant === "self" && finalChanges.cwd === undefined);
+    const persistence = this.canPersist?.(args.botId, args.threadId, !automatic);
     if (persistence && !persistence.ok) {
       throw new ProfileRequestError(persistence.error, persistence.status);
     }
-    const grant = submitted ? this.autoApply?.(args.botId, args.threadId, targetBotId) ?? null : null;
-    const automatic = grant !== null;
     const messageInput: Parameters<ProfileRequestStore["appendMessage"]>[1] = {
       role: "bot",
       kind: "options",

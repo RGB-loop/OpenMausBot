@@ -1230,7 +1230,7 @@
           "cwd": {
             "type": "string",
             "maxLength": 1024,
-            "description": "Absolute path of the folder your tools read and write in (for example /Users/me/Projects/site). It must already exist. An empty string means your private workspace."
+            "description": "Absolute path of the folder your tools read and write in (for example /Users/me/Projects/site). It must already exist. An empty string means your private workspace. A new folder waits for the person's confirmation unless this conversation has Full access."
           },
           "notifications": {
             "type": "boolean",
