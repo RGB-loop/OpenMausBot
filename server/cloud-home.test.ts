@@ -347,6 +347,10 @@ it("ships an edge and a Fly template that keep the server private", () => {
   expect(caddy).toMatch(/^:8080 \{/m);
   const upstreams = [...caddy.matchAll(/reverse_proxy (\S+)/g)].map(match => match[1]);
   expect(new Set(upstreams)).toEqual(new Set(["127.0.0.1:8799", "127.0.0.1:8800"]));
+  // Webhooks reach a Cloud at its own address: only /hooks/* goes to the
+  // receiver (whose /health stays private), the rest to the server.
+  expect(caddy).toMatch(/handle \/hooks\/\* \{\s*reverse_proxy 127\.0\.0\.1:8800 \{/);
+  expect(caddy.match(/127\.0\.0\.1:8800/g)).toHaveLength(1);
   // every forwarded request is marked as proxied
   expect(caddy.match(/header_up X-Forwarded-For \{client_ip\}/g)).toHaveLength(upstreams.length);
   // The root supervisor's code is root's: maus owns only the volume. The
