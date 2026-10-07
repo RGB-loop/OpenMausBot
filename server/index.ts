@@ -629,6 +629,7 @@ import { createBotPresetRoutes } from "./routes/bot-presets.ts";
 import { createBotMemoryRoutes } from "./routes/bot-memory.ts";
 import { createDeciderRoutes } from "./routes/decider.ts";
 import { createThreadModelRoutes } from "./routes/thread-models.ts";
+import { createUndoRoutes } from "./routes/undo.ts";
 import { createDesktopViewer, desktopViewerUrl } from "./routes/desktop-viewer.ts";
 import { localDesktopTarget, localVmViewerStatus, viewerTargetId } from "./desktop-viewer-targets.ts";
 import { createAntigravityLeftoverRoutes } from "./routes/antigravity-leftovers.ts";
@@ -15945,6 +15946,11 @@ ROUTES.push(createThreadModelRoutes({
   mayChangeModel: (auth) => !CLOUD_HOME || cloudOwnerSession(auth),
   reply: (botId) => publicBot(store.bot(botId)!),
 }));
+// Undo on the one-line receipt of a change that applied without a person.
+ROUTES.push(createUndoRoutes({
+  refusal: (auth, threadId, requestId) => cardAnswerRefusal(auth, threadId, requestId, "allow"),
+  undo: (auth, res, threadId, requestId) => withDecisionActor(decisionActorFor(auth), () => undoAppliedChange(res, threadId, requestId)),
+}));
 ROUTES.push(createAntigravityLeftoverRoutes({
   hosted: Boolean(hostedModels),
   isAntigravity: (instanceId) => registry.get(instanceId)?.driverKind === "antigravityAgent",
@@ -22752,18 +22758,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
         return json(res, 200, { ok: true, outcome });
       });
-    }
-    // Undo a change that applied without a person, from its one-line
-    // receipt. Authorized exactly like answering that card in that thread.
-    m = path.match(/^\/api\/threads\/([\w-]+)\/undo$/);
-    if (m && method === "POST") {
-      const threadId = m[1];
-      const body = await readBody(req);
-      const requestId = typeof body?.requestId === "string" ? body.requestId : "";
-      if (!requestId) return json(res, 400, { error: "requestId is required" });
-      const refusal = cardAnswerRefusal(auth, threadId, requestId, "allow");
-      if (refusal) return json(res, 403, { error: refusal });
-      return withDecisionActor(decisionActorFor(auth), () => undoAppliedChange(res, threadId, requestId));
     }
     // Answer by THREAD, so a request raised inside a room can be answered
     // too: a member's turn runs on the room's thread, and the bot that
