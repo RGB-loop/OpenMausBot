@@ -351,6 +351,11 @@ it("ships an edge and a Fly template that keep the server private", () => {
   // receiver (whose /health stays private), the rest to the server.
   expect(caddy).toMatch(/handle \/hooks\/\* \{\s*reverse_proxy 127\.0\.0\.1:8800 \{/);
   expect(caddy.match(/127\.0\.0\.1:8800/g)).toHaveLength(1);
+  // ...and only for the Cloud's own name, like everything but the health check.
+  const homeStart = caddy.indexOf("handle @home {");
+  let homeEnd = homeStart + "handle @home {".length;
+  for (let depth = 1; depth > 0; homeEnd++) depth += caddy[homeEnd] === "{" ? 1 : caddy[homeEnd] === "}" ? -1 : 0;
+  expect(caddy.slice(homeStart, homeEnd)).toContain("handle /hooks/* {");
   // every forwarded request is marked as proxied
   expect(caddy.match(/header_up X-Forwarded-For \{client_ip\}/g)).toHaveLength(upstreams.length);
   // The root supervisor's code is root's: maus owns only the volume. The
