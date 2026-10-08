@@ -1,5 +1,8 @@
-// A stdio facade for selected HTTP/SSE MCP servers. Configuration stays in
-// private environment data; stdout contains only protocol frames.
+// A stdio facade for HTTP/SSE MCP servers: how every engine except Claude
+// Code reaches them. Its upstream handshake is OMB's own (RemoteMcpClient,
+// the one Settings → Test uses), never the engine's: an engine's client adds
+// capability fields a strict server refuses. Configuration stays in private
+// environment data; stdout contains only protocol frames.
 //
 // A driver whose engine cannot search tools on its own also sets
 // OMB_REMOTE_MCP_DIRECTORY. Then a big catalog is searched instead of listed
@@ -24,7 +27,7 @@ import {
   type CatalogTool,
   type DirectoryContext,
 } from "./mcp-directory.ts";
-import { MAX_REMOTE_MCP_BYTES, REMOTE_MCP_CONFIG_ENV, RemoteMcpClient, remoteMcpSpec } from "./mcp-http.ts";
+import { MAX_REMOTE_MCP_BYTES, McpHttpError, REMOTE_MCP_CONFIG_ENV, RemoteMcpClient, remoteMcpSpec } from "./mcp-http.ts";
 import { lenientToolValidator, schemaProblems } from "./mcp-schema-validator.ts";
 
 type Json = Record<string, unknown>;
@@ -42,6 +45,11 @@ function fail(message: string): never {
   process.stderr.write(`mcp-remote-proxy: ${message}\n`);
   process.exit(1);
 }
+
+/** What the engine is told when the server refuses the sign-in (HTTP 401):
+ * the token OpenMausBot handed this turn expired or was revoked. Our own
+ * words, nothing remote. */
+const SIGN_IN_AGAIN = "This MCP server refused its sign-in (HTTP 401). Sign in to it again in Plugins → MCP servers, then retry.";
 
 /** A refusal of our own: its words carry nothing remote, so they are relayed. */
 class Refusal extends Error {
@@ -272,6 +280,7 @@ async function handle(message: Json): Promise<void> {
   } catch (failure) {
     // Remote errors may contain URLs or header values. Do not relay their text.
     if (failure instanceof Refusal) error(message.id, failure.code, failure.message);
+    else if (failure instanceof McpHttpError && failure.status === 401) error(message.id, -32603, SIGN_IN_AGAIN);
     else error(message.id, signal.aborted ? -32800 : -32603, signal.aborted ? "MCP request cancelled" : "Remote MCP request failed");
   } finally { pending.delete(id); }
 }

@@ -201,11 +201,15 @@ Known limits:
 | Server | Claude Code bots | Codex bots | ACP bots (Cursor, Grok, Kimi, …) | API-model bots |
 | --- | --- | --- | --- | --- |
 | Command (stdio) | yes, through the result gate | yes | yes | yes |
-| URL, Streamable HTTP | yes | yes | when the agent advertises `http` | yes |
-| URL, SSE | yes | with a tool selection or a ChatGPT plan (Codex itself has no SSE transport) | when the agent advertises `sse` | yes |
+| URL, Streamable HTTP | yes | yes | yes | yes |
+| URL, SSE | yes | yes | yes | yes |
 
-A server an engine cannot reach is left out of that bot's turn with a note in
-the server log; nothing else breaks.
+Every engine except Claude Code reaches URL servers through OpenMausBot's own
+connector, the same one **Test** uses, so a server that passes Test works in
+chat too. Some servers refuse any handshake field they do not know, and the
+engines' own MCP clients add such fields: a bot connecting by itself got "Tool
+not found" for every tool of a server that passed Test. Claude Code still
+connects by itself, since its handshake has only fields the MCP spec defines.
 
 ## What a Claude bot sees, and the "Also use my Claude Code MCP servers" switch
 
@@ -313,9 +317,10 @@ servers gets the enabled tools on its next task.
 - **Credentials stay off argv.** `env` values travel in the child
   environment (Codex argv carries env *names* only; Claude uses the private
   0600 mcp-config file; ACP passes them in the session payload with the
-  wire log redacted). Header values do the same: Codex reads them from
-  harness-named environment variables (`env_http_headers`), Claude from the
-  0600 file. They do persist as plaintext in the 0600 config file — prefer
+  wire log redacted). Header values do the same: OpenMausBot's connector
+  reads them from a private environment record (Codex names only the
+  record's variable on argv; ACP gets it in the session payload), Claude
+  Code from the 0600 file. They do persist as plaintext in the 0600 config file — prefer
   tokens scoped to the one server. Codex gives its MCP servers their
   variables from the same environment it runs the bot's shell commands in,
   so each variable a server needs there is excluded from that shell; a value
@@ -338,6 +343,5 @@ servers gets the enabled tools on its next task.
   HTTP field names and values a single line.
 - **The result gate covers commands.** Oversized tool results from a stdio
   server are trimmed before they reach the model (`OMB_MCP_RESULT_BUDGET`).
-  A URL server is contacted by the engine itself, so there is no process to
-  stand between; its results arrive untrimmed.
+  A URL server's results arrive untrimmed.
 - `"enabled": false` parks an entry without deleting it.

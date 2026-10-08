@@ -1,8 +1,9 @@
 // A small MCP client for servers OpenMausBot does not start itself: the
-// current streamable HTTP transport and the older SSE one. The engines
-// speak to these servers natively; this client exists for the Test button
-// (prove the handshake, list the tools) and for anything else the harness
-// itself must ask a remote server. It never logs a header value.
+// current streamable HTTP transport and the older SSE one. It runs the
+// Test button (prove the handshake, list the tools) and the stdio proxy
+// (mcp-remote-proxy.ts) every engine except Claude Code reaches these
+// servers through, so a bot's turn opens the connection with the same
+// minimal handshake Test proved. It never logs a header value.
 import type { RemoteMcpSpec } from "./contracts.ts";
 
 export type McpHttpFailure = "network" | "status" | "protocol";
