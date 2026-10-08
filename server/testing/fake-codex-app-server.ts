@@ -31,6 +31,10 @@
 //   FAKE_CODEX_DUMP   path to write {pid, argv, env, calls, decision} as JSON
 //   FAKE_CODEX_IGNORE_FEATURES  "1": config/read reports no `-c features.*` override
 //                     (a Codex that did not take them)
+//   FAKE_CODEX_SHELL_ENVIRONMENT_POLICY  JSON the config/read shell_environment_policy
+//                     reports. Like codex-cli 0.160, every field is present and null
+//                     unless set (an object fills in its fields, `filters` table
+//                     included); a non-object (null, false, []) is reported as-is.
 //   FAKE_CODEX_APPROVAL_REQUEST JSON {method, params} override in approval mode
 //   FAKE_CODEX_ACCOUNT_EMAIL  synthetic ChatGPT identity (default ada@example.test)
 //   FAKE_CODEX_ACCOUNT_MODE   chatgpt (default) | api-key | none | unsupported | error | hang
@@ -108,11 +112,20 @@ for (let index = 0; process.env.FAKE_CODEX_MCP_OVERRIDES === "1" && index < proc
   const match = process.argv[index - 1] === "-c" ? /^mcp_servers\.([^.]+)\.([^.]+)=(.*)$/.exec(process.argv[index]!) : null;
   if (match) (mcpOverrides[match[1]!] ??= {})[match[2]!] = JSON.parse(match[3]!);
 }
-// The last `-c shell_environment_policy.exclude=[…]` override on the command line.
+// codex-cli 0.160 config/read reports every shell_environment_policy field,
+// null when unset, even for an empty config.toml. A `-c
+// shell_environment_policy.exclude=[…]` override replaces the list, as there.
 const shellExcludeOverride = process.argv.reduce<unknown>((found, arg, index) => {
   const match = process.argv[index - 1] === "-c" ? /^shell_environment_policy\.exclude=(.*)$/.exec(arg) : null;
   return match ? JSON.parse(match[1]!) : found;
 }, undefined);
+const shellEnvironmentPolicy = (): unknown => {
+  const unset = { inherit: null, ignore_default_excludes: null, exclude: null, set: null,
+    include_only: null, filters: null, experimental_use_profile: null };
+  const supplied: unknown = process.env.FAKE_CODEX_SHELL_ENVIRONMENT_POLICY ? JSON.parse(process.env.FAKE_CODEX_SHELL_ENVIRONMENT_POLICY) : {};
+  if (!supplied || typeof supplied !== "object" || Array.isArray(supplied)) return supplied;
+  return { ...unset, ...supplied, ...(shellExcludeOverride !== undefined ? { exclude: shellExcludeOverride } : {}) };
+};
 let developerInstructions = "";
 let resumedThread: string | null = null;
 let decision: unknown = null;
@@ -375,12 +388,7 @@ process.stdin.on("data", (chunk) => {
                   },
                 }),
               developer_instructions: process.env.FAKE_CODEX_INSTRUCTIONS ?? null,
-              ...(process.env.FAKE_CODEX_SHELL_ENVIRONMENT_POLICY ? {
-                shell_environment_policy: JSON.parse(process.env.FAKE_CODEX_SHELL_ENVIRONMENT_POLICY),
-              } : shellExcludeOverride ? {
-                // a `-c shell_environment_policy.exclude=[…]` override, as reported
-                shell_environment_policy: { exclude: shellExcludeOverride },
-              } : {}),
+              shell_environment_policy: shellEnvironmentPolicy(),
               // `-c features.<name>=<bool>` overrides, as the real config/read reports them.
               features: Object.fromEntries(process.argv.flatMap((arg, index) => {
                 const match = process.argv[index - 1] === "-c" ? /^features\.(\w+)=(true|false)$/.exec(arg) : null;
