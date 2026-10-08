@@ -55,7 +55,9 @@ function networkEnv(source: NodeJS.ProcessEnv | Record<string, string | undefine
     env.NODE_USE_ENV_PROXY = source.NODE_USE_ENV_PROXY || "1";
     // One list under both spellings, since either may be the one read.
     const bypass = [env.no_proxy, env.NO_PROXY].flatMap((list) => (list ?? "").split(",")).map((entry) => entry.trim()).filter(Boolean);
-    env.NO_PROXY = env.no_proxy = [...new Set([...bypass, ...LOOPBACK])].join(",");
+    const merged = [...new Set([...bypass, ...LOOPBACK])].join(",");
+    env.NO_PROXY = merged;
+    env.no_proxy = merged;
   }
   return env;
 }

@@ -316,7 +316,10 @@ servers gets the enabled tools on its next task.
   wire log redacted). Header values do the same: Codex reads them from
   harness-named environment variables (`env_http_headers`), Claude from the
   0600 file. They do persist as plaintext in the 0600 config file — prefer
-  tokens scoped to the one server.
+  tokens scoped to the one server. Codex gives its MCP servers their
+  variables from the same environment it runs the bot's shell commands in,
+  so each variable a server needs there is excluded from that shell; a value
+  you already had in your own environment, like a proxy setting, stays.
 - **Testing is bounded.** A command is stopped after the handshake (or eight
   seconds), its output is capped, and its stderr is never sent to the UI. It
   inherits none of OpenMausBot's workspace or provider credentials; only the

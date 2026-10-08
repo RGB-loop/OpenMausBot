@@ -188,7 +188,8 @@ describe("CodexDriver turns (fake app-server)", () => {
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       expect(seen.argv).toContain("features.shell_snapshot=false");
       const thread = seen.calls.find((call: { method: string }) => call.method === (resumeCursor ? "thread/resume" : "thread/start"));
-      expect(thread.params.config["shell_environment_policy.exclude"]).toEqual([...policy.exclude, "OMB_GATE_CONFIG_*"]);
+      // the gate record, and the switch the gate's mount sets, stay out of the shell
+      expect(thread.params.config["shell_environment_policy.exclude"]).toEqual([...policy.exclude, "OMB_GATE_CONFIG_*", "ELECTRON_RUN_AS_NODE"]);
       expect(thread.params.config).not.toHaveProperty("shell_environment_policy");
       expect(Object.keys(seen.env).some(name => name.startsWith("OMB_GATE_CONFIG_"))).toBe(true);
       expect(JSON.stringify({ argv: seen.argv, calls: seen.calls })).not.toContain("synthetic-fixture-credential");
@@ -210,7 +211,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       expect(completed).toMatchObject({ ok: true });
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       const config = seen.calls.find((call: { method: string }) => call.method === (resumeCursor ? "thread/resume" : "thread/start")).params.config;
-      expect(config["shell_environment_policy.exclude"]).toEqual(["OMB_GATE_CONFIG_*"]);
+      expect(config["shell_environment_policy.exclude"]).toEqual(["OMB_GATE_CONFIG_*", "ELECTRON_RUN_AS_NODE"]);
       expect(Object.keys(config).filter(key => key.startsWith("shell_environment_policy"))).toEqual(["shell_environment_policy.exclude"]);
     }
   });
@@ -233,7 +234,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       const config = seen.calls.find((call: { method: string }) => call.method === (resumeCursor ? "thread/resume" : "thread/start")).params.config;
       // Codex matches (and rejects duplicate) filter patterns ignoring case:
       // the gate pattern replaces a case variant rather than sitting beside it.
-      expect(config["shell_environment_policy.filters"]).toEqual({ "USER_SECRET_*": "exclude", "KEEP_*": "include", "OMB_GATE_CONFIG_*": "exclude" });
+      expect(config["shell_environment_policy.filters"]).toEqual({ "USER_SECRET_*": "exclude", "KEEP_*": "include", "OMB_GATE_CONFIG_*": "exclude", ELECTRON_RUN_AS_NODE: "exclude" });
       expect(Object.keys(config).filter(key => key.startsWith("shell_environment_policy"))).toEqual(["shell_environment_policy.filters"]);
     }
   });
@@ -1171,6 +1172,31 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`)
     expect(seen.argv).not.toContain("features.shell_snapshot=false");
   });
 
+  it("keeps every variable an MCP mount writes out of the shell, and only those", async () => {
+    const dump = join(scratch, "mount-env-shell.json"); process.env.FAKE_CODEX_DUMP = dump;
+    const policy = { exclude: ["USER_SECRET_*"] };
+    await create({ environment: { HOME: scratch, CODEX_HOME: join(scratch, ".codex"), FAKE_CODEX_SHELL_ENVIRONMENT_POLICY: JSON.stringify(policy),
+      // already here before any mount: one passed along unchanged, one a mount overrides
+      SHARED_SETTING: "same", OVERRIDDEN: "person", ELECTRON_RUN_AS_NODE: "1" } });
+    await instance.adapter.sendTurn({ threadId: "mount-env-shell", text: "go", integrations: {
+      agents: { command: process.execPath, args: ["/tmp/agents-proxy.js"], env: { ELECTRON_RUN_AS_NODE: "1", OMB_COMMS_TOKEN: "agents-capability" } },
+      composio: { command: process.execPath, args: ["/tmp/connector-proxy.js"], env: { OMB_CONNECTORS_TOKEN: "connector-capability" } },
+      phone: { command: process.execPath, args: ["/tmp/phone-proxy.js"], env: { OMB_PHONE_TOKEN: "phone-capability" } },
+      custom: {
+        // TZ is a variable no shell should lose, whoever set it
+        notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { GITHUB_PERSONAL_ACCESS_TOKEN: "ghp-synthetic", SHARED_SETTING: "same", OVERRIDDEN: "server", TZ: "UTC" } },
+        docs: { type: "http", url: "https://docs.example/mcp", headers: { Authorization: "Bearer tok-docs" } },
+      },
+    } });
+    expect(await recorder.until((event) => event.type === "turn.completed")).toMatchObject({ ok: true });
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv).toContain("features.shell_snapshot=false");
+    expect(seen.calls.find((call: { method: string }) => call.method === "thread/start").params.config["shell_environment_policy.exclude"]).toEqual([
+      "USER_SECRET_*", "OMB_MCP_HEADER_*",
+      "ELECTRON_RUN_AS_NODE", "GITHUB_PERSONAL_ACCESS_TOKEN", "OMB_COMMS_TOKEN", "OMB_CONNECTORS_TOKEN", "OMB_PHONE_TOKEN", "OVERRIDDEN",
+    ]);
+  });
+
   it("keeps working with a Codex that cannot say whether snapshots are off, header values still excluded", async () => {
     const dump = join(scratch, "header-old-codex.json"); process.env.FAKE_CODEX_DUMP = dump;
     await create({ environment: { HOME: scratch, CODEX_HOME: join(scratch, ".codex"), FAKE_CODEX_IGNORE_FEATURES: "1" } });
@@ -1233,7 +1259,7 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`)
       // the proxies' records are kept from the shell, next to the plan token
       expect(seen.argv).toContain("features.shell_snapshot=false");
       const thread = seen.calls.find((call: { method: string }) => call.method === "thread/start");
-      expect(thread.params.config["shell_environment_policy.exclude"]).toEqual(["OPENMAUSBOT_CHATGPT_TOKEN", "OMB_REMOTE_MCP_CONFIG_*"]);
+      expect(thread.params.config["shell_environment_policy.exclude"]).toEqual(["OPENMAUSBOT_CHATGPT_TOKEN", "OMB_REMOTE_MCP_CONFIG_*", "ELECTRON_RUN_AS_NODE"]);
       // still the person's own server: its tool calls keep asking
       expect(argv).not.toContain("mcp_servers.whop.default_tools_approval_mode");
     });
@@ -1247,13 +1273,21 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`)
       await recorder.until((event) => event.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       const envVars = JSON.parse(seen.argv.find((arg: string) => arg.startsWith("mcp_servers.whop.env_vars=")).split("=").slice(1).join("="));
-      expect(envVars).toEqual(expect.arrayContaining(["HTTPS_PROXY", "NODE_EXTRA_CA_CERTS", "NODE_USE_ENV_PROXY"]));
-      expect(seen.env.NODE_USE_ENV_PROXY).toBe("1");
+      expect(envVars).toEqual(expect.arrayContaining(["HTTPS_PROXY", "NODE_EXTRA_CA_CERTS"]));
+      // the proxy's own switches ride its env table, never the shell's environment
+      expect(envVars).not.toContain("NODE_USE_ENV_PROXY");
+      expect(seen.argv).toContain('mcp_servers.whop.env={ "NODE_USE_ENV_PROXY" = "1", "NO_PROXY" = "localhost,127.0.0.1,::1", "no_proxy" = "localhost,127.0.0.1,::1" }');
+      expect(seen.env.NODE_USE_ENV_PROXY).toBeUndefined();
+      // the person's own settings reach both, unchanged, and are not excluded
+      expect(seen.env.HTTPS_PROXY).toBe("http://proxy.example.test:3128");
+      const exclusions = seen.calls.find((call: { method: string }) => call.method === "thread/start").params.config["shell_environment_policy.exclude"];
+      expect(exclusions).not.toContain("HTTPS_PROXY");
+      expect(exclusions).not.toContain("NODE_EXTRA_CA_CERTS");
     });
 
     it("refuses the turn when Codex's shell exclusions cannot be confirmed", async () => {
       plan();
-      await create({ authMode: "chatgpt-plan", environment: { FAKE_CODEX_SHELL_ENVIRONMENT_POLICY: JSON.stringify({ exclude: "OMB_*" }) } });
+      await create({ authMode: "chatgpt-plan", environment: { FAKE_CODEX_SHELL_ENVIRONMENT_POLICY: JSON.stringify({ filters: { "OMB_*": "maybe" } }) } });
       const dump = join(scratch, "plan-bad-policy.json");
       process.env.FAKE_CODEX_DUMP = dump;
       await instance.adapter.sendTurn({ threadId: "t-plan-policy", text: "go", model: "gpt-6.1-sol", integrations: { custom: { whop } } });
