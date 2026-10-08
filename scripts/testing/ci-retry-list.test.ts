@@ -115,6 +115,25 @@ describe("the runner", () => {
     expect(lines).toEqual([{ file: "flaky.test.mjs", test: "group > fails once", retries: 1, state: "pass", platform: process.platform }]);
   }, 60_000);
 
+  it("stops retrying a file's listed tests once one of them fails every attempt", async () => {
+    // A broken fixture, not a flake: three attempts of every listed test
+    // would multiply the shard's time past its job cap.
+    const directory = mkdtempSync(join(tmpdir(), "omb-ci-retry-"));
+    scratch.push(directory);
+    writeFileSync(join(directory, "broken.test.mjs"), [
+      'import { appendFileSync } from "node:fs";',
+      'const attempt = (name) => appendFileSync(new URL("./attempts", import.meta.url), `${name}\\n`);',
+      'it("first", () => { attempt("first"); throw new Error("broken"); });',
+      'it("second", () => { attempt("second"); throw new Error("broken"); });',
+      "",
+    ].join("\n"));
+    writeFileSync(join(directory, "vitest.config.mjs"), `export default { test: { globals: true, include: ["broken.test.mjs"], runner: ${JSON.stringify(RUNNER)} } };\n`);
+    writeFileSync(join(directory, "list.json"), JSON.stringify({ tests: ["first", "second"].map((test) => ({ file: "broken.test.mjs", test, owner: "o", reason: "r", since: "2026-10-08" })) }));
+    const { output } = await vitest(directory, { CI: "true" });
+    expect(results(output)).toEqual({ first: "failed", second: "failed" });
+    expect(readFileSync(join(directory, "attempts"), "utf8").trim().split("\n")).toEqual(["first", "first", "first", "second"]);
+  }, 60_000);
+
   it("never retries outside CI", async () => {
     const directory = project();
     const { output } = await vitest(directory, { CI: undefined });

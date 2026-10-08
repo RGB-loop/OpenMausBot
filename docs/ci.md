@@ -93,10 +93,14 @@ or skipped the tests, the script starts CI on the commit in its own lane: a
 `release-ci/v<version>` branch that no merge can touch, deleted afterwards. A
 red verdict stops the release; re-run the failed CI jobs
 (`gh run rerun <id> --failed`), and the waiting release picks up the new
-attempt. One red is not a verdict: when every failed job never started a step
-(a macOS runner "failed to be acquired"), the script re-runs the failed jobs
-once itself (`POST /actions/runs/<id>/rerun-failed-jobs`, which the job's
-`actions: write` allows) and keeps waiting. A manual release can skip the
+attempt. A red where every failed job never started a step (a macOS runner
+"failed to be acquired") is not a verdict. On the release lane's own run the
+script re-runs the failed jobs once itself
+(`POST /actions/runs/<id>/rerun-failed-jobs`, which the job's
+`actions: write` allows) and keeps waiting. Main's run is never re-run that
+way: a re-run joins main's concurrency group, where it would cancel the
+newest merge's waiting run and re-run main-only deploys from an older tree.
+The script starts CI in the lane instead. A manual release can skip the
 wait with `ship_without_ci`, for emergencies only.
 
 ## Flaky tests and Windows timeouts
@@ -105,7 +109,14 @@ Known flaky tests are listed in `scripts/testing/ci-retry-list.json`: file,
 full test name (describe blocks and test joined with ` > `), owner, the
 evidence, and the date it was listed. In CI only (`CI=true`), the repo's
 vitest runner (`scripts/testing/ci-retry-runner.ts`) gives each listed test
-two retries; nothing else is retried, and local runs never retry. A listed
+two retries; nothing else is retried, and local runs never retry. Retries
+are bounded per file: once a listed test fails all three attempts, that is a
+real failure, and the file's later listed tests get no retry. Otherwise a
+regression that breaks a whole fixture (six listed tests share
+`server/delta-context.e2e.test.ts`) would triple their wall time and push the
+Linux shard past its 20-minute cap, and a timed-out job loses the failing
+tests' annotations and this summary. The cost: a real flake listed after a
+broken test in the same file is not retried in that run. A listed
 test that needed a retry is written to the vitest job's summary and raised as
 a warning annotation (`scripts/testing/ci-retry-summary.mjs`), so a flake
 that passed is still seen. Fix the test, then delete its entry;

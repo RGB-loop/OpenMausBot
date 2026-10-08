@@ -21,7 +21,11 @@
 //
 // A run on the release commit that failed only because some jobs never got a
 // runner (macOS "failed to be acquired": no step ever started) is not a test
-// verdict: its failed jobs are re-run once and the wait goes on.
+// verdict. The release lane's own run has its failed jobs re-run once and the
+// wait goes on. Any other such run (main's push run) is never re-run in place:
+// a re-run joins main's concurrency group, where it would cancel the newest
+// merge's waiting run (and re-run main-only deploys from an older tree). It
+// counts as no run, so CI starts in the lane instead.
 import { pathToFileURL } from "node:url";
 import { versionOnlyPackageJson } from "./ci-scope.mjs";
 
@@ -92,6 +96,8 @@ export async function waitForReleaseCi({ api, sha, version, sleep = (ms) => new 
   };
   const releaseRuns = (runs) => runs.filter((run) => RELEASE_EVENTS.has(run.event))
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  /** The run this gate starts: its own concurrency group, so a re-run there cancels nothing on main. */
+  const inLane = (run) => run.event === "workflow_dispatch" && run.head_branch === lane;
   /** Still waiting for a re-run we asked for to show up as a new attempt. */
   const awaitingRerun = (run) => rerun.has(run.id) && rerun.get(run.id) === (run.run_attempt ?? 1);
   /** A finished green run on `target` itself, or on another commit with its tree. */
@@ -148,12 +154,12 @@ export async function waitForReleaseCi({ api, sha, version, sleep = (ms) => new 
       }
 
       const runs = await runsFor(sha);
-      // A run on this commit that lost a runner gets its failed jobs re-run
-      // once; any other red is a verdict.
+      // The lane's run that lost a runner gets its failed jobs re-run once;
+      // any other red is a verdict.
       const settle = async (run) => {
         if (awaitingRerun(run)) return { wait: true };
         const result = await verdict(run);
-        if (result === "runner-lost" && !rerun.has(run.id)) {
+        if (result === "runner-lost" && inLane(run) && !rerun.has(run.id)) {
           log(`CI run ${run.id} on ${sha} failed only because jobs never got a runner; re-running its failed jobs once.`);
           await api.rerunFailedJobs(run.id);
           rerun.set(run.id, run.run_attempt ?? 1);
@@ -163,7 +169,7 @@ export async function waitForReleaseCi({ api, sha, version, sleep = (ms) => new 
       };
 
       if (dispatched) {
-        const laneRun = runs.find((run) => run.event === "workflow_dispatch" && run.head_branch === lane);
+        const laneRun = runs.find(inLane);
         if (laneRun?.status === "completed") {
           const { wait, result } = await settle(laneRun);
           if (!wait) return { ok: false, reason: `CI in the release lane did not pass (${result}): run ${laneRun.id}` };
@@ -177,7 +183,8 @@ export async function waitForReleaseCi({ api, sha, version, sleep = (ms) => new 
         for (const run of runs.filter((run) => run.status === "completed")) {
           const { wait, result } = await settle(run);
           if (wait) rerunning = true;
-          else if (result === "red" || result === "runner-lost") return { ok: false, reason: `The CI check on ${sha} failed: run ${run.id}` };
+          else if (result === "red" || (result === "runner-lost" && inLane(run))) return { ok: false, reason: `The CI check on ${sha} failed: run ${run.id}` };
+          else if (result === "runner-lost") log(`CI run ${run.id} on ${sha} failed only because jobs never got a runner; it is not re-run in ${run.head_branch}'s queue.`);
         }
         const live = runs.find((run) => run.status !== "completed");
         const parentLive = parent && (await runsFor(parent.sha)).find((run) => run.status !== "completed");
@@ -187,7 +194,8 @@ export async function waitForReleaseCi({ api, sha, version, sleep = (ms) => new 
           log(`CI run ${parentLive.id} on the parent ${parent.sha} is ${parentLive.status}; waiting.`);
         } else {
           // No run, only cancelled/skipped ones (a newer merge replaced it),
-          // or only a run that skipped the tests and no green parent.
+          // a main run that lost a runner, or only a run that skipped the
+          // tests and no green parent.
           log(`No usable finished or running CI for ${sha}; starting it on ${lane}.`);
           await api.pointBranch(lane, sha);
           await api.dispatchCi(lane);

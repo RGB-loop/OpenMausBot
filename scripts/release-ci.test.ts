@@ -307,44 +307,63 @@ describe("a version-only bump reuses its parent's CI", () => {
 });
 
 describe("a runner that never came", () => {
-  it("re-runs the failed jobs once and keeps waiting", async () => {
-    const { calls, options } = fakeGitHub([
-      { runs: [run(1, "push", "completed")], jobs: { 1: runnerLost() } },
-      // GitHub has not picked the re-run up yet: still attempt 1
-      { runs: [run(1, "push", "completed")], jobs: { 1: runnerLost() } },
-      { runs: [run(1, "push", "queued", "main", 0, { run_attempt: 2 })] },
-      { runs: [run(1, "push", "completed", "main", 0, { run_attempt: 2 })], jobs: { 1: green() } },
-    ]);
-    expect(await waitForReleaseCi(options)).toEqual({ ok: true, runId: 1, via: "commit" });
-    expect(calls).toEqual(["rerun 1"]);
-  });
+  const lane = (status: string, run_attempt = 1) => run(2, "workflow_dispatch", status, "release-ci/v0.1.94", 5, { run_attempt });
 
-  it("stops when the re-run loses its runner again", async () => {
-    const { calls, options } = fakeGitHub([
-      { runs: [run(1, "push", "completed")], jobs: { 1: runnerLost() } },
-      { runs: [run(1, "push", "in_progress", "main", 0, { run_attempt: 2 })] },
-      { runs: [run(1, "push", "completed", "main", 0, { run_attempt: 2 })], jobs: { 1: runnerLost() } },
-    ]);
-    expect(await waitForReleaseCi(options)).toMatchObject({ ok: false, reason: expect.stringContaining("failed: run 1") });
-    expect(calls).toEqual(["rerun 1"]);
-  });
-
-  it("never re-runs a real test failure", async () => {
-    const { calls, options } = fakeGitHub([{ runs: [run(1, "push", "completed")], jobs: { 1: red() } }]);
-    expect(await waitForReleaseCi(options)).toMatchObject({ ok: false });
-    expect(calls).toEqual([]);
-  });
-
-  it("re-runs the release lane's run too", async () => {
-    const lane = (status: string, run_attempt = 1) => run(2, "workflow_dispatch", status, "release-ci/v0.1.94", 5, { run_attempt });
+  it("re-runs the release lane's failed jobs once and keeps waiting", async () => {
     const { calls, options } = fakeGitHub([
       { runs: [] },
+      { runs: [lane("completed")], jobs: { 2: runnerLost() } },
+      // GitHub has not picked the re-run up yet: still attempt 1
       { runs: [lane("completed")], jobs: { 2: runnerLost() } },
       { runs: [lane("in_progress", 2)] },
       { runs: [lane("completed", 2)], jobs: { 2: green() } },
     ]);
     expect(await waitForReleaseCi(options)).toEqual({ ok: true, runId: 2, via: "commit" });
     expect(calls).toEqual(["branch release-ci/v0.1.94 @sha", "dispatch release-ci/v0.1.94", "rerun 2", "delete release-ci/v0.1.94"]);
+  });
+
+  it("stops when the lane's re-run loses its runner again", async () => {
+    const { calls, options } = fakeGitHub([
+      { runs: [] },
+      { runs: [lane("completed")], jobs: { 2: runnerLost() } },
+      { runs: [lane("in_progress", 2)] },
+      { runs: [lane("completed", 2)], jobs: { 2: runnerLost() } },
+    ]);
+    expect(await waitForReleaseCi(options)).toMatchObject({ ok: false, reason: expect.stringContaining("release lane did not pass (runner-lost)") });
+    expect(calls).toEqual(["branch release-ci/v0.1.94 @sha", "dispatch release-ci/v0.1.94", "rerun 2", "delete release-ci/v0.1.94"]);
+  });
+
+  it.each([
+    ["push", "main"],
+    ["workflow_dispatch", "main"],
+    ["merge_group", "gh-readonly-queue/main/pr-1"],
+  ])("never re-runs a %s run on %s in its own queue: it starts CI in the lane", async (event, branch) => {
+    // A re-run of main's run would join main's concurrency group and cancel
+    // the newest merge's waiting run.
+    const lost = run(1, event, "completed", branch);
+    const { calls, options } = fakeGitHub([
+      { runs: [lost], jobs: { 1: runnerLost() } },
+      { runs: [lost, lane("in_progress")], jobs: { 1: runnerLost() } },
+      { runs: [lost, lane("completed")], jobs: { 1: runnerLost(), 2: green() } },
+    ]);
+    expect(await waitForReleaseCi(options)).toEqual({ ok: true, runId: 2, via: "commit" });
+    expect(calls).toEqual(LANE);
+  });
+
+  it("waits for another run on the commit before starting the lane", async () => {
+    const lost = run(1, "push", "completed");
+    const { calls, options } = fakeGitHub([
+      { runs: [lost, run(3, "workflow_dispatch", "in_progress", "main", 2)], jobs: { 1: runnerLost() } },
+      { runs: [lost, run(3, "workflow_dispatch", "completed", "main", 2)], jobs: { 1: runnerLost(), 3: green() } },
+    ]);
+    expect(await waitForReleaseCi(options)).toEqual({ ok: true, runId: 3, via: "commit" });
+    expect(calls).toEqual([]);
+  });
+
+  it("never re-runs a real test failure", async () => {
+    const { calls, options } = fakeGitHub([{ runs: [run(1, "push", "completed")], jobs: { 1: red() } }]);
+    expect(await waitForReleaseCi(options)).toMatchObject({ ok: false });
+    expect(calls).toEqual([]);
   });
 });
 
