@@ -77,6 +77,21 @@ describe("BM25 ranking", () => {
     expect(terms("Список платежей · 支払い 一覧 · facturaciónMensual")).toEqual(["список", "платежей", "支払い", "一覧", "facturación", "mensual"]);
   });
 
+  it("keeps words whole that carry combining marks, and normalizes what looks alike", () => {
+    expect(terms("भुगतान सूची")).toEqual(["भुगतान", "सूची"]);
+    // one Thai word, in its normalized form (NFKC splits SARA AM in two)
+    expect(terms("การชำระเงิน")).toEqual(["การชำระเงิน".normalize("NFKC")]);
+    expect(terms("cafe\u0301 menu")).toEqual(["café", "menu"]);
+    expect(terms("ｐａｙｍｅｎｔｓ")).toEqual(["payment"]);
+  });
+
+  it("matches a word however its accents were typed", async () => {
+    const tools = [tool("menus_get", "Gets the café menu."), tool("menus_list", "Lists menus.")];
+    expect((await bm25Ranker("cafe\u0301", tools, 2)).map((entry) => entry.name)).toEqual(["menus_get"]);
+    const hindi = [tool("bhugtan_list", "भुगतान सूची"), tool("bhugtan_get", "एक भुगतान")];
+    expect((await bm25Ranker("सूची", hindi, 2)).map((entry) => entry.name)).toEqual(["bhugtan_list"]);
+  });
+
   it("finds tools described in other scripts", async () => {
     const tools = [tool("platezhi_list", "Список платежей компании."), tool("shiharai_list", "支払い 一覧"), tool("payments_list", "Lists payments.")];
     expect((await bm25Ranker("платежей", tools, 3)).map((entry) => entry.name)).toEqual(["platezhi_list"]);
@@ -368,5 +383,78 @@ describe("describe_tool on a huge schema", () => {
       expect(parsed.fields.length + (parsed.moreFields ?? 0)).toBe(1 + groups.length * (perGroup + 1));
     }
     expect(JSON.parse(text(describeOne(structural(400)))).moreFields).toBeGreaterThan(0);
+  });
+});
+
+describe("schemas that keep their fields in $defs", () => {
+  const defs = {
+    PaymentFilters: { type: "object", properties: { status: { type: "string", enum: ["failed", "paid"] }, created_after: { type: "string", format: "date-time" } }, required: ["status"] },
+    Cursor: { type: "object", properties: { after: { type: "string" } } },
+    Tree: { type: "object", properties: { label: { type: "string", enum: ["leaf"] }, children: { type: "array", items: { $ref: "#/$defs/Tree" } } } },
+  };
+  /** The shape Pydantic and FastMCP write. */
+  const pydantic = {
+    type: "object",
+    properties: {
+      params: { $ref: "#/$defs/PaymentFilters" },
+      cursor: { anyOf: [{ $ref: "#/$defs/Cursor" }, { type: "null" }], default: null },
+    },
+    required: ["params"],
+    $defs: defs,
+  };
+
+  it("reads the words its definitions hold, each once, never in a circle", () => {
+    expect(schemaText(pydantic)).toBe("params status failed paid created_after cursor after");
+    expect(schemaText({ type: "object", properties: { root: { $ref: "#/$defs/Tree" } }, $defs: defs }).match(/leaf/g)).toHaveLength(1);
+    expect(schemaText({ $ref: "#" })).toBe("");
+    // only references into the same schema
+    expect(schemaText({ type: "object", properties: { x: { $ref: "https://example.test/remote.json" } } })).toBe("x");
+    expect(schemaText({ type: "object", definitions: { Old: { enum: ["legacy"] } }, properties: { x: { $ref: "#/definitions/Old" } } })).toBe("x legacy");
+  });
+
+  it("ranks a tool on the words its definitions hold", async () => {
+    const tools = [tool("payments_list", "Lists payments.", pydantic), tool("payouts_list", "Lists payouts.")];
+    expect((await bm25Ranker("failed", tools, 2)).map((entry) => entry.name)).toEqual(["payments_list"]);
+  });
+
+  it("writes signatures with the types references lead to", () => {
+    expect(inputSignature(pydantic)).toBe("{ params: object; cursor?: object | null }");
+    expect(inputSignature({ $ref: "#/$defs/Root", $defs: { Root: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } } })).toBe("{ id: string }");
+    expect(inputSignature({ type: "object", properties: { me: { $ref: "#" } } })).toBe("{ me?: object }");
+  });
+
+  it("outlines the fields behind references when a schema is too big to show", () => {
+    const filters = Object.fromEntries(Array.from({ length: 700 }, (_, index) => [`filter_${index}`, { type: "string", enum: ["one", "two", "three", "four", "five", "six"] }]));
+    const big = { type: "object", properties: { tree: { $ref: "#/$defs/Tree" }, params: { $ref: "#/$defs/Filters" } }, required: ["params"],
+      $defs: { Filters: { type: "object", properties: filters }, Tree: defs.Tree } };
+    const parsed = JSON.parse(text(new ToolDirectory([tool("orders_search", "Searches orders.", big)]).describe({ name: "orders_search" })));
+    expect(parsed.compacted).toMatch(/too large to show whole/);
+    // a definition that holds itself is walked once along each path
+    expect(parsed.fields.slice(0, 4)).toEqual([
+      { path: "tree", type: "object" },
+      { path: "tree.label", type: '"leaf"' },
+      { path: "tree.children", type: "object[]" },
+      { path: "params", type: "object", required: true },
+    ]);
+    expect(parsed.fields[4]).toEqual({ path: "params.filter_0", type: '"one" | "two" | "three" | "four" | "five" | "six"' });
+    // a schema whose root is itself a reference
+    const rooted = { $ref: "#/$defs/Root", $defs: { Root: { type: "object", properties: filters, required: ["filter_0"] } } };
+    const outlined = JSON.parse(text(new ToolDirectory([tool("orders_filter", "Filters orders.", rooted)]).describe({ name: "orders_filter" })));
+    expect(outlined.fields[0]).toEqual({ path: "filter_0", type: '"one" | "two" | "three" | "four" | "five" | "six"', required: true });
+  });
+});
+
+describe("describe_tool's last resort, whatever the names", () => {
+  it("stays within its budget with an enormous tool name or field names", () => {
+    const name = `orders_${"n".repeat(60_000)}`;
+    const answer = new ToolDirectory([tool(name, "Searches orders.", { type: "object", properties: { id: { type: "string" } } })]).describe({ name });
+    expect(Buffer.byteLength(text(answer))).toBeLessThanOrEqual(DESCRIBE_BYTES);
+    const parsed = JSON.parse(text(answer));
+    expect(parsed.name.length).toBeLessThanOrEqual(200);
+    expect(parsed.fields).toEqual([{ path: "id", type: "string" }]);
+    const wide = { type: "object", properties: Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`${"p".repeat(5_000)}${index}`, { type: "string" }])) };
+    const outline = new ToolDirectory([tool("wide_get", "Wide.", wide)]).describe({ name: "wide_get" });
+    expect(Buffer.byteLength(text(outline))).toBeLessThanOrEqual(DESCRIBE_BYTES);
+    for (const field of JSON.parse(text(outline)).fields) expect(field.path.length).toBeLessThanOrEqual(200);
   });
 });

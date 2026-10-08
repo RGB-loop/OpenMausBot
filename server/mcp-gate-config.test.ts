@@ -51,7 +51,13 @@ describe("tool directory configuration", () => {
     const sourceEnv = { HTTPS_PROXY: "http://proxy.example.test:3128", no_proxy: "localhost", NODE_EXTRA_CA_CERTS: "/etc/corp-ca.pem",
       SSL_CERT_FILE: "/etc/ssl/cert.pem", PATH: "/usr/bin", UNRELATED_SECRET: "not-for-the-proxy" };
     const proxy = mcpStdioServer(remote, { sourceEnv })!;
-    expect(proxy.env).toMatchObject({ HTTPS_PROXY: "http://proxy.example.test:3128", no_proxy: "localhost", NODE_EXTRA_CA_CERTS: "/etc/corp-ca.pem", SSL_CERT_FILE: "/etc/ssl/cert.pem", NODE_USE_ENV_PROXY: "1" });
+    expect(proxy.env).toMatchObject({ HTTPS_PROXY: "http://proxy.example.test:3128", NODE_EXTRA_CA_CERTS: "/etc/corp-ca.pem", SSL_CERT_FILE: "/etc/ssl/cert.pem", NODE_USE_ENV_PROXY: "1" });
+    // this computer never goes through the proxy, under either spelling, the person's own list kept
+    expect(proxy.env!.NO_PROXY).toBe("localhost,127.0.0.1,::1");
+    expect(proxy.env!.no_proxy).toBe("localhost,127.0.0.1,::1");
+    const merged = mcpStdioServer(remote, { sourceEnv: { HTTP_PROXY: "http://proxy.example.test:3128", NO_PROXY: "corp.internal, .example.org", no_proxy: "build.local" } })!;
+    expect(merged.env!.NO_PROXY).toBe("build.local,corp.internal,.example.org,localhost,127.0.0.1,::1");
+    expect(merged.env!.no_proxy).toBe(merged.env!.NO_PROXY);
     expect(proxy.env).not.toHaveProperty("UNRELATED_SECRET");
     expect(proxy.env).not.toHaveProperty("PATH");
     // certificates alone need no proxy switch
@@ -59,7 +65,7 @@ describe("tool directory configuration", () => {
     // beside a private record they stay plain names, which a shared environment can pass on
     const record = `OMB_REMOTE_MCP_CONFIG_${"0".repeat(64)}`;
     expect(Object.keys(mcpStdioServer(remote, { sourceEnv, configEnvName: record })!.env!).sort()).toEqual(
-      ["HTTPS_PROXY", "NODE_EXTRA_CA_CERTS", "NODE_USE_ENV_PROXY", "SSL_CERT_FILE", "no_proxy", record].sort());
+      ["HTTPS_PROXY", "NODE_EXTRA_CA_CERTS", "NODE_USE_ENV_PROXY", "NO_PROXY", "SSL_CERT_FILE", "no_proxy", record].sort());
     // and a gated proxy carries them in its upstream descriptor
     const gated = gateServer({ name: "whop", server: remote, threadId: "disposable-thread", budget: 0, toolScope: { allow: [] }, sourceEnv })!;
     expect(JSON.parse(gated.env.OMB_GATE_UPSTREAM).env).toMatchObject({ HTTPS_PROXY: "http://proxy.example.test:3128", NODE_USE_ENV_PROXY: "1" });

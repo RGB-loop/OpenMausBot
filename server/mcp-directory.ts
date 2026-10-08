@@ -123,6 +123,47 @@ export function oneLine(text: unknown, maxChars: number): string {
   return typeof text === "string" ? bounded(text.replace(/\s+/g, " ").trim(), maxChars) : "";
 }
 
+// ── local references ────────────────────────────────────────────────────
+// Pydantic and FastMCP schemas keep a tool's real fields in `$defs` (or
+// `definitions`) behind `{"$ref": "#/$defs/Filters"}`. Only references into
+// the same schema are followed, never a URL, and never in a circle.
+
+/** The part of `root` a local `$ref` points at (`#`, `#/$defs/Filters`,
+ * any `#/…` JSON pointer), or undefined. */
+function resolveRef(root: unknown, ref: string): unknown {
+  if (ref === "#") return root;
+  if (!ref.startsWith("#/")) return undefined;
+  let node = root;
+  for (const raw of ref.slice(2).split("/")) {
+    let key: string;
+    try { key = decodeURIComponent(raw).replace(/~1/g, "/").replace(/~0/g, "~"); } catch { return undefined; }
+    if (!node || typeof node !== "object" || !Object.hasOwn(node, key)) return undefined;
+    node = (node as Record<string, unknown>)[key];
+  }
+  return node;
+}
+
+/** `node` with its references followed, and a lone wrapper unwrapped:
+ * `allOf: [X]`, or `anyOf`/`oneOf` of X and null (an optional field).
+ * Undefined for a reference that leads back to one already taken. */
+function deref(root: unknown, node: unknown, taken: Set<string> = new Set()): unknown {
+  let current = node;
+  for (let hop = 0; hop < 16 && isRecord(current); hop += 1) {
+    if (typeof current.$ref === "string") {
+      if (taken.has(current.$ref)) return undefined;
+      taken.add(current.$ref);
+      current = resolveRef(root, current.$ref);
+      continue;
+    }
+    const wrapped = Array.isArray(current.allOf) && current.allOf.length === 1 ? current.allOf
+      : (Array.isArray(current.anyOf) ? current.anyOf : Array.isArray(current.oneOf) ? current.oneOf : [])
+        .filter((choice: unknown) => !(isRecord(choice) && choice.type === "null"));
+    if (isRecord(current.properties) || wrapped.length !== 1) return current;
+    current = wrapped[0];
+  }
+  return current;
+}
+
 // ── ranking ─────────────────────────────────────────────────────────────
 
 /** Words a request is phrased with rather than about: "how much revenue
@@ -153,15 +194,18 @@ export function stem(word: string): string {
   return w;
 }
 
-/** The words of a name or a sentence: runs of Unicode letters and digits,
- * camelCase and snake_case split, lowercased, stop words and single ASCII
- * letters dropped, ASCII words stemmed. */
+/** The words of a name or a sentence: NFKC-normalized (a decomposed café,
+ * fullwidth letters), runs of Unicode letters, combining marks and digits
+ * (so Hindi and Thai words stay whole), camelCase and snake_case split,
+ * lowercased, stop words and single ASCII letters dropped, ASCII words
+ * stemmed. */
 export function terms(text: string): string[] {
   return text
+    .normalize("NFKC")
     .replace(/([\p{Ll}\p{N}])(\p{Lu})/gu, "$1 $2")
     .replace(/(\p{Lu}+)(\p{Lu}\p{Ll})/gu, "$1 $2")
     .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
+    .split(/[^\p{L}\p{M}\p{N}]+/u)
     .filter((word) => word && (word.length > 1 || !/^[a-z0-9]$/.test(word)) && !STOP_WORDS.has(word))
     .map((word) => /^[a-z0-9]+$/.test(word) ? stem(word) : word);
 }
@@ -174,11 +218,17 @@ const SUBSCHEMA_LISTS = ["anyOf", "oneOf", "allOf", "prefixItems"] as const;
  * and descriptions, nested ones too, bounded. */
 export function schemaText(schema: unknown, maxChars = SCHEMA_TEXT_CHARS): string {
   let text = "";
+  const followed = new Set<string>();
   const add = (part: unknown) => {
     if ((typeof part === "string" || typeof part === "number") && text.length < maxChars) text = `${text} ${cut(String(part), maxChars - text.length)}`;
   };
   const visit = (node: unknown, depth: number) => {
     if (!isRecord(node) || depth > 8 || text.length >= maxChars) return;
+    // each local definition is read once, wherever it is referred to
+    if (typeof node.$ref === "string" && !followed.has(node.$ref)) {
+      followed.add(node.$ref);
+      visit(resolveRef(schema, node.$ref), depth + 1);
+    }
     add(node.description);
     if (Array.isArray(node.enum)) for (const value of node.enum) add(value);
     add(node.const);
@@ -319,17 +369,21 @@ function union(parts: string[]): string {
 }
 
 /** One schema as a short TypeScript-style type. Objects stay `object`: the
- * signature is a hint, and describe_tool has the exact shape. */
-function typeText(schema: unknown, depth: number): string {
+ * signature is a hint, and describe_tool has the exact shape. Local
+ * references into `root` are followed a few steps deep. */
+function typeText(schema: unknown, depth: number, root?: unknown, hops = 0): string {
   if (!isRecord(schema)) return "unknown";
+  if (typeof schema.$ref === "string") {
+    return hops < 4 && root !== undefined ? typeText(resolveRef(root, schema.$ref), depth, root, hops + 1) : "unknown";
+  }
   if ("const" in schema) return literal(schema.const);
   if (Array.isArray(schema.enum) && schema.enum.length) {
     const values = union(schema.enum.slice(0, 6).map(literal)) + (schema.enum.length > 6 ? " | …" : "");
     if (values.length <= 80) return values;
   }
   const choices = Array.isArray(schema.anyOf) ? schema.anyOf : Array.isArray(schema.oneOf) ? schema.oneOf : undefined;
-  if (choices?.length) return union(choices.map((choice) => typeText(choice, depth)));
-  if (Array.isArray(schema.type)) return union(schema.type.map((type) => typeText({ ...schema, type }, depth)));
+  if (choices?.length) return bounded(union(choices.map((choice) => typeText(choice, depth, root, hops))), 120);
+  if (Array.isArray(schema.type)) return union(schema.type.map((type) => typeText({ ...schema, type }, depth, root, hops)));
   switch (schema.type) {
     case "string": return "string";
     case "integer":
@@ -338,12 +392,12 @@ function typeText(schema: unknown, depth: number): string {
     case "null": return "null";
     case "object": return "object";
     case "array": {
-      const item = depth < 2 ? typeText(schema.items, depth + 1) : "unknown";
+      const item = depth < 2 ? typeText(schema.items, depth + 1, root, hops) : "unknown";
       return item.includes(" ") ? `(${item})[]` : `${item}[]`;
     }
   }
   if (isRecord(schema.properties)) return "object";
-  if (Array.isArray(schema.allOf) && schema.allOf.length === 1) return typeText(schema.allOf[0], depth);
+  if (Array.isArray(schema.allOf) && schema.allOf.length === 1) return typeText(schema.allOf[0], depth, root, hops);
   return "unknown";
 }
 
@@ -351,11 +405,13 @@ function typeText(schema: unknown, depth: number): string {
  * at most `maxChars` long: `{ company_id: string; first?: number }`. Fields
  * that do not fit are counted, never cut in half. */
 export function inputSignature(schema: unknown, maxChars = SIGNATURE_CHARS): string {
+  const root = schema;
+  schema = deref(root, schema);
   const properties = isRecord(schema) && isRecord(schema.properties) ? schema.properties : {};
   const required = new Set(isRecord(schema) && Array.isArray(schema.required) ? schema.required.filter((key): key is string => typeof key === "string") : []);
   const keys = Object.keys(properties);
   const fields = [...keys.filter((key) => required.has(key)), ...keys.filter((key) => !required.has(key))].map((key) =>
-    `${/^[A-Za-z_$][\w$]*$/.test(key) ? key : JSON.stringify(key)}${required.has(key) ? "" : "?"}: ${typeText(properties[key], 0)}`);
+    `${/^[A-Za-z_$][\w$]*$/.test(key) ? key : JSON.stringify(key)}${required.has(key) ? "" : "?"}: ${typeText(properties[key], 0, root)}`);
   if (!fields.length) return "{}";
   const whole = `{ ${fields.join("; ")} }`;
   if (whole.length <= maxChars) return whole;
@@ -453,16 +509,20 @@ function withoutKeywords(schema: unknown, keywords: ReadonlySet<string>, depth: 
  * what is left of a schema too big to show. */
 function schemaFields(schema: unknown): Array<{ path: string; type: string; required?: true }> {
   const fields: Array<{ path: string; type: string; required?: true }> = [];
-  const visit = (node: unknown, prefix: string, depth: number) => {
+  const visit = (start: unknown, prefix: string, depth: number, taken: Set<string>) => {
+    const node = deref(schema, start, taken);
     if (!isRecord(node) || !isRecord(node.properties) || depth > 6) return;
     const required = new Set(Array.isArray(node.required) ? node.required : []);
     for (const [key, child] of Object.entries(node.properties)) {
-      const path = prefix ? `${prefix}.${key}` : key;
-      fields.push({ path, type: typeText(child, 0), ...(required.has(key) ? { required: true as const } : {}) });
-      if (isRecord(child)) visit(isRecord(child.items) ? child.items : child, isRecord(child.items) ? `${path}[]` : path, depth + 1);
+      const path = bounded(prefix ? `${prefix}.${key}` : key, 200);
+      fields.push({ path, type: bounded(typeText(child, 0, schema), 200), ...(required.has(key) ? { required: true as const } : {}) });
+      // each path follows its own references, so a schema that nests itself stops
+      const branch = new Set(taken);
+      const value = deref(schema, child, branch);
+      if (isRecord(value)) visit(isRecord(value.items) ? value.items : value, isRecord(value.items) ? `${path}[]` : path, depth + 1, branch);
     }
   };
-  visit(schema, "", 0);
+  visit(schema, "", 0, new Set());
   return fields;
 }
 
@@ -609,7 +669,7 @@ export class ToolDirectory {
     // Last resort: the fields alone, as many as fit, and how many did not.
     const fields = schemaFields(definition.inputSchema);
     const outline = (kept: number) => JSON.stringify({
-      name: tool.name,
+      name: bounded(tool.name, 200),
       description: oneLine(tool.description, 4_000),
       fields: fields.slice(0, kept),
       ...(kept < fields.length ? { moreFields: fields.length - kept } : {}),

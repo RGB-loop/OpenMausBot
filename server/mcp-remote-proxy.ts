@@ -25,7 +25,7 @@ import {
   type DirectoryContext,
 } from "./mcp-directory.ts";
 import { MAX_REMOTE_MCP_BYTES, REMOTE_MCP_CONFIG_ENV, RemoteMcpClient, remoteMcpSpec } from "./mcp-http.ts";
-import { compileToolSchema, schemaProblems } from "./mcp-schema-validator.ts";
+import { lenientToolValidator, schemaProblems } from "./mcp-schema-validator.ts";
 
 type Json = Record<string, unknown>;
 function isRecord(value: unknown): value is Json {
@@ -152,18 +152,20 @@ async function readCatalog(): Promise<CatalogTool[]> {
   throw new Error("tool catalog has too many pages");
 }
 
-/** One validator per tool definition, or null for a schema this validator
- * cannot read: the server still enforces its own schema, so such a tool's
- * arguments go through unchecked rather than being refused. */
+/** One forgiving validator per tool definition (lenientToolValidator), or
+ * null where there is none worth running. The server enforces its own
+ * schema either way: a tool without a validator, or one whose validator
+ * throws (a schema that refers to itself forever), is called unchecked. */
 const validators = new WeakMap<CatalogTool, ValidateFunction | null>();
 function argumentProblems(tool: CatalogTool, args: Json): string[] | undefined {
   let validate = validators.get(tool);
   if (validate === undefined) {
-    try { validate = isRecord(tool.inputSchema) ? compileToolSchema(tool.inputSchema, { allErrors: true }) : null; }
-    catch { validate = null; }
+    validate = lenientToolValidator(tool.inputSchema);
     validators.set(tool, validate);
   }
-  return !validate || validate(args) ? undefined : schemaProblems(validate.errors);
+  if (!validate) return undefined;
+  try { return validate(args) ? undefined : schemaProblems(validate.errors); }
+  catch { return undefined; }
 }
 
 /** Settles with `promise`, or rejects when this request's own signal fires. */

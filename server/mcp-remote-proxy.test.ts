@@ -281,7 +281,7 @@ describe("remote MCP tool directory", () => {
   it("checks call_tool's arguments against the tool's own schema before anything runs", async () => {
     fake = await startFakeHttpMcp({ tools: [
       ...catalog,
-      { name: "odd_schema", description: "A tool whose schema this validator cannot read.", inputSchema: { type: "object", properties: { id: { type: "string", format: "not-a-known-format" } } } },
+      { name: "odd_schema", description: "A tool whose schema this validator cannot read.", inputSchema: { type: "object", properties: { id: { $ref: "#/$defs/Missing" } } } },
     ] });
     start(mcpStdioServer(spec(fake.url), { directory: { name: "whop" } })!);
     await initialize();
@@ -329,6 +329,44 @@ describe("remote MCP tool directory", () => {
     await initialize();
     expect((await request("tools/list")).error).toEqual({ code: -32603, message: "Remote MCP request failed" });
     expect(fake.toolsLists).toBe(reads);
+  });
+
+  it("leaves to the server what a checker in front of it cannot judge fairly", async () => {
+    const tool = (name: string, inputSchema: Record<string, unknown>) => ({ name, description: `Checks ${name}.`, inputSchema });
+    fake = await startFakeHttpMcp({ tools: [
+      ...catalog,
+      // a schema that refers to itself forever
+      tool("self_ref", { $ref: "#" }),
+      // a regular expression that would stall the proxy on the wrong input
+      tool("codes_check", { type: "object", properties: { code: { type: "string", pattern: "^(a+)+$" } }, required: ["code"] }),
+      // validators disagree on formats: a date for a date-time
+      tool("reports_since", { type: "object", properties: { since: { type: "string", format: "date-time" } }, required: ["since"] }),
+      // properties a branch declares, refused by a strict reading of the level
+      tool("charges_make", { type: "object", additionalProperties: false, properties: { kind: { type: "string" } }, anyOf: [{ properties: { amount: { type: "number" } } }] }),
+      tool("headers_send", { type: "object", additionalProperties: false, patternProperties: { "^x-": { type: "string" } } }),
+      // too big to be worth compiling
+      tool("huge_check", { type: "object", description: "x".repeat(70_000), properties: { id: { type: "string" } }, required: ["id"] }),
+      // a keyword no JSON Schema version defines
+      tool("notes_tagged", { type: "object", properties: { id: { type: "string", example: "note_1", "x-display": "inline" } }, required: ["id"] }),
+    ] });
+    start(mcpStdioServer(spec(fake.url), { directory: { name: "whop" } })!);
+    await initialize();
+    const calls = [
+      { name: "self_ref", arguments: { anything: true } },
+      { name: "codes_check", arguments: { code: `${"a".repeat(40)}!` } },
+      { name: "reports_since", arguments: { since: "2026-10-01" } },
+      { name: "charges_make", arguments: { kind: "one-off", amount: 5 } },
+      { name: "headers_send", arguments: { "x-trace": "1" } },
+      { name: "huge_check", arguments: {} },
+    ];
+    for (const forwarded of calls) {
+      expect((await call(CALL_TOOL, forwarded)).result.content[0].text).toBe("remote execution recorded");
+    }
+    expect(fake.calls).toEqual(calls);
+    // a plain mistake is still caught, keywords Ajv does not know included
+    expect(JSON.parse((await call(CALL_TOOL, { name: "codes_check", arguments: {} })).result.content[0].text).problems).toContain("must have required property 'code'");
+    expect(JSON.parse((await call(CALL_TOOL, { name: "notes_tagged", arguments: {} })).result.content[0].text).problems).toContain("must have required property 'id'");
+    expect(fake.calls).toEqual(calls);
   });
 
   it("passes a small catalog through unchanged", async () => {
@@ -418,29 +456,51 @@ describe("remote MCP tool directory", () => {
     expect((await request("tools/list")).result.tools).toHaveLength(3);
   });
 
-  it("reaches the server through the person's HTTP proxy", async () => {
+  /** This machine's environment without its own proxy settings. */
+  const withoutProxies = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(https?_proxy|no_proxy|node_use_env_proxy)$/i.test(name)));
+
+  it("reaches an internet server through the person's HTTP proxy", async () => {
     fake = await startFakeHttpMcp({ tools: catalog });
+    const port = new URL(fake.url).port;
+    // a forward proxy that knows where the test's "internet" host lives
     const forwarded: string[] = [];
     const proxy = createServer((req, res) => {
       forwarded.push(req.url ?? "");
-      const upstream = httpRequest(req.url!, { method: req.method, headers: req.headers }, (answer) => { res.writeHead(answer.statusCode ?? 502, answer.headers); answer.pipe(res); });
+      const target = new URL(req.url!);
+      target.hostname = "127.0.0.1";
+      const upstream = httpRequest(target, { method: req.method, headers: req.headers }, (answer) => { res.writeHead(answer.statusCode ?? 502, answer.headers); answer.pipe(res); });
       upstream.on("error", () => res.destroy());
       req.pipe(upstream);
     });
     await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
     try {
       const via = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
-      const descriptor = mcpStdioServer(spec(fake.url), { directory: { name: "whop" }, sourceEnv: { HTTP_PROXY: via } })!;
-      // nothing from this machine's own proxy settings: only the descriptor's
-      start(descriptor, Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(https?_proxy|no_proxy|node_use_env_proxy)$/i.test(name))));
+      const internet = `http://mcp.proxy-fixture.test:${port}/mcp`;
+      start(mcpStdioServer(spec(internet), { directory: { name: "whop" }, sourceEnv: { HTTP_PROXY: via } })!, withoutProxies());
       await initialize();
       expect((await request("tools/list")).result.tools).toHaveLength(3);
       expect(forwarded.length).toBeGreaterThan(0);
-      expect(forwarded.every((url) => url === fake!.url)).toBe(true);
+      expect(forwarded.every((url) => url === internet)).toBe(true);
     } finally {
       proxy.closeAllConnections();
       await new Promise<void>((resolve) => proxy.close(() => resolve()));
     }
+  });
+
+  it("reaches a server on this computer directly, past a proxy that could not", async () => {
+    fake = await startFakeHttpMcp({ tools: catalog });
+    // nothing listens here: a request sent to this "proxy" is refused
+    const unreachable = "http://127.0.0.1:9";
+    for (const sourceEnv of [{ HTTP_PROXY: unreachable }, { HTTP_PROXY: unreachable, NO_PROXY: "corp.internal" }]) {
+      start(mcpStdioServer(spec(fake.url), { directory: { name: "whop" }, sourceEnv })!, withoutProxies());
+      await initialize();
+      expect((await request("tools/list")).result.tools).toHaveLength(3);
+      const stopped = once(child!, "close"); child!.kill(); await stopped;
+    }
+    const localhost = fake.url.replace("127.0.0.1", "localhost");
+    start(mcpStdioServer(spec(localhost), { directory: { name: "whop" }, sourceEnv: { HTTPS_PROXY: unreachable, HTTP_PROXY: unreachable } })!, withoutProxies());
+    await initialize();
+    expect((await request("tools/list")).result.tools).toHaveLength(3);
   });
 
   it("runs from the shipped bundle, schema checks included", async () => {

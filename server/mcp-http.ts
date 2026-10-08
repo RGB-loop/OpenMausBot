@@ -399,20 +399,23 @@ export class RemoteMcpClient {
   }
 
   /** Server messages that are not this client's responses: notifications
-   * go to the caller; a request (elicitation, sampling, roots…) is refused at
-   * once, since this client offers none of them. Left unanswered, a server
-   * waiting on one holds its own reply until the call times out. */
+   * go to the caller; a ping is answered, as every MCP party must; any other
+   * request (elicitation, sampling, roots…) is refused at once, since this
+   * client offers none of them. Left unanswered, a server waiting on one
+   * holds its own reply until the call times out. */
   private deliverNotifications(parsed: JsonRpcMessage | JsonRpcMessage[] | null): void {
     for (const message of Array.isArray(parsed) ? parsed : parsed ? [parsed] : []) {
       if (typeof message.method !== "string") continue;
       if (message.id === undefined) this.onNotification?.(message);
-      else if (typeof message.id === "string" || typeof message.id === "number") void this.refuseRequest(message.id);
+      else if (typeof message.id === "string" || typeof message.id === "number") void this.answerRequest(message.id, message.method);
     }
   }
 
-  private async refuseRequest(id: string | number): Promise<void> {
+  private async answerRequest(id: string | number, method: string): Promise<void> {
     if (this.closed) return;
-    const frame = { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not supported by this client" } };
+    const frame = method === "ping"
+      ? { jsonrpc: "2.0", id, result: {} }
+      : { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not supported by this client" } };
     try {
       if (this.target.type === "sse") await this.ssePost(frame, AbortSignal.timeout(10_000));
       else drain(await this.post(this.target.url, frame, AbortSignal.timeout(10_000)));

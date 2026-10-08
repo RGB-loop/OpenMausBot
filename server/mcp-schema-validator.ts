@@ -18,15 +18,17 @@ const validatorOptions = {
 };
 
 /** A validator for one tool's input schema. `allErrors` collects every
- * problem rather than stopping at the first, for a caller that lists them. */
-export function compileToolSchema(schema: Record<string, unknown>, options: { allErrors?: boolean } = {}): ValidateFunction {
+ * problem rather than stopping at the first, for a caller that lists them;
+ * `strict: false` ignores keywords Ajv does not know instead of refusing
+ * the schema. */
+export function compileToolSchema(schema: Record<string, unknown>, options: { allErrors?: boolean; strict?: boolean } = {}): ValidateFunction {
   const dialect = schema.$schema;
   if (dialect !== undefined && dialect !== "http://json-schema.org/draft-07/schema#" && dialect !== "https://json-schema.org/draft/2020-12/schema") {
     throw new Error("MCP tool schema uses an unsupported dialect; use JSON Schema draft-07 or 2020-12");
   }
   // One compiler per schema also prevents external IDs from resolving against
   // unrelated tools or retaining schemas after the turn has closed.
-  const settings = { ...validatorOptions, allErrors: options.allErrors === true };
+  const settings = { ...validatorOptions, allErrors: options.allErrors === true, strict: options.strict !== false };
   const compiler = dialect === "https://json-schema.org/draft/2020-12/schema" ? new Ajv2020(settings) : new Ajv(settings);
   // ajv-formats is CommonJS and exports the plugin as both module.exports
   // and .default; the latter also matches its NodeNext declaration.
@@ -48,4 +50,53 @@ export function schemaProblems(errors: readonly ErrorObject[] | null | undefined
     return `${where}${error.message ?? "is not valid"}${detail}`;
   });
   return [...new Set(lines)].slice(0, max);
+}
+
+// ── a forgiving check, for a checker that is not the authority ──
+
+type Json = Record<string, unknown>;
+const isRecord = (value: unknown): value is Json => !!value && typeof value === "object" && !Array.isArray(value);
+
+/** Schemas longer than this are left to the server: compiling one would
+ * cost more than checking it saves. */
+export const LENIENT_SCHEMA_CHARS = 64_000;
+const SCHEMA_MAPS = ["properties", "$defs", "definitions", "dependentSchemas"];
+const SCHEMA_LISTS = ["anyOf", "oneOf", "allOf", "prefixItems"];
+const SCHEMA_ONE = ["items", "additionalItems", "additionalProperties", "not", "if", "then", "else", "contains", "propertyNames", "unevaluatedItems", "unevaluatedProperties"];
+
+/** A copy of a schema without what a checker standing in front of the
+ * server should never refuse on. The server still enforces all of it.
+ * - `pattern`, `patternProperties` and `format`: a server's regular
+ *   expression could stall this process (ReDoS), and validators disagree
+ *   on formats (a date offered for a date-time).
+ * - `additionalProperties: false` beside patternProperties or
+ *   allOf/anyOf/oneOf, whose properties that level does not itself declare,
+ *   so a strict reading refuses calls the server accepts. */
+export function lenientSchema(schema: unknown, depth = 0): unknown {
+  if (Array.isArray(schema)) return schema.map((child) => lenientSchema(child, depth));
+  if (!isRecord(schema) || depth > 64) return schema;
+  const copy: Json = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "pattern" || key === "patternProperties" || key === "format") continue;
+    if (SCHEMA_MAPS.includes(key) && isRecord(value)) copy[key] = Object.fromEntries(Object.entries(value).map(([name, child]) => [name, lenientSchema(child, depth + 1)]));
+    else if (SCHEMA_LISTS.includes(key) || SCHEMA_ONE.includes(key)) copy[key] = lenientSchema(value, depth + 1);
+    else if (key === "dependencies" && isRecord(value)) copy[key] = Object.fromEntries(Object.entries(value).map(([name, child]) => [name, Array.isArray(child) ? child : lenientSchema(child, depth + 1)]));
+    else copy[key] = value;
+  }
+  const opened = "patternProperties" in schema || SCHEMA_LISTS.slice(0, 3).some((key) => key in schema);
+  if (opened && copy.additionalProperties === false) delete copy.additionalProperties;
+  return copy;
+}
+
+/** A forgiving validator for a server's own input schema, or null when
+ * there is none worth running: too big, or one Ajv cannot compile. What it
+ * refuses is wrong for certain; what it cannot judge is the server's. */
+export function lenientToolValidator(schema: unknown): ValidateFunction | null {
+  if (!isRecord(schema)) return null;
+  try {
+    if (JSON.stringify(schema).length > LENIENT_SCHEMA_CHARS) return null;
+    return compileToolSchema(lenientSchema(schema) as Json, { allErrors: true, strict: false });
+  } catch {
+    return null;
+  }
 }

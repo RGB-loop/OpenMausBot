@@ -42,11 +42,21 @@ export interface StdioServer {
 const NETWORK_ENV = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"];
 const PROXY_ENV = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
 
+/** Never sent through a proxy: Node's env-proxy mode, unlike curl, does
+ * not exempt this computer on its own, and a URL server on loopback (a
+ * local tool, a test) is unreachable through a corporate proxy. */
+const LOOPBACK = ["localhost", "127.0.0.1", "::1"];
+
 function networkEnv(source: NodeJS.ProcessEnv | Record<string, string | undefined>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const name of NETWORK_ENV) if (source[name]) env[name] = source[name];
-  // Node's fetch ignores the proxy variables unless told to use them.
-  if (PROXY_ENV.some((name) => env[name])) env.NODE_USE_ENV_PROXY = source.NODE_USE_ENV_PROXY || "1";
+  if (PROXY_ENV.some((name) => env[name])) {
+    // Node's fetch ignores the proxy variables unless told to use them.
+    env.NODE_USE_ENV_PROXY = source.NODE_USE_ENV_PROXY || "1";
+    // One list under both spellings, since either may be the one read.
+    const bypass = [env.no_proxy, env.NO_PROXY].flatMap((list) => (list ?? "").split(",")).map((entry) => entry.trim()).filter(Boolean);
+    env.NO_PROXY = env.no_proxy = [...new Set([...bypass, ...LOOPBACK])].join(",");
+  }
   return env;
 }
 

@@ -21,4 +21,12 @@ describe("a server's own requests to the client", () => {
     expect(result).toEqual({ content: [{ type: "text", text: "remote execution recorded" }] });
     expect(fake.replies).toEqual([{ jsonrpc: "2.0", id: "server-ask-1", error: { code: -32601, message: "Method not supported by this client" } }]);
   });
+
+  it.each(["http", "sse"] as const)("include a ping, which gets its empty answer over %s", async (transport) => {
+    fake = await startFakeHttpMcp({ transport, tools: [{ name: "ask_first", inputSchema: { type: "object" } }], askOnCall: "ping" });
+    client = new RemoteMcpClient({ type: transport, url: fake.url, headers: {} });
+    await client.initialize("fixture", AbortSignal.timeout(5_000));
+    await client.request("tools/call", { name: "ask_first", arguments: {} }, AbortSignal.timeout(5_000));
+    expect(fake.replies).toEqual([{ jsonrpc: "2.0", id: "server-ask-1", result: {} }]);
+  });
 });
