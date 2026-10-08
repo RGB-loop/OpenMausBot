@@ -47,11 +47,19 @@ const PROXY_ENV = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
  * local tool, a test) is unreachable through a corporate proxy. */
 const LOOPBACK = ["localhost", "127.0.0.1", "::1"];
 
-function networkEnv(source: NodeJS.ProcessEnv | Record<string, string | undefined>): Record<string, string> {
+/** The proxy's network settings for a server at `url`.
+ *
+ * Node's fetch ignores the proxy variables unless NODE_USE_ENV_PROXY is set,
+ * and that switch is set only for an https:// server. On Node 24 (CI, the
+ * Cloud image, Electron 43) a plain http:// request through an env proxy
+ * hangs: it never reaches the proxy and ignores its own AbortSignal, so an
+ * http:// server would never answer. An https:// request goes through the
+ * proxy's CONNECT tunnel and works. An http:// server is reached directly,
+ * as it was before proxies were passed on at all. */
+function networkEnv(source: NodeJS.ProcessEnv | Record<string, string | undefined>, url: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const name of NETWORK_ENV) if (source[name]) env[name] = source[name];
-  if (PROXY_ENV.some((name) => env[name])) {
-    // Node's fetch ignores the proxy variables unless told to use them.
+  if (new URL(url).protocol === "https:" && PROXY_ENV.some((name) => env[name])) {
     env.NODE_USE_ENV_PROXY = source.NODE_USE_ENV_PROXY || "1";
     // One list under both spellings, since either may be the one read.
     const bypass = [env.no_proxy, env.NO_PROXY].flatMap((list) => (list ?? "").split(",")).map((entry) => entry.trim()).filter(Boolean);
@@ -107,7 +115,7 @@ export function mcpStdioServer(server: unknown, options: StdioServerOptions = {}
     args: [SPAWNED_PROXIES.mcpRemote, ...(options.configEnvName ? ["--config-env", options.configEnvName] : [])],
     env: {
       ...options.nodeEnv,
-      ...networkEnv(options.sourceEnv ?? process.env),
+      ...networkEnv(options.sourceEnv ?? process.env, remote.url),
       ...(options.configEnvName ? { [options.configEnvName]: JSON.stringify(settings) } : settings),
     },
   };

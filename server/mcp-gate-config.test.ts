@@ -71,6 +71,31 @@ describe("tool directory configuration", () => {
     expect(JSON.parse(gated.env.OMB_GATE_UPSTREAM).env).toMatchObject({ HTTPS_PROXY: "http://proxy.example.test:3128", NODE_USE_ENV_PROXY: "1" });
   });
 
+  // Node 24's fetch hangs on a plain http:// request through an env proxy;
+  // https:// goes through CONNECT and works (mcpStdioServer's networkEnv).
+  it("switches the proxy on for an https server only; an http server is reached directly", () => {
+    const http = { ...remote, url: "http://mcp.example.test/mcp" };
+    for (const sourceEnv of [{ HTTP_PROXY: "http://proxy.example.test:3128" }, { HTTPS_PROXY: "http://proxy.example.test:3128", no_proxy: "corp.internal" }]) {
+      const secure = mcpStdioServer(remote, { sourceEnv })!.env!;
+      expect(secure.NODE_USE_ENV_PROXY).toBe("1");
+      expect(secure.NO_PROXY!.split(",")).toEqual(expect.arrayContaining(["localhost", "127.0.0.1", "::1"]));
+      expect(secure.no_proxy).toBe(secure.NO_PROXY);
+      const plain = mcpStdioServer(http, { sourceEnv })!.env!;
+      expect(plain).not.toHaveProperty("NODE_USE_ENV_PROXY");
+      // the person's own list passes on as it was, nothing added
+      expect(plain.NO_PROXY).toBeUndefined();
+      expect(plain.no_proxy).toBe(sourceEnv.no_proxy);
+      for (const descriptor of [
+        gateServer({ name: "whop", server: http, threadId: "disposable-thread", budget: 0, toolScope: { allow: [] }, sourceEnv })!,
+        gateServer({ name: "whop", server: http, threadId: "disposable-thread", budget: 0, toolScope: { allow: [] }, directory: true, sourceEnv })!,
+      ]) expect(JSON.parse(descriptor.env.OMB_GATE_UPSTREAM).env).not.toHaveProperty("NODE_USE_ENV_PROXY");
+      expect(JSON.parse(gateServer({ name: "whop", server: remote, threadId: "disposable-thread", budget: 0, toolScope: { allow: [] }, sourceEnv })!.env.OMB_GATE_UPSTREAM).env.NODE_USE_ENV_PROXY).toBe("1");
+    }
+    // an SSE server follows its own URL's scheme too
+    expect(mcpStdioServer({ ...remote, type: "sse", url: "http://mcp.example.test/sse" }, { sourceEnv: { HTTPS_PROXY: "http://p:1" } })!.env).not.toHaveProperty("NODE_USE_ENV_PROXY");
+    expect(mcpStdioServer({ ...remote, type: "sse", url: "https://mcp.example.test/sse" }, { sourceEnv: { HTTPS_PROXY: "http://p:1" } })!.env!.NODE_USE_ENV_PROXY).toBe("1");
+  });
+
   it("refuses settings the proxy could not read", () => {
     expect(() => mcpStdioServer(remote, { configEnvName: "OMB_REMOTE_MCP_SERVER" })).toThrow(/private MCP proxy/);
     expect(() => mcpStdioServer(remote, { directory: { name: "Not A Name" } })).toThrow(/tool search/);

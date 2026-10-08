@@ -320,6 +320,11 @@ servers gets the enabled tools on its next task.
   variables from the same environment it runs the bot's shell commands in,
   so each variable a server needs there is excluded from that shell; a value
   you already had in your own environment, like a proxy setting, stays.
+- **Proxies: https only.** Where OpenMausBot's own remote proxy connects to
+  a URL server, an `https://` server goes through your `HTTPS_PROXY` /
+  `HTTP_PROXY` (CONNECT), with this computer's loopback names always added
+  to `NO_PROXY`. An `http://` server is reached directly: Node 24's fetch
+  hangs on a plain http request sent through an environment proxy.
 - **Testing is bounded.** A command is stopped after the handshake (or eight
   seconds), its output is capped, and its stderr is never sent to the UI. It
   inherits none of OpenMausBot's workspace or provider credentials; only the

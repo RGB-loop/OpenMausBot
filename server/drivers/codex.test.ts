@@ -1269,7 +1269,8 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`)
       await create({ authMode: "chatgpt-plan", environment: { HTTPS_PROXY: "http://proxy.example.test:3128", NODE_EXTRA_CA_CERTS: "/etc/corp-ca.pem" } });
       const dump = join(scratch, "plan-proxy-env.json");
       process.env.FAKE_CODEX_DUMP = dump;
-      await instance.adapter.sendTurn({ threadId: "t-plan-proxy-env", text: "go", model: "gpt-6.1-sol", integrations: { custom: { whop } } });
+      const plain = { ...whop, url: "http://plain.example.test/mcp" };
+      await instance.adapter.sendTurn({ threadId: "t-plan-proxy-env", text: "go", model: "gpt-6.1-sol", integrations: { custom: { whop, plain } } });
       await recorder.until((event) => event.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       const envVars = JSON.parse(seen.argv.find((arg: string) => arg.startsWith("mcp_servers.whop.env_vars=")).split("=").slice(1).join("="));
@@ -1278,6 +1279,10 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`)
       expect(envVars).not.toContain("NODE_USE_ENV_PROXY");
       expect(seen.argv).toContain('mcp_servers.whop.env={ "NODE_USE_ENV_PROXY" = "1", "NO_PROXY" = "localhost,127.0.0.1,::1", "no_proxy" = "localhost,127.0.0.1,::1" }');
       expect(seen.env.NODE_USE_ENV_PROXY).toBeUndefined();
+      // an http:// server is reached directly: Node 24's fetch hangs on a
+      // plain http request through an env proxy (mcp-gate-config.ts)
+      expect(seen.argv.some((arg: string) => arg.startsWith("mcp_servers.plain.env="))).toBe(false);
+      expect(JSON.parse(seen.argv.find((arg: string) => arg.startsWith("mcp_servers.plain.env_vars=")).split("=").slice(1).join("="))).not.toContain("NODE_USE_ENV_PROXY");
       // the person's own settings reach both, unchanged, and are not excluded
       expect(seen.env.HTTPS_PROXY).toBe("http://proxy.example.test:3128");
       const exclusions = seen.calls.find((call: { method: string }) => call.method === "thread/start").params.config["shell_environment_policy.exclude"];

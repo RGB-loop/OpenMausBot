@@ -1,19 +1,20 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { mkdtempSync } from "node:fs";
-import { createServer, request as httpRequest, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { connect, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { build } from "esbuild";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import { CALL_TOOL, DESCRIBE_TOOL, INSTRUCTIONS_CHARS, SEARCH_TOOL, SIGNATURE_CHARS } from "./mcp-directory.ts";
 import { gateServer, mcpStdioServer } from "./mcp-gate-config.ts";
 import { SERVER_ROOT } from "./proxy-paths.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { startFakeHttpMcp, type FakeHttpMcp } from "./testing/fake-http-mcp-server.ts";
+import { makeTestTls, TEST_TLS_HOST } from "./testing/test-tls.ts";
 import { whopLikeCatalog } from "./testing/whop-like-catalog.ts";
 
 const TOKEN = "disposable-remote-fixture-token";
@@ -459,29 +460,47 @@ describe("remote MCP tool directory", () => {
   /** This machine's environment without its own proxy settings. */
   const withoutProxies = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(https?_proxy|no_proxy|node_use_env_proxy)$/i.test(name)));
 
-  it("reaches an internet server through the person's HTTP proxy", async () => {
-    fake = await startFakeHttpMcp({ tools: catalog });
-    const port = new URL(fake.url).port;
-    // a forward proxy that knows where the test's "internet" host lives
+  // A throwaway certificate for an https:// fake server, trusted by the
+  // proxy child through NODE_EXTRA_CA_CERTS; undefined without openssl.
+  const tlsDir = mkdtempSync(join(tmpdir(), "omb-remote-proxy-tls-"));
+  const tls = makeTestTls(tlsDir);
+  afterAll(() => removeTempDir(tlsDir));
+
+  // The proxy switch is set for https:// servers only (mcp-gate-config.ts):
+  // through CONNECT, which works on Node 24 and 26 alike.
+  it.skipIf(!tls)("reaches an internet https server through the person's proxy", async () => {
+    fake = await startFakeHttpMcp({ tools: catalog, tls });
+    const port = Number(new URL(fake.url).port);
+    // a CONNECT proxy that knows where the test's "internet" host lives
+    const tunnels: string[] = [];
     const forwarded: string[] = [];
-    const proxy = createServer((req, res) => {
-      forwarded.push(req.url ?? "");
-      const target = new URL(req.url!);
-      target.hostname = "127.0.0.1";
-      const upstream = httpRequest(target, { method: req.method, headers: req.headers }, (answer) => { res.writeHead(answer.statusCode ?? 502, answer.headers); answer.pipe(res); });
-      upstream.on("error", () => res.destroy());
-      req.pipe(upstream);
+    const sockets = new Set<Socket>();
+    const proxy = createServer((req, res) => { forwarded.push(req.url ?? ""); res.writeHead(502).end(); });
+    proxy.on("connect", (req: IncomingMessage, client: Socket, head: Buffer) => {
+      tunnels.push(req.url ?? "");
+      sockets.add(client);
+      const upstream = connect(port, "127.0.0.1", () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        upstream.write(head);
+        upstream.pipe(client);
+        client.pipe(upstream);
+      });
+      sockets.add(upstream);
+      upstream.on("error", () => client.destroy());
+      client.on("error", () => upstream.destroy());
     });
     await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
     try {
       const via = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
-      const internet = `http://mcp.proxy-fixture.test:${port}/mcp`;
-      start(mcpStdioServer(spec(internet), { directory: { name: "whop" }, sourceEnv: { HTTP_PROXY: via } })!, withoutProxies());
+      const internet = `https://${TEST_TLS_HOST}:${port}/mcp`;
+      start(mcpStdioServer(spec(internet), { directory: { name: "whop" }, sourceEnv: { HTTPS_PROXY: via, NODE_EXTRA_CA_CERTS: tls!.certPath } })!, withoutProxies());
       await initialize();
       expect((await request("tools/list")).result.tools).toHaveLength(3);
-      expect(forwarded.length).toBeGreaterThan(0);
-      expect(forwarded.every((url) => url === internet)).toBe(true);
+      expect(tunnels.length).toBeGreaterThan(0);
+      expect(tunnels.every((target) => target === `${TEST_TLS_HOST}:${port}`)).toBe(true);
+      expect(forwarded).toEqual([]);
     } finally {
+      for (const socket of sockets) socket.destroy();
       proxy.closeAllConnections();
       await new Promise<void>((resolve) => proxy.close(() => resolve()));
     }
@@ -491,6 +510,7 @@ describe("remote MCP tool directory", () => {
     fake = await startFakeHttpMcp({ tools: catalog });
     // nothing listens here: a request sent to this "proxy" is refused
     const unreachable = "http://127.0.0.1:9";
+    // an http:// server: no proxy switch at all, so a direct connection
     for (const sourceEnv of [{ HTTP_PROXY: unreachable }, { HTTP_PROXY: unreachable, NO_PROXY: "corp.internal" }]) {
       start(mcpStdioServer(spec(fake.url), { directory: { name: "whop" }, sourceEnv })!, withoutProxies());
       await initialize();
@@ -501,6 +521,26 @@ describe("remote MCP tool directory", () => {
     start(mcpStdioServer(spec(localhost), { directory: { name: "whop" }, sourceEnv: { HTTPS_PROXY: unreachable, HTTP_PROXY: unreachable } })!, withoutProxies());
     await initialize();
     expect((await request("tools/list")).result.tools).toHaveLength(3);
+  });
+
+  // An https:// server switches the proxy on: loopback stays direct only
+  // through the NO_PROXY entries mcpStdioServer adds.
+  it.skipIf(!tls)("reaches an https server on this computer directly, past a proxy that could not", async () => {
+    fake = await startFakeHttpMcp({ tools: catalog, tls });
+    const unreachable = "http://127.0.0.1:9";
+    const trust = { NODE_EXTRA_CA_CERTS: tls!.certPath };
+    for (const [url, sourceEnv] of [
+      [fake.url, { HTTPS_PROXY: unreachable }],
+      [fake.url, { HTTPS_PROXY: unreachable, NO_PROXY: "corp.internal" }],
+      [fake.url.replace("127.0.0.1", "localhost"), { HTTPS_PROXY: unreachable, HTTP_PROXY: unreachable }],
+    ] as const) {
+      const descriptor = mcpStdioServer(spec(url), { directory: { name: "whop" }, sourceEnv: { ...sourceEnv, ...trust } })!;
+      expect(descriptor.env!.NODE_USE_ENV_PROXY).toBe("1");
+      start(descriptor, withoutProxies());
+      await initialize();
+      expect((await request("tools/list")).result.tools).toHaveLength(3);
+      const stopped = once(child!, "close"); child!.kill(); await stopped;
+    }
   });
 
   it("runs from the shipped bundle, schema checks included", async () => {

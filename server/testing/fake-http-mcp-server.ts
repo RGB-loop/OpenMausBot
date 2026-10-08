@@ -2,7 +2,8 @@
 // answer as plain JSON or as a short event stream — or the older SSE
 // transport. It records the headers it saw so a test can prove a token
 // arrived, and can hold a request open so a probe's timeout is exercised.
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 
 export interface FakeHttpMcpOptions {
@@ -38,6 +39,8 @@ export interface FakeHttpMcpOptions {
    * method (elicitation/create, sampling/createMessage…) and answer the call
    * only after the client has replied to it */
   askOnCall?: string;
+  /** serve https:// with this key and certificate (testing/test-tls.ts) */
+  tls?: { key: string; cert: string };
 }
 
 export interface FakeHttpMcpTool {
@@ -114,7 +117,7 @@ export async function startFakeHttpMcp(options: FakeHttpMcpOptions = {}): Promis
     }
     return null;
   };
-  const server: Server = createServer((req, res) => {
+  const handle: RequestListener = (req, res) => {
     void (async () => {
       seenHeaders.push({ ...req.headers });
       if ((options.requireHeader && req.headers[options.requireHeader.name.toLowerCase()] !== options.requireHeader.value)
@@ -188,11 +191,12 @@ export async function startFakeHttpMcp(options: FakeHttpMcpOptions = {}): Promis
       }
       res.writeHead(200, { ...session, "content-type": "application/json" }).end(JSON.stringify(answer));
     })();
-  });
+  };
+  const server: Server | HttpsServer = options.tls ? createHttpsServer({ key: options.tls.key, cert: options.tls.cert }, handle) : createServer(handle);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   return {
-    url: `http://127.0.0.1:${port}/${transport === "sse" ? "sse" : "mcp"}`,
+    url: `${options.tls ? "https" : "http"}://127.0.0.1:${port}/${transport === "sse" ? "sse" : "mcp"}`,
     seenHeaders,
     calls,
     get delayedToolsLists() { return delayedToolsLists; },
