@@ -211,6 +211,16 @@ engines' own MCP clients add such fields: a bot connecting by itself got "Tool
 not found" for every tool of a server that passed Test. Claude Code still
 connects by itself, since its handshake has only fields the MCP spec defines.
 
+Through the connector, a server's own error for a call (a missing argument,
+an unknown id) reaches the bot with its code and words, so it can fix the
+call; the server's address and header values are removed from it first, and
+connection failures stay generic. A tool call may take as long as the
+engine allows (the connector adds no deadline of its own, except for the
+tool search used by bots that cannot search tools themselves, two minutes).
+An HTTP 401 tells the bot to send the message again (a sign-in is refreshed
+when a message starts) and, if that fails, to sign in again or check the
+server's header values in Plugins → MCP servers.
+
 ## What a Claude bot sees, and the "Also use my Claude Code MCP servers" switch
 
 A bot on the Claude engine gets the tools and instructions its owner gave it:
@@ -325,13 +335,15 @@ servers gets the enabled tools on its next task.
   variables from the same environment it runs the bot's shell commands in,
   so each variable a server needs there is excluded from that shell; a value
   you already had in your own environment, like a proxy setting, stays.
-- **Proxies: https only.** Where OpenMausBot's own remote proxy connects to
-  a URL server, an `https://` server goes through your `HTTPS_PROXY` /
+- **Proxies.** Where OpenMausBot's own remote proxy connects to a URL
+  server, an `https://` server goes through your `HTTPS_PROXY` /
   `HTTP_PROXY` (CONNECT), with this computer's loopback names always added
-  to `NO_PROXY` (`[::1]` included). An `http://` server is reached directly,
-  with `NODE_USE_ENV_PROXY=0` even where your environment turns it on:
-  Node 24's fetch hangs on a plain http request sent through an environment
-  proxy.
+  to `NO_PROXY` (`[::1]` included). An `http://` server goes through your
+  `http_proxy` / `HTTP_PROXY`, sent by the connector itself in absolute form
+  (Node's own env-proxy switch stays off, `NODE_USE_ENV_PROXY=0`, since
+  Node 24's fetch hangs on a plain http request sent through it); loopback
+  and `NO_PROXY` hosts are reached directly. Proxies set only in macOS
+  System Settings are not read.
 - **Testing is bounded.** A command is stopped after the handshake (or eight
   seconds), its output is capped, and its stderr is never sent to the UI. It
   inherits none of OpenMausBot's workspace or provider credentials; only the

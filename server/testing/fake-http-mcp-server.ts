@@ -34,6 +34,11 @@ export interface FakeHttpMcpOptions {
   tools?: FakeHttpMcpTool[];
   /** what tools/call answers (default: one "remote execution recorded" text) */
   callResult?: (params: unknown) => unknown;
+  /** answer a tools/call with this JSON-RPC error instead, as a strict
+   * server reports a bad argument */
+  callError?: (params: unknown) => { code: number; message: string } | undefined;
+  /** answer each tools/call only after this many milliseconds */
+  callDelayMs?: number;
   /** answer each tools/call as an event stream that first says the tool
    * list changed, as a server does after it adds or removes tools */
   listChangedOnCall?: boolean;
@@ -179,6 +184,8 @@ export async function startFakeHttpMcp(options: FakeHttpMcpOptions = {}): Promis
     }
     if (frame.method === "tools/call" && tools) {
       calls.push(frame.params);
+      const refused = options.callError?.(frame.params);
+      if (refused) return { jsonrpc: "2.0", id: frame.id, error: refused };
       return { jsonrpc: "2.0", id: frame.id, result: options.callResult?.(frame.params) ?? { content: [{ type: "text", text: "remote execution recorded" }] } };
     }
     return null;
@@ -235,6 +242,9 @@ export async function startFakeHttpMcp(options: FakeHttpMcpOptions = {}): Promis
       }
       // hold the request open: the client's own timeout has to end it
       if (frame.method === "tools/list" && options.silentTools) return;
+      if (frame.method === "tools/call" && options.callDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.callDelayMs));
+      }
       if (frame.method === "tools/list" && options.toolsDelayMs) {
         const delayed = new Promise((resolve) => setTimeout(resolve, options.toolsDelayMs));
         delayedToolsLists += 1;
