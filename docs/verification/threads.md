@@ -135,7 +135,7 @@ This renderer fixture does not test a native mobile device or real computer use.
 
 ## A new direct thread with a working folder
 
-In Advanced mode, open **All threads → New thread in a working folder…**.
+In Advanced mode, open the bot row's **Actions → New thread in a working folder…**.
 Enter an existing absolute path on the machine running the harness. A missing
 path must leave the dialog open with its error and create no thread. Cancel
 must create nothing. A valid path creates an empty thread with `task.cwd`
@@ -146,7 +146,7 @@ matching who may edit a bot's working folder. Sidebar folders still organize
 threads and do not determine their filesystem location.
 
 ```sh
-pnpm exec vitest run server/task-cwd-api.test.ts src/components/NewTaskFolderDialog.test.ts
+pnpm exec vitest run server/task-cwd-api.test.ts src/components/NewTaskFolderDialog.test.ts src/components/Sidebar.working-folder.test.ts
 ```
 
 The API check launches the standard disposable fake-Claude fixture and proves

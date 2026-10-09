@@ -17,8 +17,6 @@ import { FolderIcon, NewThreadButton } from "./BotProjects";
 import { useShowThreads } from "@/lib/thread-preferences";
 import { attentionJumpAction, attentionOwnerName, AttentionThreadRows, crossBotAttentionThreads, threadsWhenTreeHidden, type AttentionThread } from "./SidebarBotActivity";
 import { formatUpdatedAt, orderedThreadList, threadByline, threadRecency, threadUpdatedLabel, useRelativeNow } from "./SidebarThreadRow";
-import { useOwnerOrAdmin } from "@/lib/use-owner-or-admin";
-import { NewTaskFolderDialog } from "./NewTaskFolderDialog";
 
 /** Click-to-switch used to close this menu immediately, which unmounted the
  * row before a double-click (or right-click) could start a rename. Linger
@@ -118,8 +116,6 @@ function ConversationTaskPicker({
   onAttentionJump?: (entry: AttentionThread) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [choosingFolder, setChoosingFolder] = useState(false);
-  const canChooseFolder = useOwnerOrAdmin();
   const motion = useMenuMotion(open);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -427,13 +423,8 @@ function ConversationTaskPicker({
           >
             <Plus size={13} className="text-ink-secondary" /> {t("task.newShort")}
           </button>}
-          {bot && canChooseFolder && <button type="button" onClick={() => { closeMenu(); setChoosingFolder(true); }}
-            className="flex w-full items-center gap-2 px-2.5 py-2 text-left text-[12px] text-ink-secondary hover:bg-raised/60 hover:text-ink">
-            <FolderInput aria-hidden="true" size={12} />{t("task.folder.new")}
-          </button>}
         </div>
       )}
-      {choosingFolder && bot && <NewTaskFolderDialog bot={bot} onClose={() => { setChoosingFolder(false); ref.current?.querySelector("button")?.focus(); }} />}
     </div>
   );
 }
