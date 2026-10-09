@@ -138,6 +138,49 @@ const MAX_TURN_TOOL_CALLS = 200;
 const stoppedAfter = (count: string) =>
   `Stopped after ${count} without a final answer. The steps so far already ran, so ask only for what's left.`;
 
+interface DeliveredUserMessage {
+  /** The turn text the harness passed, before any context note. */
+  text: string;
+  /** The user message as it went to the provider. */
+  sent: string;
+  /** The trimmed volatile half, when this message carried its note. */
+  volatile?: string;
+}
+
+/** The replay window keeps at most 40 messages; a few spare records cover
+ * messages the harness stores but this runtime never sent. */
+const MAX_DELIVERED_RECORDS = 64;
+/** Threads remembered at once; the least recently sent is forgotten first. */
+const MAX_DELIVERED_THREADS = 256;
+
+/** Line a stored transcript up with what its user messages carried. The
+ * stored text is what the person typed, which the turn text ends with after
+ * whatever the harness put in front (the clock, recall), so a record matches
+ * a message that is its whole text or its last paragraphs. Matching runs
+ * newest first, because the replay window drops the oldest messages. A
+ * message no record matches is replayed as stored. */
+function replayDelivered(
+  transcript: ReadonlyArray<{ role: "user" | "assistant"; text: string }>,
+  records: readonly DeliveredUserMessage[],
+): { content: Map<number, string>; matched: DeliveredUserMessage[]; volatile: string | undefined } {
+  const content = new Map<number, string>();
+  const matched: DeliveredUserMessage[] = [];
+  let next = records.length - 1;
+  for (let index = transcript.length - 1; index >= 0 && next >= 0; index--) {
+    const message = transcript[index]!;
+    if (message.role !== "user" || !message.text) continue;
+    for (let at = next; at >= 0; at--) {
+      const record = records[at]!;
+      if (record.text !== message.text && !record.text.endsWith("\n\n" + message.text)) continue;
+      content.set(index, record.sent);
+      matched.unshift(record);
+      next = at - 1;
+      break;
+    }
+  }
+  return { content, matched, volatile: matched.findLast((record) => record.volatile !== undefined)?.volatile };
+}
+
 const NUDGE_ANNOUNCED_ACTION = "You said what you would do next but called no tool. Do it now with your tools, or reply with your final answer if nothing is left to do.";
 
 /** A short reply that only announces a next step, with nothing to answer. */
@@ -242,6 +285,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
   /** Models whose endpoint rejected an echoed `reasoning_content`. In memory
    * only: later rounds and turns omit the field instead of failing again. */
   const reasoningReplayRejected = new Set<string>();
+  /** What each user message of a thread actually carried, oldest first. The
+   * stored transcript holds only what the person typed, while the request
+   * carried the turn text (clock, recall) and maybe a context note; replaying
+   * the stored text would rewrite history the provider has cached. In memory
+   * only: after a restart a thread replays as stored, as it always did. */
+  const delivered = new Map<string, DeliveredUserMessage[]>();
 
   const emit = (event: RuntimeEvent) => {
     for (const listener of Array.from(listeners)) listener(event);
@@ -447,25 +496,33 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     // The system message is the head of the resent prefix, so only the
     // stable half belongs there: a volatile edit must not re-price the
     // tools, instructions and transcript the provider already cached.
-    // The volatile half rides the newest user message instead, every
-    // turn. Unlike a CLI session, this request is rebuilt from the stored
-    // transcript, which never contains the delivered notes, so tracking a
-    // digest and delivering only on change would leave the model without
-    // its memory on unchanged turns. The newest message is fresh input
-    // on every request anyway.
+    // The volatile half rides a user message instead. Earlier user messages
+    // are replayed as they were sent, notes included, so the previous
+    // request stays a prefix of this one and a note the model already has
+    // is not repeated; the newest message carries one only when the replayed
+    // history does not already end on the current copy.
     const halves = promptHalves(turn);
-    const note = halves.stable !== null ? volatileContextNote(halves.volatile, false) : "";
+    const transcript = turn.transcript ?? [];
+    const replay = replayDelivered(transcript, delivered.get(turn.threadId) ?? []);
+    const volatile = halves.volatile.trim();
+    const note = halves.stable === null || (!turn.mentionTurn && replay.volatile === volatile) ? ""
+      : volatileContextNote(volatile, Boolean(replay.volatile));
     const userTurn = note ? { ...turn, text: withContextNote(note, turn.text) } : turn;
+    const content = !options.computerUse ? userTurn.text
+      : seesImages(turn) ? chatUserContent(userTurn)
+      : userTurn.images?.length ? `${userTurn.text}\n\n${TEXT_ONLY_ATTACHMENT_NOTE}` : userTurn.text;
+    const record = { text: turn.text, sent: typeof content === "string" ? content : userTurn.text, ...(note ? { volatile } : {}) };
+    delivered.delete(turn.threadId);
+    delivered.set(turn.threadId, [...replay.matched, record].slice(-MAX_DELIVERED_RECORDS));
+    if (delivered.size > MAX_DELIVERED_THREADS) delivered.delete(delivered.keys().next().value!);
     const system = halves.stable ?? turn.system;
     return [
       ...(system ? [{ role: "system" as const, content: system }] : []),
-      ...(turn.transcript ?? []).map((message) => ({
+      ...transcript.map((message, index) => ({
         role: message.role,
-        content: message.text,
+        content: replay.content.get(index) ?? message.text,
       })),
-      { role: "user", content: !options.computerUse ? userTurn.text
-        : seesImages(turn) ? chatUserContent(userTurn)
-        : userTurn.images?.length ? `${userTurn.text}\n\n${TEXT_ONLY_ATTACHMENT_NOTE}` : userTurn.text },
+      { role: "user", content },
     ];
   };
 
