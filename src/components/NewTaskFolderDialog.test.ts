@@ -61,6 +61,8 @@ describe("new thread working folder", () => {
     expect(document.activeElement).toBe(field());
     expect(onClose).not.toHaveBeenCalled();
     type("/projects/corrected");
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(dispatch).toHaveBeenCalledOnce();
     submit();
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(dispatch.mock.calls[1]![0].cwd).toBe("/projects/corrected");

@@ -138,7 +138,9 @@ This renderer fixture does not test a native mobile device or real computer use.
 In Advanced mode, open the bot row's **Actions → New thread in a working folder…**.
 Enter an existing absolute path on the machine running the harness. A missing
 path must leave the dialog open with its error and create no thread. Cancel
-must create nothing. A valid path creates an empty thread with `task.cwd`
+must create nothing and retain the previously selected conversation, including
+when the dialog was opened for another bot. Editing the path clears its old
+error. A valid path creates an empty thread with `task.cwd`
 already pinned; changing the bot's default folder later must not move it.
 The ordinary **New thread** button still uses the bot default at first run.
 The folder action is visible only to the local owner or an admin session,
@@ -146,7 +148,7 @@ matching who may edit a bot's working folder. Sidebar folders still organize
 threads and do not determine their filesystem location.
 
 ```sh
-pnpm exec vitest run server/task-cwd-api.test.ts src/components/NewTaskFolderDialog.test.ts src/components/Sidebar.working-folder.test.ts
+pnpm exec vitest run server/task-cwd-api.test.ts src/components/NewTaskFolderDialog.test.ts src/components/Sidebar.working-folder.test.ts src/state/task-folder-navigation.test.ts
 ```
 
 The API check launches the standard disposable fake-Claude fixture and proves
@@ -156,7 +158,9 @@ the unchanged default path, and rejection of `cwd` edits on existing threads.
 It retains the HTTP actions, bounded transcript, waits and redacted working
 directory receipts at the printed `.task-cwd.json` path. Component checks
 cover initial focus, cancellation, duplicate submit prevention and recovery
-from validation errors. This does not test real-provider resume or a native
+from validation errors. Store/dialog tests delay HTTP responses to check
+cross-bot creation, failed validation followed by cancellation, and preservation
+of newer navigation. This does not test real-provider resume or a native
 operating-system folder picker.
 
 ## Permanent regression checks

@@ -47,7 +47,7 @@ export function NewTaskFolderDialog({ bot, onClose, onReturnFocus }: { bot: Bot;
       }}>
         <label className="mt-4 block text-[12px] text-ink-secondary">{t("task.folder.path")}
           <input ref={input} value={cwd} disabled={saving} aria-describedby="new-task-folder-description" autoComplete="off" spellCheck={false}
-            onChange={(event) => setCwd(event.target.value)} placeholder={t("task.folder.placeholder")}
+            onChange={(event) => { setCwd(event.target.value); setError(null); }} placeholder={t("task.folder.placeholder")}
             className="mt-1 w-full rounded-lg border border-hairline/50 bg-inset px-3 py-2 font-mono text-[13px] text-ink focus:border-focus focus:outline-none" />
         </label>
         {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}
