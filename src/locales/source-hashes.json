@@ -1494,7 +1494,10 @@
       "place.view.ccNew.short": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
       "place.view.ccAtOnce.short": "750af77aa42eea62726061b574cf8ab011cf3f7f60926532aad4b0da028ed046",
       "place.view.localUnavailable.short": "330010f40240ecd83defa493b21a57b0504ddea6d30810be14e06debba8ad55b",
-      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a"
+      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a",
+      "computer.files.homeFolder": "6772da558a23e28185deb8d4bb7cdb20ae916f13a03eca9a9e5c0d4deffd4944",
+      "computer.files.changeDefaultFolder": "d849aca289a009020a597abaf279d8db449aca92344e9d91485cf1cf0aadc144",
+      "computer.files.pinnedFolderHint": "b69c3a6863aa1de63d33f31fcd2ec1b43df5dab08c1a8dd931aec171adff9885"
     },
     "es": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -2971,7 +2974,10 @@
       "place.view.ccNew.short": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
       "place.view.ccAtOnce.short": "750af77aa42eea62726061b574cf8ab011cf3f7f60926532aad4b0da028ed046",
       "place.view.localUnavailable.short": "330010f40240ecd83defa493b21a57b0504ddea6d30810be14e06debba8ad55b",
-      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a"
+      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a",
+      "computer.files.homeFolder": "6772da558a23e28185deb8d4bb7cdb20ae916f13a03eca9a9e5c0d4deffd4944",
+      "computer.files.changeDefaultFolder": "d849aca289a009020a597abaf279d8db449aca92344e9d91485cf1cf0aadc144",
+      "computer.files.pinnedFolderHint": "b69c3a6863aa1de63d33f31fcd2ec1b43df5dab08c1a8dd931aec171adff9885"
     },
     "fr": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -4448,7 +4454,10 @@
       "place.view.ccNew.short": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
       "place.view.ccAtOnce.short": "750af77aa42eea62726061b574cf8ab011cf3f7f60926532aad4b0da028ed046",
       "place.view.localUnavailable.short": "330010f40240ecd83defa493b21a57b0504ddea6d30810be14e06debba8ad55b",
-      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a"
+      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a",
+      "computer.files.homeFolder": "6772da558a23e28185deb8d4bb7cdb20ae916f13a03eca9a9e5c0d4deffd4944",
+      "computer.files.changeDefaultFolder": "d849aca289a009020a597abaf279d8db449aca92344e9d91485cf1cf0aadc144",
+      "computer.files.pinnedFolderHint": "b69c3a6863aa1de63d33f31fcd2ec1b43df5dab08c1a8dd931aec171adff9885"
     },
     "hi": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -5925,7 +5934,10 @@
       "place.view.ccNew.short": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
       "place.view.ccAtOnce.short": "750af77aa42eea62726061b574cf8ab011cf3f7f60926532aad4b0da028ed046",
       "place.view.localUnavailable.short": "330010f40240ecd83defa493b21a57b0504ddea6d30810be14e06debba8ad55b",
-      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a"
+      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a",
+      "computer.files.homeFolder": "6772da558a23e28185deb8d4bb7cdb20ae916f13a03eca9a9e5c0d4deffd4944",
+      "computer.files.changeDefaultFolder": "d849aca289a009020a597abaf279d8db449aca92344e9d91485cf1cf0aadc144",
+      "computer.files.pinnedFolderHint": "b69c3a6863aa1de63d33f31fcd2ec1b43df5dab08c1a8dd931aec171adff9885"
     },
     "ja": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -7404,7 +7416,10 @@
       "place.view.ccNew.short": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
       "place.view.ccAtOnce.short": "750af77aa42eea62726061b574cf8ab011cf3f7f60926532aad4b0da028ed046",
       "place.view.localUnavailable.short": "330010f40240ecd83defa493b21a57b0504ddea6d30810be14e06debba8ad55b",
-      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a"
+      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a",
+      "computer.files.homeFolder": "6772da558a23e28185deb8d4bb7cdb20ae916f13a03eca9a9e5c0d4deffd4944",
+      "computer.files.changeDefaultFolder": "d849aca289a009020a597abaf279d8db449aca92344e9d91485cf1cf0aadc144",
+      "computer.files.pinnedFolderHint": "b69c3a6863aa1de63d33f31fcd2ec1b43df5dab08c1a8dd931aec171adff9885"
     },
     "pt-br": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -8894,7 +8909,10 @@
       "place.view.ccNew.short": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
       "place.view.ccAtOnce.short": "750af77aa42eea62726061b574cf8ab011cf3f7f60926532aad4b0da028ed046",
       "place.view.localUnavailable.short": "330010f40240ecd83defa493b21a57b0504ddea6d30810be14e06debba8ad55b",
-      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a"
+      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a",
+      "computer.files.homeFolder": "6772da558a23e28185deb8d4bb7cdb20ae916f13a03eca9a9e5c0d4deffd4944",
+      "computer.files.changeDefaultFolder": "d849aca289a009020a597abaf279d8db449aca92344e9d91485cf1cf0aadc144",
+      "computer.files.pinnedFolderHint": "b69c3a6863aa1de63d33f31fcd2ec1b43df5dab08c1a8dd931aec171adff9885"
     },
     "zh": {
       "pro.getPro": "12657108fe5682e937f179e5f394191b99fad614dbb3bf8759376d5da35d4992",
@@ -11322,7 +11340,10 @@
       "settings.mcpCalls.minutes": "90e63d85fa1ab2c8ed65222f3ebd794b1e524b4b7cf84bec451542d0451b2985",
       "settings.mcpCalls.help": "ab68b50dacfde418b196b13a3bf56f942f61071126f02d0e65e7241197ddefd5",
       "settings.mcpCalls.error": "be999a512b832def08c23ad6e85145183598f18ff9bb79075a419fbec42aba1f",
-      "settings.mcpCalls.range": "5023bf6d4be92ea4f7aab1f63c9d193d628b8ca27ea9983e530b2c4e0c257f70"
+      "settings.mcpCalls.range": "5023bf6d4be92ea4f7aab1f63c9d193d628b8ca27ea9983e530b2c4e0c257f70",
+      "computer.files.homeFolder": "6772da558a23e28185deb8d4bb7cdb20ae916f13a03eca9a9e5c0d4deffd4944",
+      "computer.files.changeDefaultFolder": "d849aca289a009020a597abaf279d8db449aca92344e9d91485cf1cf0aadc144",
+      "computer.files.pinnedFolderHint": "b69c3a6863aa1de63d33f31fcd2ec1b43df5dab08c1a8dd931aec171adff9885"
     },
     "zh-tw": {
       "whop.description": "1a07cf04ef17029448d3781415cbac16d54e66b821907a40d94e0e6349710e70",
@@ -14036,6 +14057,9 @@
       "computer.files.folder": "afef3dab6f132853ca61569c0f7526936c4f8ec65954d0e1c592e43cfe01be07",
       "computer.files.privateFolder": "37d1288910257b7dc6d4f1c4860b0518e2846a125e9190e506372bfc92e07ca3",
       "computer.files.changeFolder": "c0bf75bd78bf9572596720d596bd5a20a5b9145cde0fe50dec1e783cb184d69b",
+      "computer.files.homeFolder": "6772da558a23e28185deb8d4bb7cdb20ae916f13a03eca9a9e5c0d4deffd4944",
+      "computer.files.changeDefaultFolder": "d849aca289a009020a597abaf279d8db449aca92344e9d91485cf1cf0aadc144",
+      "computer.files.pinnedFolderHint": "b69c3a6863aa1de63d33f31fcd2ec1b43df5dab08c1a8dd931aec171adff9885",
       "computer.files.recent": "c555c2e5e784684627964230c7a70c964a6b1c3e1a2833bf2da450abef69748d",
       "computer.files.empty": "3cf133bac32e9f015f957da030a8cb32ecc6ab53285ac455ee5c9f9f127a2675",
       "computer.simple.whereWorks": "bf3a769a16e27397f9bd00939b25a0486983f962aa792e00da599ffa7de3b63f",
@@ -17029,7 +17053,10 @@
       "place.view.ccNew.short": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f",
       "place.view.ccAtOnce.short": "750af77aa42eea62726061b574cf8ab011cf3f7f60926532aad4b0da028ed046",
       "place.view.localUnavailable.short": "330010f40240ecd83defa493b21a57b0504ddea6d30810be14e06debba8ad55b",
-      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a"
+      "place.view.autoTeam.short": "e3c4b39d6d5013477c98cd58236fed455f37aa7017b7168ce1980a449aaf438a",
+      "computer.files.homeFolder": "6772da558a23e28185deb8d4bb7cdb20ae916f13a03eca9a9e5c0d4deffd4944",
+      "computer.files.changeDefaultFolder": "d849aca289a009020a597abaf279d8db449aca92344e9d91485cf1cf0aadc144",
+      "computer.files.pinnedFolderHint": "b69c3a6863aa1de63d33f31fcd2ec1b43df5dab08c1a8dd931aec171adff9885"
     }
   }
 }

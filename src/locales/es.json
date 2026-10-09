@@ -1473,5 +1473,8 @@
   "place.view.ccNew.short": "Listo",
   "place.view.ccAtOnce.short": "En uso",
   "place.view.localUnavailable.short": "No está listo",
-  "place.view.autoTeam.short": "Compartido"
+  "place.view.autoTeam.short": "Compartido",
+  "computer.files.homeFolder": "Carpeta personal",
+  "computer.files.changeDefaultFolder": "Cambiar carpeta predeterminada",
+  "computer.files.pinnedFolderHint": "Esta conversación conserva su carpeta actual. Cambia la carpeta predeterminada para las nuevas conversaciones."
 }

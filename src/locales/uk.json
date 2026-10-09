@@ -2019,5 +2019,8 @@
   "place.view.ccNew.short": "Готово",
   "place.view.ccAtOnce.short": "Використовується",
   "place.view.localUnavailable.short": "Не готово",
-  "place.view.autoTeam.short": "Спільний"
+  "place.view.autoTeam.short": "Спільний",
+  "computer.files.homeFolder": "Домашня папка",
+  "computer.files.changeDefaultFolder": "Змінити типову папку",
+  "computer.files.pinnedFolderHint": "Ця розмова зберігає свою поточну папку. Змініть типову папку для нових розмов."
 }

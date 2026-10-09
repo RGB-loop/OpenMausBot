@@ -1491,5 +1491,8 @@
   "place.view.ccNew.short": "Bereit",
   "place.view.ccAtOnce.short": "In Benutzung",
   "place.view.localUnavailable.short": "Nicht bereit",
-  "place.view.autoTeam.short": "Gemeinsam"
+  "place.view.autoTeam.short": "Gemeinsam",
+  "computer.files.homeFolder": "Home-Ordner",
+  "computer.files.changeDefaultFolder": "Standard ändern",
+  "computer.files.pinnedFolderHint": "Diese Unterhaltung behält ihren aktuellen Ordner. Ändere den Standardordner für neue Unterhaltungen."
 }
