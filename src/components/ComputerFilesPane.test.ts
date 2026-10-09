@@ -94,6 +94,29 @@ describe("file grants in the visible conversation", () => {
     expect(references.get("notes/report one.md")?.file.path).toBe("file:///C:/work/notes/report%20one.md");
   });
 
+  it.each([
+    ["drive path", "C:\\Work", "c:/work/Notes/Report%20one.md"],
+    ["drive URL", "C:\\Work", "file:///c:/work/Notes/Report%20one.md"],
+    ["UNC URL", "\\\\Server\\Share\\Work", "file://server/share/work/Notes/Report%20one.md"],
+  ])("matches a differently cased Windows %s prefix without changing the shared reference", (_kind, cwd, href) => {
+    const references = sharedFileReferences(bot([reply("shared", `[report](${href})`)], { cwd }));
+    expect(references.get("Notes/Report one.md")).toMatchObject({
+      file: { path: href, linked: true }, message: { threadId: "thread-1", messageId: "shared" },
+    });
+    expect(references.has("notes/report one.md")).toBe(false);
+  });
+
+  it.each([
+    ["C:\\Work", "file:///c:/work-other/report.md"],
+    ["\\\\Server\\Share\\Work", "file://server/share/work-other/report.md"],
+    ["\\\\Server\\Share\\Work", "file://other/share/work/report.md"],
+    ["/Work", "file:///work/report.md"],
+    ["/Work", "/work/report.md"],
+  ])("does not match a file outside the same folder: %s and %s", (cwd, href) => {
+    const references = sharedFileReferences(bot([reply("shared", `[report](${href})`)], { cwd }));
+    expect(references.has("report.md")).toBe(false);
+  });
+
   it("still suppresses files whose latest digest deleted them", () => {
     expect(recentChangedFiles(bot([
       digest(["/workspace/removed.md", "/workspace/kept.md"]),

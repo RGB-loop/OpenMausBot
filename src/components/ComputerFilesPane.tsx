@@ -63,7 +63,12 @@ export function sharedFileReferences(bot: Bot): Map<string, SharedFile> {
       // Digests use paths relative to the turn's working folder. Only match
       // an absolute link beneath that exact folder; never guess by basename.
       const path = spelling(identity);
-      const keys = [identity, ...(prefix && path.startsWith(prefix) ? [path.slice(prefix.length)] : [])];
+      // Windows drive/UNC prefixes are case-insensitive. Slice the original
+      // spelling so Git's relative path and the shared URL keep their case.
+      const inFolder = prefix && (windows
+        ? path.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase()
+        : path.startsWith(prefix));
+      const keys = [identity, ...(inFolder ? [path.slice(prefix.length)] : [])];
       if (identity.startsWith("./")) keys.push(identity.replace(/^(\.\/)+/, ""));
       for (const key of keys) if (!references.has(key)) references.set(key, reference);
     }
