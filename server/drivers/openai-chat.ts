@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   DriverCreateInput,
   ModelCatalog,
@@ -139,46 +140,65 @@ const stoppedAfter = (count: string) =>
   `Stopped after ${count} without a final answer. The steps so far already ran, so ask only for what's left.`;
 
 interface DeliveredUserMessage {
-  /** The turn text the harness passed, before any context note. */
+  /** The turn text the harness passed, recall left out, before any note. */
   text: string;
-  /** The user message as it went to the provider. */
+  /** That text as it went to the provider, which is how it is replayed. */
   sent: string;
   /** The trimmed volatile half, when this message carried its note. */
   volatile?: string;
+  /** Fingerprint of the message just before it when it was sent ("" for
+   * none), so an identical text sent elsewhere later is not mistaken for it. */
+  after: string;
 }
 
-/** The replay window keeps at most 40 messages; a few spare records cover
- * messages the harness stores but this runtime never sent. */
-const MAX_DELIVERED_RECORDS = 64;
+/** Bytes replaying messages as sent may add to the stored transcript, which
+ * the harness already bounds. Spent oldest first: an earlier message keeps
+ * its replayed form for as long as it stays in the window, so a request
+ * that runs out of budget changes only at the end of the previous one. */
+const MAX_REPLAY_EXTRA_BYTES = 24_000;
 /** Threads remembered at once; the least recently sent is forgotten first. */
 const MAX_DELIVERED_THREADS = 256;
 
+const fingerprint = (text: string) => createHash("sha256").update(text).digest("base64url");
+
 /** Line a stored transcript up with what its user messages carried. The
  * stored text is what the person typed, which the turn text ends with after
- * whatever the harness put in front (the clock, recall), so a record matches
- * a message that is its whole text or its last paragraphs. Matching runs
- * newest first, because the replay window drops the oldest messages. A
- * message no record matches is replayed as stored. */
+ * whatever the harness put in front (the clock), so a record matches a
+ * message that is its whole text or its last paragraph, and follows the
+ * same message it followed when sent. The first message of the window
+ * matches on text alone, since what came before it may have been dropped.
+ * Matching runs newest first, because the window drops the oldest
+ * messages; a message no record matches is replayed as stored. */
 function replayDelivered(
   transcript: ReadonlyArray<{ role: "user" | "assistant"; text: string }>,
   records: readonly DeliveredUserMessage[],
 ): { content: Map<number, string>; matched: DeliveredUserMessage[]; volatile: string | undefined } {
-  const content = new Map<number, string>();
-  const matched: DeliveredUserMessage[] = [];
+  const found: Array<{ index: number; record: DeliveredUserMessage }> = [];
   let next = records.length - 1;
   for (let index = transcript.length - 1; index >= 0 && next >= 0; index--) {
     const message = transcript[index]!;
     if (message.role !== "user" || !message.text) continue;
+    const after = index > 0 ? fingerprint(transcript[index - 1]!.text) : undefined;
     for (let at = next; at >= 0; at--) {
       const record = records[at]!;
       if (record.text !== message.text && !record.text.endsWith("\n\n" + message.text)) continue;
-      content.set(index, record.sent);
-      matched.unshift(record);
+      if (after !== undefined && record.after !== after) continue;
+      found.unshift({ index, record });
       next = at - 1;
       break;
     }
   }
-  return { content, matched, volatile: matched.findLast((record) => record.volatile !== undefined)?.volatile };
+  const content = new Map<number, string>();
+  let volatile: string | undefined;
+  let budget = MAX_REPLAY_EXTRA_BYTES;
+  for (const { index, record } of found) {
+    const extra = Buffer.byteLength(record.sent) - Buffer.byteLength(transcript[index]!.text);
+    if (extra > budget) break;
+    budget -= extra;
+    content.set(index, record.sent);
+    if (record.volatile !== undefined) volatile = record.volatile;
+  }
+  return { content, matched: found.map(({ record }) => record), volatile };
 }
 
 const NUDGE_ANNOUNCED_ACTION = "You said what you would do next but called no tool. Do it now with your tools, or reply with your final answer if nothing is left to do.";
@@ -287,7 +307,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
   const reasoningReplayRejected = new Set<string>();
   /** What each user message of a thread actually carried, oldest first. The
    * stored transcript holds only what the person typed, while the request
-   * carried the turn text (clock, recall) and maybe a context note; replaying
+   * carried the turn text (the clock) and maybe a context note; replaying
    * the stored text would rewrite history the provider has cached. In memory
    * only: after a restart a thread replays as stored, as it always did. */
   const delivered = new Map<string, DeliveredUserMessage[]>();
@@ -500,20 +520,27 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     // are replayed as they were sent, notes included, so the previous
     // request stays a prefix of this one and a note the model already has
     // is not repeated; the newest message carries one only when the replayed
-    // history does not already end on the current copy.
+    // history does not already end on the current copy. Automatic recall
+    // informed its own turn only and is not replayed.
     const halves = promptHalves(turn);
     const transcript = turn.transcript ?? [];
     const replay = replayDelivered(transcript, delivered.get(turn.threadId) ?? []);
     const volatile = halves.volatile.trim();
     const note = halves.stable === null || (!turn.mentionTurn && replay.volatile === volatile) ? ""
       : volatileContextNote(volatile, Boolean(replay.volatile));
+    const textOnly = (text: string) => !options.computerUse || seesImages(turn) || !turn.images?.length ? text
+      : `${text}\n\n${TEXT_ONLY_ATTACHMENT_NOTE}`;
     const userTurn = note ? { ...turn, text: withContextNote(note, turn.text) } : turn;
-    const content = !options.computerUse ? userTurn.text
-      : seesImages(turn) ? chatUserContent(userTurn)
-      : userTurn.images?.length ? `${userTurn.text}\n\n${TEXT_ONLY_ATTACHMENT_NOTE}` : userTurn.text;
-    const record = { text: turn.text, sent: typeof content === "string" ? content : userTurn.text, ...(note ? { volatile } : {}) };
+    const content = options.computerUse && seesImages(turn) ? chatUserContent(userTurn) : textOnly(userTurn.text);
+    const kept = turn.recalled ? turn.text.replace(`${turn.recalled}\n\n`, "") : turn.text;
+    const record = {
+      text: kept,
+      sent: textOnly(withContextNote(note, kept)),
+      ...(note ? { volatile } : {}),
+      after: transcript.length ? fingerprint(transcript.at(-1)!.text) : "",
+    };
     delivered.delete(turn.threadId);
-    delivered.set(turn.threadId, [...replay.matched, record].slice(-MAX_DELIVERED_RECORDS));
+    delivered.set(turn.threadId, [...replay.matched, record]);
     if (delivered.size > MAX_DELIVERED_THREADS) delivered.delete(delivered.keys().next().value!);
     const system = halves.stable ?? turn.system;
     return [

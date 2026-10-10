@@ -636,7 +636,7 @@ describe("OpenAICompatDriver", () => {
       });
       const recorder = recordEvents(inst.adapter);
       let turns = 0;
-      const send = async (input: { text: string; volatile: string; transcript: Array<{ role: "user" | "assistant"; text: string }>; threadId?: string; mentionTurn?: boolean }) => {
+      const send = async (input: { text: string; volatile: string; transcript: Array<{ role: "user" | "assistant"; text: string }>; threadId?: string; mentionTurn?: boolean; recalled?: string }) => {
         const threadId = input.threadId ?? "thread-replay";
         const settled = ++turns;
         await inst.adapter.sendTurn({
@@ -647,6 +647,7 @@ describe("OpenAICompatDriver", () => {
           systemVolatile: input.volatile,
           transcript: input.transcript,
           ...(input.mentionTurn ? { mentionTurn: true } : {}),
+          ...(input.recalled ? { recalled: input.recalled } : {}),
         });
         await recorder.until((e) => e.type === "turn.completed" && e.threadId === threadId &&
           recorder.events.filter((x) => x.type === "turn.completed").length >= settled);
@@ -718,6 +719,56 @@ describe("OpenAICompatDriver", () => {
         { role: "assistant", content: "hi" },
       ]);
       expect(trimmed.at(-1)).toEqual({ role: "user", content: NOTE + "Memory: likes tea.\n\nthird" });
+      await done();
+    });
+
+    it("leaves automatic recall out of the replay and keeps the added bytes bounded", async () => {
+      const { send, done } = await fixture();
+      const transcript: Array<{ role: "user" | "assistant"; text: string }> = [];
+      const bytes = (messages: any[]) => Buffer.byteLength(JSON.stringify(messages));
+      let previous: any[] = [];
+      for (let turn = 0; turn < 20; turn++) {
+        const minute = String(turn).padStart(2, "0");
+        const recalled = `<recalled turn="${turn}">\n${"r".repeat(6000)}\n</recalled>`;
+        const typed = `message ${turn}`;
+        const messages = await send({
+          text: `${clock(minute)}${recalled}\n\n${typed}`,
+          recalled,
+          // a volatile half that changes every turn puts a fresh note on each one
+          volatile: `Recent work: ${"w".repeat(2000)} ${turn}`,
+          transcript: [...transcript],
+        });
+        expect(messages.at(-1).content).toContain(recalled);
+        // Everything before the previous user message is resent unchanged;
+        // that message itself is replayed without the recall it carried.
+        if (turn > 0) expect(messages.slice(0, previous.length - 1)).toEqual(previous.slice(0, -1));
+        for (const message of messages.slice(1, -1)) expect(message.content).not.toContain("<recalled");
+        const stored = [{ role: "system", content: "Standing rules." }, ...transcript.map((m) => ({ role: m.role, content: m.text }))];
+        expect(bytes(messages.slice(0, -1)) - bytes(stored)).toBeLessThanOrEqual(24_000 + 2_000);
+        previous = messages;
+        transcript.push({ role: "user", text: typed }, { role: "assistant", text: "hi" });
+      }
+      await done();
+    });
+
+    it("does not lend a record to a later identical message it did not send", async () => {
+      const { send, done } = await fixture();
+      await send({ text: clock("00") + "continue", volatile: "Memory: likes tea.", transcript: [] });
+      // A second "continue" went to another engine, which this runtime never saw.
+      const messages = await send({
+        text: clock("05") + "next",
+        volatile: "Memory: likes tea.",
+        transcript: [
+          { role: "user", text: "continue" }, { role: "assistant", text: "hi" },
+          { role: "user", text: "continue" }, { role: "assistant", text: "done" },
+        ],
+      });
+      expect(messages.slice(1, -1)).toEqual([
+        { role: "user", content: NOTE + "Memory: likes tea.\n\n" + clock("00") + "continue" },
+        { role: "assistant", content: "hi" },
+        { role: "user", content: "continue" },
+        { role: "assistant", content: "done" },
+      ]);
       await done();
     });
 
