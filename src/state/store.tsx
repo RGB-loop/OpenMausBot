@@ -14,6 +14,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import type { BotVisibility, CardAnswerer, CloudBackend, ConnectorToolGrant, EffortLevel, InstalledPackageMetadata, LiveCallState, LiveSettings, ServerFrame, GroupThreadUsage, SteerQueueReason } from "../../shared/wire";
+import { DATA_ROUTES, type DataSheet, type DataTable } from "../../shared/data-surface";
 import type { TurnDigest } from "../../shared/digest";
 import type { ToolScope } from "../../shared/tool-scope";
 import type { ModelVariantOption, RuntimeEvent } from "../../shared/runtime-events";
@@ -228,6 +229,7 @@ export interface Message {
   comm?: { groupId: string; threadId?: string; withBotId: string; withName: string; withColor: MausColor };
   /** thread chips: "Opened thread #Title on Bot" linking to that thread */
   threadRef?: { botId: string; threadId: string; title: string };
+  dataResult?: import("../../shared/wire").WireMessage["dataResult"];
   /** sent while the bot was mid-turn; auto-sends when the turn settles.
    * Rendered only while the bot is busy, so a flag stranded by a server
    * restart never shows a promise nothing will keep. */
@@ -843,6 +845,9 @@ export interface InstanceInfo {
   icon?: import("../../shared/provider-icon").ProviderIcon;
   /** Company instances are owned by the desktop parent, never editable here. */
   readOnly?: boolean;
+  /** An OpenMausBot Cloud home's trial Claude credit (read-only): whether it
+   * can still run, or is used up or gone. The person's own engine always wins over it. */
+  trialCredit?: "active" | "used_up" | "ended";
   managed?: { organizationId: string; organizationName: string };
   /** The enrolled organisation's desktop policy does not allow bots to run on
    * this instance: shown, but disabled, with the server's reason. */
@@ -1006,6 +1011,11 @@ export interface AppState {
    * focuses the button that shows the code. Any other toggleAppSettings sets 0. */
   appSettingsPhonePairing: number;
   shortcutsOpen: boolean;
+  /** The Add a Cloud dialog (components/CloudAddDialog.tsx), and how it was
+   * reached (lib/cloud-plan CLOUD_SOURCES, the Admin's counts); null when closed. */
+  cloudAdd: { source: import("@/lib/cloud-plan").CloudSource } | null;
+  /** The one-step Show me how tip on the server menu (components/CloudHowTo.tsx). */
+  cloudHowTo: boolean;
   /** the first-run welcome tour, also replayable from Settings → General */
   welcomeOpen: boolean;
   /** the guided tour on the live interface that follows the welcome flow */
@@ -1022,6 +1032,16 @@ export interface AppState {
    * (the bot's hands are refused server-side); helpReason = the bot's open
    * plea for the person to take over */
   computerControl: Record<string, { held: boolean; helpReason: string | null }>;
+  /** Each bot's data sheet (cards and loaded tables, never rows), loaded
+   * when its Data tab first opens and replaced whole by every `data` frame.
+   * The grid pages rows itself, so a sheet stays small. */
+  dataSheets: Record<string, DataSheet>;
+  /** The bot's table catalog as GET /data last reported it: DuckDB's own
+   * list, not a copy on the sheet, so a load and a CREATE agree. */
+  dataTables: Record<string, DataTable[]>;
+  dataResultFocus: { botId: string; id: string; requestId: number; consumed: boolean } | null;
+  /** Only the currently mounted Data view, not the last Open in Data request. */
+  dataView: import("@/lib/composer-attachments").DataViewContext | null;
   /** a search hit to scroll to once its thread is on screen; nonce lets the
    * same message be focused twice in a row */
   focusMessage: { threadId: string; messageId: string; matchText?: string; nonce: number; consumed: boolean } | null;
@@ -1209,6 +1229,8 @@ export type Action =
       sendId?: string;
       replyToId?: string;
       threadId?: string;
+      /** The Data result the person is viewing, for the model only; never part of the text. */
+      dataContext?: import("../../shared/data-context").DataContext;
       onError?: () => void;
     }
   | { type: "pendingQueued"; threadId: string; queueId: string; text: string; reason?: SteerQueueReason }
@@ -1277,6 +1299,10 @@ export type Action =
   | { type: "optimisticMessageRemoved"; threadId: string; sendId: string; restoreLeafId?: string | null }
   | { type: "computerStart"; botId: string; start: ComputerStart | null }
   | { type: "computerControl"; botId: string; held: boolean; helpReason: string | null }
+  /** A whole sheet from the server: a `data` frame or the first GET. */
+  | { type: "dataSheet"; sheet: DataSheet; tables?: DataTable[] }
+  | { type: "dataView"; view: AppState["dataView"] }
+  | { type: "loadDataSheet"; botId: string; onError?: (message: string) => void }
   | { type: "modelVariantRuntime"; event: RuntimeEvent }
   | { type: "setModel"; botId: string; selection: ModelSelection; threadId?: string; updateBotDefault?: boolean; resetApprovalToAsk?: boolean }
   | { type: "interrupt"; botId: string; threadId?: string; onError?: () => void }
@@ -1289,6 +1315,8 @@ export type Action =
   | { type: "toggleTriggers"; open?: boolean }
   | { type: "toggleNewBot"; open?: boolean }
   | { type: "toggleComputer"; open?: boolean }
+  | { type: "openDataResult"; botId: string; cardId: string }
+  | { type: "dataResultFocusConsumed"; requestId: number }
   | { type: "toggleInspector"; open?: boolean }
   | { type: "toggleActivity"; open?: boolean }
   | { type: "focusMessage"; threadId: string; messageId: string; matchText?: string }
@@ -1296,6 +1324,9 @@ export type Action =
   | { type: "unreadDividerDone"; threadId: string }
   | { type: "toggleAppSettings"; open?: boolean; section?: AppSettingsSection; cloudLink?: boolean; phonePairing?: boolean }
   | { type: "toggleShortcuts"; open?: boolean }
+  | { type: "openCloudAdd"; source: import("@/lib/cloud-plan").CloudSource }
+  | { type: "closeCloudAdd" }
+  | { type: "cloudHowTo"; open: boolean }
   | { type: "toggleWelcome"; open?: boolean }
   | { type: "toggleTour"; open?: boolean }
   | {
@@ -2129,6 +2160,16 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, focusMessage: { ...state.focusMessage, consumed: true } };
     case "unreadDividerDone":
       return state.unreadDivider?.threadId === action.threadId ? { ...state, unreadDivider: null } : state;
+    case "openDataResult": {
+      if (!state.bots.some((bot) => bot.id === action.botId)) return state;
+      // The same path as clicking the bot, so unread and the read cursor
+      // settle the way `select` does; then the Computer panel opens on it.
+      const selected = reducer(reducer(state, { type: "select", id: action.botId }), { type: "toggleComputer", open: true });
+      return { ...selected, dataResultFocus: { botId: action.botId, id: action.cardId, requestId: (state.dataResultFocus?.requestId ?? 0) + 1, consumed: false } };
+    }
+    case "dataResultFocusConsumed":
+      return state.dataResultFocus?.requestId === action.requestId
+        ? { ...state, dataResultFocus: { ...state.dataResultFocus, consumed: true } } : state;
     case "toggleComputer": {
       const open = action.open ?? !state.computerOpen;
       return {
@@ -2185,6 +2226,13 @@ export function reducer(state: AppState, action: Action): AppState {
         shortcutsOpen: open,
       };
     }
+    // The dialog takes over from the tip; one already open keeps how it was first reached.
+    case "openCloudAdd":
+      return { ...state, cloudAdd: state.cloudAdd ?? { source: action.source }, cloudHowTo: false };
+    case "closeCloudAdd":
+      return state.cloudAdd ? { ...state, cloudAdd: null } : state;
+    case "cloudHowTo":
+      return state.cloudHowTo === action.open ? state : { ...state, cloudHowTo: action.open };
     case "toggleTour": {
       const open = action.open ?? !state.tourOpen;
       return { ...state, tourOpen: open, appSettingsOpen: open ? false : state.appSettingsOpen };
@@ -2478,7 +2526,16 @@ export function reducer(state: AppState, action: Action): AppState {
     case "markAllRoutineRunsSeen":
     case "refreshTaskPermissions":
     case "followBotModel":
+    case "loadDataSheet":
       return state;
+    case "dataSheet":
+      return {
+        ...state,
+        dataSheets: { ...state.dataSheets, [action.sheet.botId]: action.sheet },
+        ...(action.tables ? { dataTables: { ...state.dataTables, [action.sheet.botId]: action.tables } } : {}),
+      };
+    case "dataView":
+      return { ...state, dataView: action.view };
     case "sendGroup": {
       if (!action.sendId) return state;
       const group = state.groups.find((candidate) => candidate.id === action.groupId);
@@ -2500,6 +2557,23 @@ export function reducer(state: AppState, action: Action): AppState {
       }, threadId, message.at);
     }
   }
+}
+
+/** GET sheet answers with the sheet itself or wrapped as `{ sheet }`; an
+ * empty answer (a bot that has never used data) is an empty sheet. */
+/** GET /data answers `{ sheet, tables }`; a `data` frame carries only the sheet. */
+export function dataTablesFromResponse(body: unknown): DataTable[] {
+  const tables = body && typeof body === "object" && "tables" in body ? (body as { tables: unknown }).tables : undefined;
+  return Array.isArray(tables) ? (tables as DataTable[]).filter((table) => table && typeof table.name === "string") : [];
+}
+
+export function dataSheetFromResponse(body: unknown, botId: string): DataSheet {
+  const candidate = body && typeof body === "object" && "sheet" in body ? (body as { sheet: unknown }).sheet : body;
+  if (candidate && typeof candidate === "object" && Array.isArray((candidate as DataSheet).cards)) {
+    const sheet = candidate as DataSheet;
+    return { ...sheet, botId: sheet.botId || botId, sources: Array.isArray(sheet.sources) ? sheet.sources : [] };
+  }
+  return { version: 1, botId, cards: [], sources: [], updatedAt: new Date(0).toISOString() };
 }
 
 export const initialState: AppState = {
@@ -2538,6 +2612,8 @@ export const initialState: AppState = {
   appSettingsCloudLink: 0,
   appSettingsPhonePairing: 0,
   shortcutsOpen: false,
+  cloudAdd: null,
+  cloudHowTo: false,
   welcomeOpen: false,
   tourOpen: false,
   botSettingsSection: "overview",
@@ -2545,6 +2621,10 @@ export const initialState: AppState = {
   computerStarts: {},
   deletingBots: {},
   computerControl: {},
+  dataSheets: {},
+  dataTables: {},
+  dataResultFocus: null,
+  dataView: null,
   focusMessage: null,
   unreadDivider: null,
   connected: false,
@@ -2640,7 +2720,11 @@ export async function api<T = any>(path: string, init?: RequestInit & { timeoutM
         : AbortSignal.timeout(timeoutMs),
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(body.error ?? `${res.status} ${res.statusText}`, res.status, body);
+  if (!res.ok) {
+    const error = body?.error;
+    const message = typeof error === "string" ? error : typeof error?.message === "string" ? error.message : `${res.status} ${res.statusText}`;
+    throw new ApiError(message, res.status, body);
+  }
   return body;
 }
 
@@ -3135,6 +3219,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "cancelRoutineRun":
           api(`/api/routine-runs/${action.runId}/cancel`, { method: "POST" }).catch(showError);
           break;
+        // The Data tab's sheet. The panel runs and cancels SQL itself (it
+        // owns the request to abort); those answer through the server's
+        // `data` frame (the whole sheet), so every window sees the same
+        // cards. A panel-local onError keeps a server without the surface
+        // from raising the app-wide error line.
+        case "loadDataSheet":
+          api(DATA_ROUTES.sheet(action.botId))
+            .then((body) => rawDispatch({ type: "dataSheet", sheet: dataSheetFromResponse(body, action.botId), tables: dataTablesFromResponse(body) }))
+            .catch((error) => (action.onError ?? showError)(error instanceof Error ? error.message : String(error)));
+          break;
         case "markRoutineRunSeen":
           api(`/api/routine-runs/${action.runId}/seen`, { method: "POST" }).catch(showError);
           break;
@@ -3206,7 +3300,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           void waitForExecutionSettings(botBeforeSend ? [botBeforeSend] : [], threadId)
             .then(() => api(`/api/bots/${action.botId}/messages`, {
                 method: "POST",
-                body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId }),
+                body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId, ...(action.dataContext ? { dataContext: action.dataContext } : {}) }),
               }))
             .then((body) => {
               if (body?.message && typeof body.threadId === "string") {
@@ -3448,13 +3542,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             () => {},
           );
           break;
+        case "openDataResult":
         case "select": {
-          const bot = stateRef.current.bots.find((b) => b.id === action.id);
-          const group = stateRef.current.groups.find((g) => g.id === action.id);
+          const id = action.type === "select" ? action.id : action.botId;
+          const bot = stateRef.current.bots.find((b) => b.id === id);
+          const group = stateRef.current.groups.find((g) => g.id === id);
           if (bot?.unread) {
-            api(`/api/bots/${action.id}/read`, { method: "POST", body: JSON.stringify({ threadId: bot.threadId }) }).catch(() => {});
+            api(`/api/bots/${id}/read`, { method: "POST", body: JSON.stringify({ threadId: bot.threadId }) }).catch(() => {});
           } else if (group?.unread) {
-            api(`/api/groups/${action.id}/read`, { method: "POST" }).catch(() => {});
+            api(`/api/groups/${id}/read`, { method: "POST" }).catch(() => {});
           }
           break;
         }
@@ -4031,6 +4127,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             held: frame.held === true,
             helpReason: typeof frame.helpReason === "string" ? frame.helpReason : null,
           });
+          break;
+        case "data":
+          rawDispatch({ type: "dataSheet", sheet: frame.sheet });
           break;
         case "bot.deleted":
           botPatchQueue.cancel(frame.botId);

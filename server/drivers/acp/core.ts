@@ -375,8 +375,9 @@ export interface AcpSupport {
     ctx: { model?: string; requestedModel?: string; fullAuto: boolean; botId?: string; cwd: string; toolScope?: SendTurnInput["toolScope"] },
   ): void;
   /** Pick the ACP authenticate methodId from initialize's advertised
-   * authMethods; return null to skip the authenticate step. */
-  pickAuthMethod(authMethods: Array<{ id?: string }>): string | null;
+   * authMethods; return null to skip the authenticate step. `env` is the
+   * environment the agent process was spawned with. */
+  pickAuthMethod(authMethods: Array<{ id?: string }>, env: Record<string, string | undefined>): string | null;
   /** "fail": abort the turn if auth is missing/errors (subscription CLIs).
    *  "continue": proceed anyway (CLIs that work off an ambient login). */
   authFailure: "fail" | "continue";
@@ -419,8 +420,11 @@ export interface AcpSupport {
      * driver that only knows the argv slug cannot form a valid set_model
      * without this. Empty when the agent advertised none. */
     sessionModels: Array<{ modelId?: string; name?: string }>;
-    /** Last model acknowledged by session/new/load, preserved for pooled turns. */
+    /** Last model acknowledged by session/new/load/set_model, preserved for pooled turns. */
     currentModelId?: string;
+    /** Tell the person the session runs another model than the one picked.
+     * Said once per process for the same message, like the core fallback. */
+    notice: (message: string) => void;
   }): Promise<void>;
 }
 
@@ -879,6 +883,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const browser = turn.integrations?.browser;
         if (browser) {
           servers.push({ name: "browser", command: browser.command, args: browser.args, env: acpEnv(browser.env) });
+        }
+        const data = turn.integrations?.data;
+        if (data) {
+          servers.push({ name: "data", command: data.command, args: data.args, env: acpEnv(data.env) });
         }
         // The bot's computer, mounted exactly like the Claude driver does:
         // host and sandbox Cua connections expose Cua Driver's own MCP server.
@@ -1842,7 +1850,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 const methods: Array<{ id?: string }> = Array.isArray(session.initResult?.authMethods)
                   ? session.initResult.authMethods
                   : [];
-                const methodId = support.pickAuthMethod(methods);
+                const methodId = support.pickAuthMethod(methods, spawnEnv);
                 if (methodId) {
                   try {
                     await request("authenticate", { methodId }, INIT_TIMEOUT);
@@ -1869,7 +1877,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             let init = session.initResult;
 
             const cursor = !turn.sessionReset && typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
-            let sessionResult: any = null;
             let promptTurn = turn;
             let rebuiltFromReplay = false;
             for (;;) {
@@ -1944,7 +1951,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 promptTurn = { ...turn, text: recovery.text };
                 rebuiltFromReplay = recovery.replayed;
               }
-              sessionResult = await request("session/new", { cwd, mcpServers, ...selectionParams }, NEW_SESSION_TIMEOUT, (result) => {
+              await request("session/new", { cwd, mcpServers, ...selectionParams }, NEW_SESSION_TIMEOUT, (result) => {
                 session.sessionId = typeof result?.sessionId === "string" ? result.sessionId : null;
                 session.sessionKey = sessionKey;
                 receiveModelVariants(result);
@@ -2009,7 +2016,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   }
                 }
                 if (cliTurn.model && cliTurn.model !== selectedModel) {
-                  sessionResult = await request(
+                  await request(
                     "session/set_config_option",
                     { sessionId, configId, value: cliTurn.model },
                     INIT_TIMEOUT,
@@ -2029,15 +2036,29 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               if (support.configureSession) {
                 approvalUnconfirmed = support.sessionScopedApproval === true;
                 await support.configureSession({
-                  request: (method, params, timeoutMs) =>
-                    request(method, params, timeoutMs ?? SESSION_CONFIG_TIMEOUT),
+                  request: async (method, params, timeoutMs) => {
+                    const result = await request(method, params, timeoutMs ?? SESSION_CONFIG_TIMEOUT);
+                    if (method === "session/set_model" && params && typeof params === "object" &&
+                        "modelId" in params && typeof params.modelId === "string") {
+                      session.sessionConfigResult = {
+                        ...session.sessionConfigResult,
+                        models: { ...session.sessionConfigResult?.models, currentModelId: params.modelId },
+                      };
+                    }
+                    return result;
+                  },
                   sessionId,
                   config: turnConfig,
                   turn: cliTurn,
-                  sessionModels: Array.isArray(sessionResult?.models?.availableModels)
-                    ? sessionResult.models.availableModels
+                  sessionModels: Array.isArray(session.sessionConfigResult?.models?.availableModels)
+                    ? session.sessionConfigResult.models.availableModels
                     : [],
                   currentModelId: session.sessionConfigResult?.models?.currentModelId,
+                  notice: (message) => {
+                    if (session.fallbackNotice === message) return;
+                    session.fallbackNotice = message;
+                    emit({ ...base(threadId, turnId), type: "runtime.notice", message });
+                  },
                 });
                 approvalUnconfirmed = false;
                 // initialize's currentModelId is the CLI default,
@@ -2309,6 +2330,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             computerMcp: true,
             composioMcp: true,
             browserMcp: true,
+            dataMcp: true,
             images: support.images !== false,
             nativeImageInput: support.images === true,
             effortLevels: support.effortLevels,
